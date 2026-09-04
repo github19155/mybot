@@ -7,6 +7,10 @@ from typing import Any
 
 UNIFIED_SESSION_KEY = "unified:default"
 LAST_CHANNEL_METADATA_KEY = "last_channel"
+# Reserved namespace: the system-prompt prefix a session's provider state was
+# built with, used to invalidate Responses-style server-side conversation state
+# after a prompt-override change.
+SYSTEM_PROMPT_PREFIX_METADATA_KEY = "_nanobot_system_prompt_prefix"
 
 
 def session_key_for_channel(channel: str, chat_id: str, *, unified_session: bool = False) -> str:

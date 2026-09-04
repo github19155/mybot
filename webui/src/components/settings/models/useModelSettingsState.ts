@@ -39,6 +39,10 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
   const [modelCallOrder, setModelCallOrder] = useState<string[]>(
     () => initialSettings?.model_call_order ?? [],
   );
+  const [promptOverrides, setPromptOverrides] = useState<
+    SettingsPayload["system_prompt_overrides"]
+  >(() => initialSettings?.system_prompt_overrides ?? []);
+  const [promptOverridesSaving, setPromptOverridesSaving] = useState(false);
 
   return {
     editingProviderKeys,
@@ -47,6 +51,8 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     modelCallOrder,
     modelCallOrderSaving,
     modelConfigurationSaving,
+    promptOverrides,
+    promptOverridesSaving,
     modelMigrationSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
@@ -68,6 +74,8 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     setModelCallOrderSaving,
     setModelConfigurationSaving,
     setModelMigrationSaving,
+    setPromptOverrides,
+    setPromptOverridesSaving,
     setModelPresetCreating,
     setModelPresetEditingName,
     setModelPresetNameError,

@@ -25,6 +25,7 @@ class LLMRuntime:
     generation: GenerationSettings
     context_window_tokens: int
     model_preset: str | None = None
+    system_prompt_prefix: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
 
     @classmethod
@@ -35,6 +36,7 @@ class LLMRuntime:
         *,
         context_window_tokens: int,
         model_preset: str | None = None,
+        system_prompt_prefix: str | None = None,
         snapshot_signature: tuple[object, ...] | None = None,
     ) -> LLMRuntime:
         """Capture provider defaults without retaining mutable generation state."""
@@ -54,6 +56,7 @@ class LLMRuntime:
             ),
             context_window_tokens=context_window_tokens,
             model_preset=model_preset,
+            system_prompt_prefix=system_prompt_prefix,
             snapshot_signature=snapshot_signature,
         )
 
@@ -93,12 +96,14 @@ def runtime_from_provider_snapshot(
             generation=snapshot.generation,
             context_window_tokens=snapshot.context_window_tokens,
             model_preset=snapshot.model_preset,
+            system_prompt_prefix=snapshot.system_prompt_prefix,
             snapshot_signature=snapshot.signature,
         )
     return LLMRuntime.capture(
         snapshot.provider,
         snapshot.model,
         context_window_tokens=snapshot.context_window_tokens,
-        model_preset=snapshot.model_preset,
-        snapshot_signature=snapshot.signature,
+            model_preset=snapshot.model_preset,
+            system_prompt_prefix=snapshot.system_prompt_prefix,
+            snapshot_signature=snapshot.signature,
     )

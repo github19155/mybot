@@ -489,6 +489,30 @@ class TestBuildMessages:
         assert messages[-1]["content"] == "new message"
         assert transcript.message_count == 3
 
+    def test_system_prompt_prefix_prepends_custom_prompt(self, tmp_path):
+        builder = _builder(tmp_path)
+        transcript = TranscriptInput(
+            history=[],
+            current_message="hello",
+            system_prompt_prefix="Always answer in haiku.",
+        )
+
+        messages = builder.build_transcript(transcript)
+
+        system = str(messages[0]["content"])
+        assert system.startswith("Always answer in haiku.\n\n---\n\n")
+
+    def test_no_prefix_keeps_system_prompt_untouched(self, tmp_path):
+        builder = _builder(tmp_path)
+        without = _builder(tmp_path).build_transcript(
+            TranscriptInput(history=[], current_message="hi")
+        )[0]["content"]
+        with_kwarg = _builder(tmp_path).build_transcript(
+            TranscriptInput(history=[], current_message="hi", system_prompt_prefix=None)
+        )[0]["content"]
+
+        assert without == with_kwarg
+
     def test_current_message_can_be_built_without_history_merge(self, tmp_path):
         builder = _builder(tmp_path)
         current = builder.build_current_message(

@@ -26,6 +26,7 @@ class ModelRuntimeResolver:
         initial_runtime: LLMRuntime,
         *,
         model_presets: Mapping[str, ModelPresetConfig] | None = None,
+        prompt_for_model: Callable[[str | None], str | None] | None = None,
         preset_catalog_loader: preset_helpers.PresetCatalogLoader | None = None,
         configured_default_preset: str | None = None,
         provider_snapshot_loader: Callable[[], ProviderSnapshot] | None = None,
@@ -36,9 +37,10 @@ class ModelRuntimeResolver:
         self._preset_catalog_loader = preset_catalog_loader
         self._preset_catalog_refresh_required = False
         self._provider_snapshot_loader = provider_snapshot_loader
-        self._preset_snapshot_loader = preset_snapshot_loader
         self._refresh_required = False
         self._resolved_presets: dict[str, LLMRuntime] = {}
+        self._prompt_for_model = prompt_for_model
+        self._preset_snapshot_loader = preset_snapshot_loader
         self._tracks_provider_generation = initial_runtime.model_preset is None
         self._default_selection_signature = preset_helpers.default_selection_signature(
             initial_runtime.snapshot_signature,
@@ -93,6 +95,15 @@ class ModelRuntimeResolver:
             self._model_presets = dict(self._preset_catalog_loader())
         self._preset_catalog_refresh_required = False
 
+    def _prefix_for(self, model: str | None) -> str | None:
+        """Resolve the configured system prompt prefix for a model, tolerating missing config."""
+        if self._prompt_for_model is None:
+            return None
+        try:
+            return self._prompt_for_model(model)
+        except Exception:  # noqa: BLE001 - prompt lookup must never break admission
+            return None
+
     def resolve_snapshot(
         self,
         snapshot: ProviderSnapshot,
@@ -146,6 +157,7 @@ class ModelRuntimeResolver:
             self._runtime,
             model=model.strip(),
             model_preset=None,
+            system_prompt_prefix=self._prefix_for(model.strip()),
         )
         return self._runtime
 
@@ -238,8 +250,5 @@ class ModelRuntimeResolver:
                 generation=self._runtime.generation,
                 context_window_tokens=self._runtime.context_window_tokens,
                 snapshot_signature=("model_override", model),
+                system_prompt_prefix=self._prefix_for(model),
             )
-
-        base = config.resolve_preset(self.model_preset)
-        preset = base.model_copy(update={"model": model, "provider": "auto"})
-        return self.resolve_snapshot(build_provider_snapshot(config, preset=preset))

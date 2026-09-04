@@ -93,11 +93,13 @@ export function useSettingsController({
   const {
     editingProviderKeys, expandedProvider, form, modelCallOrder, modelCallOrderSaving,
     modelConfigurationSaving, modelMigrationSaving, modelPresetBeforeCreateRef,
+    promptOverrides, promptOverridesSaving,
     modelPresetCreating, modelPresetEditingName, modelPresetNameError, modelPresetPendingDelete,
     providerForms, providerOAuthCompleting,
     providerOAuthDialogError, providerOAuthFlow, providerOAuthFlowRef, providerOAuthResponse,
     providerSaving, saving, setForm,
     setModelCallOrder, setModelPresetCreating, setModelPresetEditingName, setModelPresetNameError,
+    setPromptOverrides,
     setModelPresetPendingDelete,
     setProviderForms, setProviderOAuthCompleting, setProviderOAuthDialogError,
     setProviderOAuthFlow, setProviderOAuthResponse, visibleProviderKeys,
@@ -155,6 +157,7 @@ export function useSettingsController({
         setModelPresetCreating(false);
       }
       setModelCallOrder(payload.model_call_order ?? []);
+      setPromptOverrides(payload.system_prompt_overrides ?? []);
       setWebSearchForm((prev) => webSearchFormFromPayload(payload, prev));
       setImageGenerationForm(imageGenerationFormFromPayload(payload));
       setTranscriptionForm(transcriptionFormFromPayload(payload));
@@ -429,6 +432,7 @@ export function useSettingsController({
     handleToggleProvider,
     runProviderOAuth,
     saveModelSettings,
+    savePromptOverrides,
     saveProvider,
     toggleProviderKeyEditing,
     toggleProviderKeyVisibility,
@@ -538,6 +542,7 @@ export function useSettingsController({
     modelPresetBeforeCreateRef,
     modelPresetCreating,
     modelPresetEditingName,
+    promptOverrides, promptOverridesSaving,
     modelPresetNameError,
     modelPresetPendingDelete,
     nanobotFeatureAction,
@@ -561,6 +566,7 @@ export function useSettingsController({
     runProviderOAuth,
     saveImageGenerationSettings,
     saveModelSettings,
+    savePromptOverrides,
     saveNetworkSafetySettings,
     saveProvider,
     saveTranscriptionSettings,

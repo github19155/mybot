@@ -25,7 +25,13 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict, cast
 import httpx
 
 from nanobot.config.loader import resolve_config_env_vars
-from nanobot.config.schema import Config, FallbackCandidate, ModelPresetConfig, ProviderConfig
+from nanobot.config.schema import (
+    Config,
+    FallbackCandidate,
+    ModelPresetConfig,
+    ProviderConfig,
+    SystemPromptOverrideConfig,
+)
 from nanobot.providers.image_generation import get_image_gen_provider
 from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
 from nanobot.providers.oauth_model_catalog import (
@@ -64,6 +70,7 @@ class ModelSettingsOperations:
     delete_model: SettingsOperation
     migrate_models: SettingsOperation
     update_call_order: SettingsOperation
+    update_prompt_overrides: SettingsOperation
     update_provider: SettingsOperation
     create_provider: SettingsOperation
     provider_models: SettingsOperation
@@ -79,6 +86,7 @@ class ModelSettingsOperations:
 class ModelSettingsPayload(TypedDict):
     agent: dict[str, Any]
     model_presets: list[dict[str, Any]]
+    system_prompt_overrides: list[dict[str, Any]]
     model_call_order: list[str]
     model_call_order_editable: bool
     model_configuration_migratable: bool
@@ -1115,6 +1123,10 @@ def model_settings_payload(
         },
         "model_presets": model_presets,
         "model_call_order": model_call_order,
+        "system_prompt_overrides": [
+            {"prompt": row.prompt, "models": list(row.models)}
+            for row in config.system_prompt_overrides
+        ],
         "model_call_order_editable": model_call_order_editable,
         "model_configuration_migratable": _legacy_model_configuration_migratable(
             config,
@@ -1356,6 +1368,57 @@ def update_model_call_order(
     if changed:
         defaults.model_preset = normalized_order[0]
         defaults.fallback_models = fallback_models
+    return changed
+
+
+def update_model_prompt_overrides(config: Config, query: QueryParams) -> bool:
+    """Replace the system prompt override table from a WebUI mutation."""
+    raw_overrides = query_first_alias(query, "overrides", "systemPromptOverrides")
+    if raw_overrides is None:
+        raise WebUISettingsError("system prompt overrides are required")
+    try:
+        parsed: object = json.loads(raw_overrides)
+    except json.JSONDecodeError:
+        raise WebUISettingsError("system prompt overrides must be a JSON array") from None
+    if not isinstance(parsed, list):
+        raise WebUISettingsError("system prompt overrides must be a JSON array")
+
+    rows: list[SystemPromptOverrideConfig] = []
+    bound: set[str] = set()
+    for item in cast(list[object], parsed):
+        if not isinstance(item, dict):
+            raise WebUISettingsError(
+                "each override must be an object with prompt and models"
+            )
+        prompt = str(item.get("prompt") or "").strip()
+        raw_models = item.get("models")
+        models: list[str] = []
+        if isinstance(raw_models, list):
+            models = [
+                model.strip()
+                for model in raw_models
+                if isinstance(model, str) and model.strip()
+            ]
+            models = list(dict.fromkeys(models))
+        if not prompt:
+            raise WebUISettingsError("override prompt must not be blank")
+        if not models:
+            raise WebUISettingsError("each override must bind at least one model")
+        duplicate = next((model for model in models if model in bound), None)
+        if duplicate:
+            raise WebUISettingsError(
+                f"model {duplicate!r} is already bound to another prompt"
+            )
+        bound.update(models)
+        rows.append(SystemPromptOverrideConfig(prompt=prompt, models=models))
+
+    changed = [
+        (row.prompt, tuple(row.models)) for row in rows
+    ] != [
+        (row.prompt, tuple(row.models)) for row in config.system_prompt_overrides
+    ]
+    if changed:
+        config.system_prompt_overrides = rows
     return changed
 
 
@@ -1783,6 +1846,7 @@ class ModelSettingsHandler:
                 "model-delete": operations.delete_model,
                 "models-migrate": operations.migrate_models,
                 "call-order-update": operations.update_call_order,
+                "prompt-overrides-update": operations.update_prompt_overrides,
                 "provider-create": operations.create_provider,
             }.get(action)
             if mutation is not None:

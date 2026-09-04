@@ -25,6 +25,7 @@ import {
   migrateModelConfigurations,
   updateModelCallOrder,
   updateModelConfiguration,
+  updateSystemPromptOverrides,
   updateProviderSettings,
 } from "@/lib/api";
 import type { NanobotClient } from "@/lib/nanobot-client";
@@ -89,6 +90,8 @@ export function useModelSettingsActions({
     modelCallOrderSaving,
     modelConfigurationSaving,
     modelMigrationSaving,
+    promptOverrides,
+    promptOverridesSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
     modelPresetEditingName,
@@ -106,6 +109,8 @@ export function useModelSettingsActions({
     setModelCallOrderSaving,
     setModelConfigurationSaving,
     setModelMigrationSaving,
+    setPromptOverrides,
+    setPromptOverridesSaving,
     setModelPresetCreating,
     setModelPresetEditingName,
     setModelPresetNameError,
@@ -333,6 +338,25 @@ export function useModelSettingsActions({
     }
   };
 
+  const savePromptOverrides = async (
+    nextOverrides: SettingsPayload["system_prompt_overrides"],
+  ) => {
+    if (!settings || promptOverridesSaving || saving) return;
+    const previous = promptOverrides;
+    setPromptOverrides(nextOverrides);
+    setPromptOverridesSaving(true);
+    try {
+      const payload = await updateSystemPromptOverrides(client, nextOverrides);
+      applyPayload(payload, { preserveAgentForm: true });
+      onModelNameChange(payload.agent.model || null);
+      setError(null);
+    } catch (err) {
+      setPromptOverrides(previous);
+      setError((err as Error).message);
+    } finally {
+      setPromptOverridesSaving(false);
+    }
+  };
   const handleMigrateModelConfigurations = async () => {
     if (modelMigrationSaving) return;
     setModelMigrationSaving(true);
@@ -594,6 +618,7 @@ export function useModelSettingsActions({
     beginModelPresetCreation,
     cancelModelPresetCreation,
     changeModelCallOrder,
+    savePromptOverrides,
     completeProviderOAuthResponse,
     createCustomProvider,
     handleDeleteModelConfiguration,

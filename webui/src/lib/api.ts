@@ -981,6 +981,15 @@ export async function updateModelCallOrder(
   return mutation<SettingsPayload>(transport, "settings.model_call_order.update", { order });
 }
 
+export async function updateSystemPromptOverrides(
+  transport: WebUIMutationTransport,
+  overrides: SettingsPayload["system_prompt_overrides"],
+): Promise<SettingsPayload> {
+  return mutation<SettingsPayload>(transport, "settings.model_prompt_overrides.update", {
+    overrides,
+  });
+}
+
 export async function updateProviderSettings(
   transport: WebUIMutationTransport,
   update: ProviderSettingsUpdate,

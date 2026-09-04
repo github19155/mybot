@@ -79,7 +79,11 @@ from nanobot.session.goal_state import (
     runner_wall_llm_timeout_s,
 )
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META
-from nanobot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
+from nanobot.session.keys import (
+    SYSTEM_PROMPT_PREFIX_METADATA_KEY,
+    UNIFIED_SESSION_KEY,
+    remember_last_channel,
+)
 from nanobot.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
 from nanobot.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
@@ -143,6 +147,7 @@ class TurnContext:
     history: list[dict[str, Any]] = field(default_factory=list)
     transcript_input: TranscriptInput | None = None
     provider_state: ProviderConversationState | None = field(default=None, repr=False)
+    system_prompt_prefix: str | None = None
     request_context: RequestContext | None = None
     runtime_context_blocks: list[RuntimeContextBlock] = field(default_factory=list)
     attributes: dict[str, Any] = field(default_factory=dict)
@@ -291,6 +296,7 @@ class AgentLoop:
         provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None,
         provider_signature: tuple[object, ...] | None = None,
         model_presets: dict[str, ModelPresetConfig] | None = None,
+        prompt_for_model: Callable[[str | None], str | None] | None = None,
         preset_catalog_loader: preset_helpers.PresetCatalogLoader | None = None,
         model_preset: str | None = None,
         dream_model_preset: str | None = None,
@@ -343,9 +349,13 @@ class AgentLoop:
                 initial_model,
                 context_window_tokens=initial_context_window,
                 snapshot_signature=provider_signature,
+                system_prompt_prefix=(
+                    prompt_for_model(initial_model) if prompt_for_model else None
+                ),
             ),
             model_presets=configured_presets,
             preset_catalog_loader=preset_catalog_loader,
+            prompt_for_model=prompt_for_model,
             configured_default_preset=model_preset,
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
@@ -497,6 +507,7 @@ class AgentLoop:
         provider = extra.pop("provider", None) or make_provider(config)
         resolved = config.resolve_preset()
         model = extra.pop("model", None) or resolved.model
+        prompt_for_model = extra.pop("prompt_for_model", None) or config.system_prompt_for
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
@@ -530,6 +541,7 @@ class AgentLoop:
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
+            prompt_for_model=prompt_for_model,
             **extra,
         )
 
@@ -739,6 +751,7 @@ class AgentLoop:
             media=ctx.msg.media if ctx.kind is TurnKind.USER and ctx.msg.media else None,
             session_summary=ctx.pending_summary,
             runtime_context_blocks=ctx.runtime_context_blocks,
+            system_prompt_prefix=ctx.system_prompt_prefix,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -1891,6 +1904,8 @@ class AgentLoop:
         if runtime is None:
             runtime = self.runtime_for_session(session)
             ctx.runtime = runtime
+        if ctx.system_prompt_prefix is None:
+            ctx.system_prompt_prefix = runtime.system_prompt_prefix
         if ctx.session_key.startswith("dream:"):
             logger.info(
                 "Dream run using model={} (preset={})",
@@ -1909,6 +1924,13 @@ class AgentLoop:
 
         ctx.history = session.get_history(extend_to_user=is_subagent)
         stored_state = session.provider_state
+        if session.metadata.get(SYSTEM_PROMPT_PREFIX_METADATA_KEY) != runtime.system_prompt_prefix:
+            # Prompt override changed since this provider state was built;
+            # Responses-style providers would otherwise keep applying the
+            # stale server-side system prompt.
+            session.provider_state = None
+            stored_state = None
+            session.metadata[SYSTEM_PROMPT_PREFIX_METADATA_KEY] = runtime.system_prompt_prefix
         subagent_followup_persisted = False
         if is_subagent:
             # Keep the durable internal delivery as an assistant record, but

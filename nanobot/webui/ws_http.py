@@ -155,6 +155,7 @@ _WEBUI_MUTATION_PATHS = {
     "settings.model_configuration.delete": "/api/settings/model-configurations/delete",
     "settings.model_configuration.migrate": "/api/settings/model-configurations/migrate",
     "settings.model_call_order.update": "/api/settings/model-call-order/update",
+    "settings.model_prompt_overrides.update": "/api/settings/model-prompt-overrides/update",
     "settings.provider.update": "/api/settings/provider/update",
     "settings.provider.create": "/api/settings/provider/create",
     "settings.provider.oauth_login": "/api/settings/provider/oauth-login",

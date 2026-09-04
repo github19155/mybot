@@ -97,6 +97,41 @@ _FALLBACK_ERROR_TOKENS = (
 FallbackModelObserver = Callable[[str], Awaitable[None]]
 
 
+
+def _rewire_system_prefix(
+    messages: Any,
+    primary_prefix: str | None,
+    fallback_prefix: str | None,
+) -> Any:
+    """Swap the primary model's system prompt prefix for a fallback model's own.
+
+    The caller builds system prompts as ``<prefix>\n\n---\n\n<base>``. When the
+    primary model carries a bound prefix, it must not leak to a fallback model:
+    strip prefix and its separator, then prepend the fallback model's prefix.
+    """
+    if primary_prefix is None and fallback_prefix is None:
+        return messages
+    if not isinstance(messages, list) or not messages:
+        return messages
+    system = messages[0]
+    if (
+        not isinstance(system, dict)
+        or system.get("role") != "system"
+        or not isinstance(system.get("content"), str)
+    ):
+        return messages
+    content = system["content"]
+    if primary_prefix:
+        if not content.startswith(primary_prefix):
+            return messages
+        content = content[len(primary_prefix):]
+        if content.startswith("\n\n---\n\n"):
+            content = content[len("\n\n---\n\n"):]
+    if fallback_prefix:
+        content = f"{fallback_prefix}\n\n---\n\n{content}" if content else fallback_prefix
+    return [dict(system, content=content), *messages[1:]]
+
+
 class FallbackProvider(LLMProvider):
     """Wrap a primary provider and transparently failover to fallback models.
 
@@ -126,6 +161,8 @@ class FallbackProvider(LLMProvider):
         provider_factory: Callable[[Any], LLMProvider],
         fallback_model_observer: FallbackModelObserver | None = None,
         primary_context_window_tokens: int | None = None,
+        primary_system_prompt_prefix: str | None = None,
+        fallback_system_prompt_prefixes: list[str | None] | None = None,
     ):
         primary_generation = primary.generation
         self._primary = primary
@@ -135,10 +172,11 @@ class FallbackProvider(LLMProvider):
         self._provider_factory = provider_factory
         self._fallback_model_observer = fallback_model_observer
         self._primary_context_window_tokens = primary_context_window_tokens
+        self._primary_system_prompt_prefix = primary_system_prompt_prefix
+        self._fallback_system_prompt_prefixes = list(fallback_system_prompt_prefixes or [])
         self._has_fallbacks = bool(fallback_presets)
         self._primary_failures = 0
         self._primary_tripped_at: float | None = None
-
     @property
     def generation(self) -> GenerationSettings:
         return self._primary.generation
@@ -530,6 +568,15 @@ class FallbackProvider(LLMProvider):
                 "model": fallback_model,
                 "max_tokens": fallback.max_tokens,
                 "temperature": fallback.temperature,
+                "messages": _rewire_system_prefix(
+                    kwargs.get("messages"),
+                    self._primary_system_prompt_prefix,
+                    (
+                        self._fallback_system_prompt_prefixes[idx]
+                        if idx < len(self._fallback_system_prompt_prefixes)
+                        else None
+                    ),
+                ),
             }
             provider_context = fallback_kwargs.get("provider_context")
             if isinstance(provider_context, ProviderCallContext):

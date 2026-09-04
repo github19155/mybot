@@ -604,6 +604,10 @@ export interface SettingsPayload {
   }>;
   model_call_order: string[];
   model_call_order_editable: boolean;
+  system_prompt_overrides: Array<{
+    prompt: string;
+    models: string[];
+  }>;
   /** Whether an actual legacy model configuration is available to convert. */
   model_configuration_migratable?: boolean;
   created_model_preset?: string;

@@ -81,6 +81,7 @@ class TranscriptInput:
     current_role: str = "user"
     session_summary: SessionSummary | None = None
     runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None
+    system_prompt_prefix: str | None = None
 
     @property
     def message_count(self) -> int:
@@ -109,6 +110,7 @@ class ContextBuilder:
         session_summary: SessionSummary | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        system_prompt_prefix: str | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
@@ -153,7 +155,10 @@ class ContextBuilder:
                 f"{session_summary['text']}"
             )
 
-        return "\n\n---\n\n".join(parts)
+        prompt = "\n\n---\n\n".join(parts)
+        if system_prompt_prefix:
+            return f"{system_prompt_prefix}\n\n---\n\n{prompt}"
+        return prompt
 
     def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:
         """Get the core identity section."""
@@ -295,6 +300,7 @@ class ContextBuilder:
                     session_summary=transcript.session_summary,
                     workspace=root,
                     include_memory=include_memory,
+                    system_prompt_prefix=transcript.system_prompt_prefix,
                 ),
             },
             *transcript.history,

@@ -186,6 +186,8 @@ export function ModelsSettings({
   creating,
   creatingSaving,
   callOrder,
+  promptOverrides,
+  promptOverridesSaving,
   saving,
   orderSaving,
   migrationSaving,
@@ -194,6 +196,7 @@ export function ModelsSettings({
   onChangeCallOrder,
   onProviderOAuthLogin,
   onSave,
+  onSavePromptOverrides,
   onMigrate,
   onBeginCreate,
   onCancelCreate,
@@ -211,6 +214,8 @@ export function ModelsSettings({
   creating: boolean;
   creatingSaving: boolean;
   callOrder: string[];
+  promptOverrides: SettingsPayload["system_prompt_overrides"];
+  promptOverridesSaving: boolean;
   saving: boolean;
   orderSaving: boolean;
   migrationSaving: boolean;
@@ -219,6 +224,7 @@ export function ModelsSettings({
   onChangeCallOrder: (order: string[]) => void;
   onProviderOAuthLogin: (provider: string) => void;
   onSave: () => void;
+  onSavePromptOverrides: (overrides: SettingsPayload["system_prompt_overrides"]) => void;
   onMigrate: () => void;
   onBeginCreate: () => void;
   onCancelCreate: () => void;
@@ -236,7 +242,13 @@ export function ModelsSettings({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [draggedCallOrderIndex, setDraggedCallOrderIndex] = useState<number | null>(null);
   const [dragOverCallOrderIndex, setDragOverCallOrderIndex] = useState<number | null>(null);
+  const [promptDraft, setPromptDraft] = useState<SettingsPayload["system_prompt_overrides"]>(
+    promptOverrides,
+  );
 
+  useEffect(() => {
+    setPromptDraft(promptOverrides);
+  }, [promptOverrides]);
   useEffect(() => {
     if (presetNameError) presetNameInputRef.current?.focus();
   }, [presetNameError]);
@@ -877,6 +889,94 @@ export function ModelsSettings({
               {creating && editorOpen ? renderPresetEditor() : null}
             </>
           )}
+        </SettingsGroup>
+      </section>
+      <section>
+        <SettingsSectionTitle>
+          {tx("settings.models.promptOverrides", "System prompt overrides")}
+        </SettingsSectionTitle>
+        <SettingsGroup>
+          {promptDraft.map((row, index) => (
+            <div
+              key={index}
+              className="flex flex-col gap-2 border-b border-border px-4 py-3 last:border-b-0 sm:px-5"
+            >
+              <Input
+                value={row.prompt}
+                onChange={(event) =>
+                  setPromptDraft(
+                    promptDraft.map((item, i) =>
+                      i === index ? { ...item, prompt: event.target.value } : item,
+                    ),
+                  )
+                }
+                placeholder={tx("settings.models.promptOverridePlaceholder", "Custom system prompt")}
+              />
+              <div className="flex items-center gap-2">
+                <Input
+                  value={row.models.join(", ")}
+                  onChange={(event) =>
+                    setPromptDraft(
+                      promptDraft.map((item, i) =>
+                        i === index
+                          ? {
+                              ...item,
+                              models: event.target.value
+                                .split(",")
+                                .map((id) => id.trim())
+                                .filter(Boolean),
+                            }
+                          : item,
+                      ),
+                    )
+                  }
+                  placeholder={tx(
+                    "settings.models.promptOverrideModelsPlaceholder",
+                    "Model IDs, comma-separated",
+                  )}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={tx("settings.actions.delete", "Delete")}
+                  onClick={() => setPromptDraft(promptDraft.filter((_, i) => i !== index))}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                </Button>
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={promptOverridesSaving}
+              onClick={() => setPromptDraft([...promptDraft, { prompt: "", models: [] }])}
+            >
+              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              {tx("settings.models.addPromptOverride", "Add override")}
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                promptOverridesSaving
+                || JSON.stringify(promptDraft) === JSON.stringify(promptOverrides)
+              }
+              onClick={() =>
+                onSavePromptOverrides(
+                  promptDraft.filter((row) => row.prompt.trim() && row.models.length > 0),
+                )
+              }
+            >
+              {promptOverridesSaving ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : null}
+              {promptOverridesSaving
+                ? tx("settings.actions.saving", "Saving...")
+                : tx("settings.actions.save", "Save")}
+            </Button>
+          </div>
         </SettingsGroup>
       </section>
     </div>

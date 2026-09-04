@@ -113,6 +113,13 @@ class ModelPresetConfig(Base):
         )
 
 
+class SystemPromptOverrideConfig(Base):
+    """A custom system prompt bound to exact model IDs."""
+
+    prompt: str
+    models: list[str] = Field(min_length=1)
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -437,6 +444,11 @@ class Config(BaseSettings):
         validation_alias=AliasChoices("modelPresets", "model_presets"),
         serialization_alias="modelPresets",
     )
+    system_prompt_overrides: list[SystemPromptOverrideConfig] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("systemPromptOverrides", "system_prompt_overrides"),
+        serialization_alias="systemPromptOverrides",
+    )
 
     def __init__(self, **values: Any) -> None:
         if not type(self).__pydantic_complete__:
@@ -470,6 +482,25 @@ class Config(BaseSettings):
                 raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")
         return self
 
+    @model_validator(mode="after")
+    def _validate_system_prompt_overrides(self) -> "Config":
+        """Normalize blanks and reject a model bound by more than one rule."""
+        bound: set[str] = set()
+        for override in self.system_prompt_overrides:
+            override.prompt = override.prompt.strip()
+            override.models = list(dict.fromkeys(m.strip() for m in override.models))
+            if not override.prompt:
+                raise ValueError("system prompt override prompt must not be blank")
+            if not override.models or any(not model for model in override.models):
+                raise ValueError(f"system prompt override {override.prompt!r} binds no model")
+            duplicate = next((model for model in override.models if model in bound), None)
+            if duplicate:
+                raise ValueError(
+                    f"model {duplicate!r} is already bound by another system prompt override"
+                )
+            bound.update(override.models)
+        return self
+
     def resolve_default_preset(self) -> ModelPresetConfig:
         """Return the implicit `default` preset from agents.defaults fields."""
         d = self.agents.defaults
@@ -487,6 +518,15 @@ class Config(BaseSettings):
         if name not in self.model_presets:
             raise KeyError(f"model_preset {name!r} not found in model_presets")
         return self.model_presets[name]
+
+    def system_prompt_for(self, model: str | None) -> str | None:
+        """Return the custom system prompt bound to an exact model ID, if any."""
+        if not model:
+            return None
+        for override in self.system_prompt_overrides:
+            if model in override.models:
+                return override.prompt
+        return None
 
     @property
     def workspace_path(self) -> Path:

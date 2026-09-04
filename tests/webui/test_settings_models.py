@@ -52,6 +52,7 @@ def test_model_domain_owns_dto_and_config_updates() -> None:
         "agent",
         "model_presets",
         "model_call_order",
+        "system_prompt_overrides",
         "model_call_order_editable",
         "model_configuration_migratable",
         "providers",

@@ -19,6 +19,7 @@ class ProviderSnapshot:
     signature: tuple[object, ...]
     generation: GenerationSettings | None = None
     model_preset: str | None = None
+    system_prompt_prefix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -292,6 +293,10 @@ def make_provider(
             fallback_presets=fallback_presets,
             provider_factory=lambda fb: _make_provider_core(config, preset=fb),
             primary_context_window_tokens=resolved.context_window_tokens,
+            primary_system_prompt_prefix=config.system_prompt_for(resolved.model),
+            fallback_system_prompt_prefixes=[
+                config.system_prompt_for(fb.model) for fb in fallback_presets
+            ],
         )
 
     return provider
@@ -343,6 +348,7 @@ def provider_signature(
             fallback.temperature,
             fallback.reasoning_effort,
             fallback.context_window_tokens,
+            config.system_prompt_for(fallback.model),
             getattr(fp, "proxy", None) if fp else None,
             fp.thinking_style if fp else None,
         )
@@ -364,6 +370,7 @@ def provider_signature(
         resolved.temperature,
         resolved.reasoning_effort,
         resolved.context_window_tokens,
+        config.system_prompt_for(resolved.model),
         getattr(p, "proxy", None) if p else None,
         p.thinking_style if p else None,
         tuple(_fallback_signature(fallback) for fallback in fallback_presets),
@@ -393,6 +400,7 @@ def build_provider_snapshot(
         signature=provider_signature(config, preset=resolved),
         generation=resolved.to_generation_settings(),
         model_preset=selected_preset,
+        system_prompt_prefix=config.system_prompt_for(resolved.model),
     )
 
 

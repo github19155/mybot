@@ -422,6 +422,86 @@ class TestFallbackWhenPrimaryRaises:
         assert result.content == "fallback ok"
         assert result.finish_reason == "stop"
         factory.assert_called_once_with(_fallback("fallback-a"))
+    @pytest.mark.asyncio
+    async def test_fallback_swaps_system_prompt_prefix(self) -> None:
+        """Primary's bound prefix is stripped; the fallback's own prefix is prepended."""
+        primary = _RaisingProvider("primary")
+        captured: dict[str, Any] = {}
+
+        class _CapturingProvider(LLMProvider):
+            def __init__(self) -> None:
+                super().__init__(provider_name="capture")
+
+            def get_default_model(self) -> str:
+                return "capture/model"
+
+            async def chat(self, **kwargs: Any) -> LLMResponse:
+                captured["messages"] = kwargs["messages"]
+                return _make_response("fallback ok")
+
+            async def chat_stream(self, **kwargs: Any) -> LLMResponse:
+                raise NotImplementedError
+
+        fb = FallbackProvider(
+            primary=primary,
+            fallback_presets=[_fallback("fallback-a")],
+            provider_factory=lambda preset: _CapturingProvider(),
+            primary_system_prompt_prefix="Primary persona.",
+            fallback_system_prompt_prefixes=["Fallback persona."],
+        )
+
+        result = await fb.chat(
+            messages=[
+                {"role": "system", "content": "Primary persona.\n\n---\n\nBase prompt."},
+                {"role": "user", "content": "hi"},
+            ],
+            model="primary-model",
+        )
+
+        assert result.content == "fallback ok"
+        system = captured["messages"][0]
+        assert system["role"] == "system"
+        assert system["content"] == "Fallback persona.\n\n---\n\nBase prompt."
+
+    @pytest.mark.asyncio
+    async def test_fallback_strips_primary_prefix_when_no_fallback_prefix(self) -> None:
+        primary = _RaisingProvider("primary")
+        captured: dict[str, Any] = {}
+
+        class _CapturingProvider(LLMProvider):
+            def __init__(self) -> None:
+                super().__init__(provider_name="capture")
+
+            def get_default_model(self) -> str:
+                return "capture/model"
+
+            async def chat(self, **kwargs: Any) -> LLMResponse:
+                captured["messages"] = kwargs["messages"]
+                return _make_response("fallback ok")
+
+            async def chat_stream(self, **kwargs: Any) -> LLMResponse:
+                raise NotImplementedError
+
+        fb = FallbackProvider(
+            primary=primary,
+            fallback_presets=[_fallback("fallback-a")],
+            provider_factory=lambda preset: _CapturingProvider(),
+            primary_system_prompt_prefix="Primary persona.",
+            fallback_system_prompt_prefixes=[None],
+        )
+
+        result = await fb.chat(
+            messages=[
+                {"role": "system", "content": "Primary persona.\n\n---\n\nBase prompt."},
+                {"role": "user", "content": "hi"},
+            ],
+            model="primary-model",
+        )
+
+        assert result.content == "fallback ok"
+        system = captured["messages"][0]
+        assert system["role"] == "system"
+        assert system["content"] == "Base prompt."
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("stream", [False, True], ids=["chat", "stream"])

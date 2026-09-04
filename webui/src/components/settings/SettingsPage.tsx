@@ -76,6 +76,8 @@ export function SettingsPage({
     beginModelPresetCreation,
     cancelModelPresetCreation,
     changeModelCallOrder,
+    promptOverrides,
+    promptOverridesSaving,
     channelsQuery,
     cliApps,
     cliAppsAction,
@@ -160,6 +162,7 @@ export function SettingsPage({
     runProviderOAuth,
     saveImageGenerationSettings,
     saveModelSettings,
+    savePromptOverrides,
     saveNetworkSafetySettings,
     saveProvider,
     saveTranscriptionSettings,
@@ -251,6 +254,9 @@ export function SettingsPage({
               creating={modelPresetCreating}
               creatingSaving={modelConfigurationSaving}
               callOrder={modelCallOrder}
+              promptOverrides={promptOverrides}
+              promptOverridesSaving={promptOverridesSaving}
+              onSavePromptOverrides={savePromptOverrides}
               saving={saving}
               orderSaving={modelCallOrderSaving || modelConfigurationSaving}
               migrationSaving={modelMigrationSaving}

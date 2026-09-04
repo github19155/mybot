@@ -627,6 +627,10 @@ class WebSearchTool(Tool):
         if not api_key:
             logger.warning("TAVILY_API_KEY not set, falling back to DuckDuckGo")
             return await self._search_duckduckgo(query, n)
+        # base_url points at a Tavily-compatible proxy (same /search and /usage
+        # routes); empty falls back to the official endpoint.
+        base_url = (self.config.base_url or os.environ.get("TAVILY_BASE_URL", "")).strip().rstrip("/")
+        url = f"{base_url}/search" if base_url else "https://api.tavily.com/search"
         try:
             async with httpx.AsyncClient(proxy=self.proxy) as client:
                 r = await client.post(

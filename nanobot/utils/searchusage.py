@@ -66,6 +66,7 @@ class SearchUsageInfo:
 async def fetch_search_usage(
     provider: str,
     api_key: str | None = None,
+    base_url: str | None = None,
 ) -> SearchUsageInfo:
     """
     Fetch usage info for the configured web search provider.
@@ -73,6 +74,8 @@ async def fetch_search_usage(
     Args:
         provider: Provider name (e.g. "tavily", "brave", "duckduckgo").
         api_key:  API key for the provider (falls back to env vars).
+        base_url: Optional base URL of a Tavily-compatible proxy (same routes);
+                  empty falls back to the official endpoint.
 
     Returns:
         SearchUsageInfo with populated fields where available.
@@ -80,7 +83,7 @@ async def fetch_search_usage(
     p = (provider or "duckduckgo").strip().lower()
 
     if p == "tavily":
-        return await _fetch_tavily_usage(api_key)
+        return await _fetch_tavily_usage(api_key, base_url)
     else:
         # brave, duckduckgo, searxng, jina, unknown — no usage API
         return SearchUsageInfo(provider=p, supported=False)
@@ -90,8 +93,8 @@ async def fetch_search_usage(
 # Tavily
 # ---------------------------------------------------------------------------
 
-async def _fetch_tavily_usage(api_key: str | None) -> SearchUsageInfo:
-    """Fetch usage from GET https://api.tavily.com/usage."""
+async def _fetch_tavily_usage(api_key: str | None, base_url: str | None = None) -> SearchUsageInfo:
+    """Fetch usage from GET <base_url or https://api.tavily.com>/usage."""
     import httpx
 
     key = api_key or os.environ.get("TAVILY_API_KEY", "")
@@ -105,7 +108,7 @@ async def _fetch_tavily_usage(api_key: str | None) -> SearchUsageInfo:
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             r = await client.get(
-                "https://api.tavily.com/usage",
+                f"{(base_url or 'https://api.tavily.com').rstrip('/')}/usage",
                 headers={"Authorization": f"Bearer {key}"},
             )
             r.raise_for_status()

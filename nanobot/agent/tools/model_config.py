@@ -57,12 +57,12 @@ class ModelConfigTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Manage instance model presets, providers and seven subagent role bindings without changing your selected model. "
+            "Manage instance model presets, providers and subagent role bindings without changing your selected model. "
             "list shows available names. roles_update uses bindings {role: preset_name_or_null}; null inherits the parent runtime. "
             "model_create requires name, model, provider; model_update uses name and optional new_name/settings; "
             "model_delete requires name (bound presets must be unbound first). provider_create uses name and api_base, "
             "provider_update uses provider and connection settings. Credentials may use ${ENV_VAR} references. "
-            "Dispatch with spawn role/model_preset/model; use my to select a model for your own direct work."
+            "Use the subagent tool for child role/model/thinking selection; use my to select a model for your own direct work."
         )
 
     async def execute(self, **kwargs: Any) -> str | ToolResult:

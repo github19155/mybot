@@ -1,8 +1,9 @@
 """Configuration schema using Pydantic."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from pydantic import AliasChoices, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -120,15 +121,36 @@ class SystemPromptOverrideConfig(Base):
     models: list[str] = Field(min_length=1)
 
 
-SubagentRoleName = Literal[
-    "researcher", "planner", "coder", "debugger", "tester", "writer", "analyst",
+SubagentRoleName = str
+SubagentThinking = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "adaptive",
 ]
+SubagentContext = Literal["fresh", "fork"]
+
+_BUILTIN_SUBAGENT_ROLE_NAMES = (
+    "researcher", "planner", "coder", "debugger", "tester", "writer", "analyst",
+)
 
 
 class SubagentRoleConfig(Base):
-    """Optional default model preset for a built-in subagent role."""
+    """A builtin override or a complete custom subagent role definition."""
 
+    description: str | None = None
+    system_prompt: str | None = None
+    tools: list[str] | None = None
+    model: str | None = None
     model_preset: str | None = None
+    thinking: SubagentThinking | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    timeout_seconds: float | None = Field(default=None, gt=0.0)
+    context: SubagentContext | None = None
+    disabled: bool = False
+
+    @model_validator(mode="after")
+    def _validate_model_selection(self) -> "SubagentRoleConfig":
+        if self.model and self.model_preset:
+            raise ValueError("model and model_preset are mutually exclusive")
+        return self
 
 
 class AgentDefaults(Base):
@@ -461,7 +483,9 @@ class Config(BaseSettings):
         serialization_alias="systemPromptOverrides",
     )
     subagent_roles: dict[SubagentRoleName, SubagentRoleConfig] = Field(
-        default_factory=lambda: {name: SubagentRoleConfig() for name in get_args(SubagentRoleName)},
+        default_factory=lambda: {
+            name: SubagentRoleConfig() for name in _BUILTIN_SUBAGENT_ROLE_NAMES
+        },
         validation_alias=AliasChoices("subagentRoles", "subagent_roles"),
         serialization_alias="subagentRoles",
     )
@@ -501,8 +525,21 @@ class Config(BaseSettings):
         for fallback in self.agents.defaults.fallback_models:
             if isinstance(fallback, str) and fallback not in self.model_presets:
                 raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")
-        for role in get_args(SubagentRoleName):
-            binding = self.subagent_roles.setdefault(role, SubagentRoleConfig()).model_preset
+        for role in _BUILTIN_SUBAGENT_ROLE_NAMES:
+            self.subagent_roles.setdefault(role, SubagentRoleConfig())
+        for role, role_config in self.subagent_roles.items():
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", role):
+                raise ValueError(
+                    f"Subagent role name {role!r} must match [a-z][a-z0-9_-]{{0,63}}"
+                )
+            if role not in _BUILTIN_SUBAGENT_ROLE_NAMES and (
+                not (role_config.description or "").strip()
+                or not (role_config.system_prompt or "").strip()
+            ):
+                raise ValueError(
+                    f"Custom subagent role {role!r} requires description and system_prompt"
+                )
+            binding = role_config.model_preset
             if binding and binding != "default" and binding not in self.model_presets:
                 raise ValueError(f"Subagent role {role!r} refers to unknown model preset {binding!r}")
         return self

@@ -3,13 +3,13 @@
 import asyncio
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.agent import SubagentManager
 from nanobot.agent.subagent import SubagentStatus
-from nanobot.agent.tools.base import ToolResult
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMUsage
 from nanobot.utils.llm_runtime import LLMRuntime
@@ -70,9 +70,21 @@ async def test_spawn_status_carries_origin_fields(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_spawn_rejects_when_session_budget_exhausted(tmp_path):
+async def test_spawn_queues_when_session_budget_exhausted(tmp_path):
     sm = _manager(tmp_path)
     sm.max_concurrent_per_session = 1
+    sm._announce_result = AsyncMock()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run(_spec):
+        entered.set()
+        await release.wait()
+        return SimpleNamespace(
+            stop_reason="completed", final_content="done", error=None, tool_events=[],
+        )
+
+    sm.runner.run = AsyncMock(side_effect=run)
 
     result = await sm.spawn(
         "first task",
@@ -83,6 +95,7 @@ async def test_spawn_rejects_when_session_budget_exhausted(tmp_path):
     )
     assert isinstance(result, str)
     assert not result.startswith("Error:")
+    await asyncio.wait_for(entered.wait(), timeout=1)
 
     result2 = await sm.spawn(
         "second task",
@@ -91,10 +104,10 @@ async def test_spawn_rejects_when_session_budget_exhausted(tmp_path):
         session_key="s1",
         runtime=_runtime(),
     )
-    assert isinstance(result2, ToolResult)
-    assert result2.is_error
-    assert "too many subagents" in result2.lower()
+    assert isinstance(result2, str)
+    assert "queued" in result2.lower()
 
+    release.set()
     await sm.close()
 
 
@@ -142,6 +155,10 @@ async def test_steer_drop_oldest_on_overflow(tmp_path):
     sm = _manager(tmp_path)
     task = asyncio.create_task(asyncio.Event().wait())
     sm._running_tasks["t1"] = task
+    sm._task_statuses["t1"] = SubagentStatus(
+        task_id="t1", label="test", task_description="task", started_at=time.monotonic(),
+        state="running",
+    )
 
     for i in range(7):  # maxsize 5 -> oldest 2 dropped
         assert await sm.steer("t1", f"msg-{i}") is True
@@ -161,6 +178,10 @@ async def test_steer_drain_respects_limit(tmp_path):
     sm = _manager(tmp_path)
     task = asyncio.create_task(asyncio.Event().wait())
     sm._running_tasks["t1"] = task
+    sm._task_statuses["t1"] = SubagentStatus(
+        task_id="t1", label="test", task_description="task", started_at=time.monotonic(),
+        state="running",
+    )
 
     for i in range(3):
         await sm.steer("t1", f"m{i}")
@@ -196,6 +217,7 @@ def _finished_status(task_id: str, **overrides) -> SubagentStatus:
         origin_message_id=None,
         ended_at_ms=2_000,
         usage=LLMUsage.reported(input_tokens=10, output_tokens=5),
+        state="completed",
     )
     defaults.update(overrides)
     return SubagentStatus(**defaults)
@@ -214,7 +236,7 @@ def test_finished_history_bounded_at_50(tmp_path):
 
 def test_record_finished_skips_incomplete(tmp_path):
     sm = _manager(tmp_path)
-    sm._record_finished(_finished_status("t1", phase="queued"))
+    sm._record_finished(_finished_status("t1", phase="queued", state="queued"))
     assert len(sm._finished) == 0
 
 
@@ -224,6 +246,7 @@ def test_fleet_snapshot_shape_and_ordering(tmp_path):
     running = _finished_status(
         "run-1",
         phase="running",
+        state="running",
         started_at_ms=3_000,
         ended_at_ms=None,
         label="Running task",
@@ -250,7 +273,12 @@ def test_fleet_snapshot_shape_and_ordering(tmp_path):
         "output_tokens": 5,
         "total_tokens": 15,
     }
-    assert snap["subagents"][1]["state"] == "finished"
+    assert snap["subagents"][1]["state"] == "completed"
     assert snap["subagents"][1]["started_at_ms"] == 1_000
     assert snap["subagents"][1]["ended_at_ms"] is not None  # stamped on record
-    assert snap["budget"] == {"max_per_session": 8, "running_by_session": {}}
+    assert snap["budget"] == {
+        "max_per_session": 8,
+        "max_global": 16,
+        "running": 0,
+        "running_by_session": {},
+    }

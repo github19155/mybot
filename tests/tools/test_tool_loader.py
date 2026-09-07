@@ -94,7 +94,7 @@ def test_discover_finds_concrete_tools():
     assert "CliAppsTool" in class_names
     assert "MessageTool" in class_names
     assert "MyTool" in class_names
-    assert "SpawnTool" in class_names
+    assert "SubagentTool" in class_names
     assert "ExecSessionTool" in class_names
 
 
@@ -208,7 +208,7 @@ def test_fs_tool_create_respects_sandbox():
     assert tool._allowed_dir == Path("/tmp/test")
 
 
-# --- Task 5: MessageTool, SpawnTool, CronTool ---
+# --- Task 5: MessageTool, SubagentTool, CronTool ---
 
 
 async def test_message_tool_create():
@@ -220,13 +220,13 @@ async def test_message_tool_create():
     assert isinstance(tool, MessageTool)
 
 
-def test_spawn_tool_create():
-    from nanobot.agent.tools.spawn import SpawnTool
+def test_subagent_tool_create():
+    from nanobot.agent.tools.subagent import SubagentTool
     mock_mgr = MagicMock()
     mock_config = MagicMock()
     ctx = ToolContext(config=mock_config, workspace="/tmp", subagent_manager=mock_mgr)
-    tool = SpawnTool.create(ctx)
-    assert isinstance(tool, SpawnTool)
+    tool = SubagentTool.create(ctx)
+    assert isinstance(tool, SubagentTool)
 
 
 def test_cron_tool_enabled_without_service():
@@ -447,7 +447,7 @@ def test_loader_registers_same_tools_as_old_hardcoded():
         "read_file", "write_file", "edit_file", "list_dir",
         "find_files", "grep", "exec", "exec_session", "list_exec_sessions",
         "web_search", "web_fetch",
-        "message", "spawn", "cron",
+        "message", "subagent", "cron",
         "my",
     }
     actual = set(registered)

@@ -14,7 +14,17 @@ from nanobot.config.paths import (
     get_workspace_path,
     is_default_workspace,
 )
-from nanobot.config.schema import Config
+from nanobot.config.schema import (  # pyright: ignore[reportPrivateUsage]
+    Config,
+    _resolve_tool_config_refs,
+)
+
+# The schema module can be imported while ``config.loader`` is still being
+# initialized. Retry the Pydantic forward-reference rebuild once this package
+# has completed its own imports, so direct ``Config.model_validate(...)`` also
+# works in a fresh process.
+if not Config.__pydantic_complete__:
+    _resolve_tool_config_refs()  # pyright: ignore[reportPrivateUsage]
 
 __all__ = [
     "Config",

@@ -256,11 +256,13 @@ export interface SubagentToolEvent {
 export interface SubagentSummary {
   task_id: string;
   label: string;
-  state: "running" | "finished";
+  state: "queued" | "running" | "completed" | "failed" | "stopped" | "finished";
   phase: string;
   iteration?: number;
   role?: string;
   model?: string;
+  thinking?: string | null;
+  context?: "fresh" | "fork" | string;
   origin?: SubagentOrigin;
   started_at_ms?: number;
   ended_at_ms?: number | null;
@@ -273,6 +275,8 @@ export interface SubagentsPayload {
   subagents: SubagentSummary[];
   budget?: {
     max_per_session: number;
+    max_global?: number;
+    running?: number;
     running_by_session: Record<string, number>;
   };
 }

@@ -8,9 +8,9 @@ import threading
 from collections.abc import Callable
 from typing import Any, cast
 
-from nanobot.agent.subagent_roles import SUBAGENT_ROLES
+from nanobot.agent.subagent_roles import resolve_role
 from nanobot.config.loader import resolve_config_env_vars
-from nanobot.config.schema import Config, ModelPresetConfig, SubagentRoleName
+from nanobot.config.schema import Config, ModelPresetConfig
 from nanobot.providers.factory import build_provider_snapshot
 from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 from nanobot.webui import settings_models as models
@@ -38,21 +38,32 @@ class ModelManagement:
         model: str | None = None,
         model_preset: str | None = None,
     ) -> LLMRuntime:
-        if role not in SUBAGENT_ROLES:
-            raise ValueError("Unknown subagent role")
+        with self._lock:
+            config = self._load()
+            role_config = resolve_role(config, role)
+        if role_config.disabled:
+            raise ValueError("Subagent role is disabled")
         if model is not None and model_preset is not None:
             raise ValueError("Choose either model or model_preset, not both")
         with self._lock:
             config = self._load()
-            binding = config.subagent_roles[cast(SubagentRoleName, role)].model_preset
-            selected = model_preset if model_preset is not None else binding
-            if model is None and selected is None:
-                return parent
+            role_config = resolve_role(config, role)
             if model is not None:
-                if not isinstance(model, str) or not model.strip():
+                selected_model = model
+                selected = None
+            elif model_preset is not None:
+                selected_model = None
+                selected = model_preset
+            else:
+                selected_model = role_config.model
+                selected = role_config.model_preset
+            if selected_model is None and selected is None:
+                return parent
+            if selected_model is not None:
+                if not selected_model.strip():
                     raise ValueError("model must be a non-empty string")
                 preset = ModelPresetConfig(
-                    model=model.strip(), provider="auto",
+                    model=selected_model.strip(), provider="auto",
                     max_tokens=parent.generation.max_tokens,
                     temperature=parent.generation.temperature,
                     reasoning_effort=parent.generation.reasoning_effort,
@@ -64,7 +75,11 @@ class ModelManagement:
                 preset = config.resolve_preset(selected)
             try:
                 resolved = resolve_config_env_vars(config.model_copy(deep=True), config_path=config.source_path)
-                snapshot = build_provider_snapshot(resolved, preset=preset, preset_name=selected if model is None else None)
+                snapshot = build_provider_snapshot(
+                    resolved,
+                    preset=preset,
+                    preset_name=selected if selected_model is None else None,
+                )
             except Exception:
                 raise ValueError("Cannot resolve task model; check the configured provider and credentials") from None
             return runtime_from_provider_snapshot(snapshot)
@@ -99,6 +114,7 @@ class ModelManagement:
             operation = operations.get(action)
             if operation is None:
                 return {"status": "error", "message": "Unknown model management action"}
+            operation = cast(Any, operation)
             query = {
                 key: [value if isinstance(value, str) else json.dumps(value)]
                 for key, value in params.items()

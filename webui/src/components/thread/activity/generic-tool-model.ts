@@ -224,7 +224,7 @@ function activityLabel(
   switch (name) {
     case "generate_image":
       return statusCopy(status, "Generating image", "Generated image", "Could not generate image");
-    case "spawn":
+    case "subagent":
       return statusCopy(status, "Delegating task", "Delegated task", "Could not delegate task");
     case "message":
       return statusCopy(status, "Sending message", "Sent message", "Could not send message");
@@ -281,7 +281,7 @@ function activityDetail(items: GenericToolRunItem[], family: ToolFamily, name: s
   if (family === "memory") return quote(fieldValue(trace, "query"));
 
   switch (name) {
-    case "spawn":
+    case "subagent":
       return safeText(fieldValue(trace, "label"));
     case "message":
       return safeText(fieldValue(trace, "channel"));

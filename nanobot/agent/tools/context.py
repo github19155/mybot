@@ -42,6 +42,9 @@ class RequestContext:
     turn_id: str | None = None
     workspace: Path | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
+    allowed_tools: frozenset[str] = field(default_factory=frozenset)
+    conversation_history: tuple[dict[str, Any], ...] = ()
+    exec_owner_session_key: str | None = None
 
 
 @runtime_checkable
@@ -75,6 +78,13 @@ def current_request_context() -> RequestContext | None:
 def current_request_session_key() -> str | None:
     ctx = current_request_context()
     return ctx.session_key if ctx else None
+
+
+def current_request_exec_owner_key() -> str | None:
+    ctx = current_request_context()
+    if ctx is None:
+        return None
+    return ctx.exec_owner_session_key or ctx.session_key
 
 
 @dataclass

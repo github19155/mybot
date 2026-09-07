@@ -21,7 +21,7 @@ describe("generic tool activity semantics", () => {
     ['read_file({"path":"docs/guide.md"})', "Read file", "docs/guide.md"],
     ['memory_search({"query":"launch date"})', "Searched memory", "“launch date”"],
     ['generate_image({"prompt":"private launch art"})', "Generated image", ""],
-    ['spawn({"label":"Research competitors","task":"private task"})', "Delegated task", "Research competitors"],
+    ['subagent({"action":"run","label":"Research competitors","task":"private task"})', "Delegated task", "Research competitors"],
     ['message({"channel":"telegram","content":"private message"})', "Sent message", "telegram"],
     ['my({"action":"check","key":"context_window_tokens"})', "Checked agent settings", "context_window_tokens"],
     ['my({"action":"set","key":"model","value":"private-model"})', "Updated agent settings", "model"],

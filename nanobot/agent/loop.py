@@ -781,6 +781,8 @@ class AgentLoop:
             sender_id=ctx.msg.sender_id,
             turn_id=ctx.turn_id,
             workspace=scope.project_path,
+            allowed_tools=frozenset((ctx.tools or self.tools).tool_names),
+            conversation_history=tuple(ctx.history),
         )
 
     async def _resolve_runtime_context_for_turn(

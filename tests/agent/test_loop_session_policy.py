@@ -49,7 +49,7 @@ async def test_transient_session_keeps_history_without_persisting_or_durable_too
     key = "websocket:transient-test"
     loop.sessions.get_or_create_transient(
         key,
-        disabled_tools={"create_goal", "update_goal", "spawn", "cron"},
+        disabled_tools={"create_goal", "update_goal", "subagent", "cron"},
     )
 
     await loop._process_message(_message(key, "first question"))
@@ -59,7 +59,7 @@ async def test_transient_session_keeps_history_without_persisting_or_durable_too
     assert "private durable memory" not in str(calls[0].kwargs["messages"])
     tool_names = {item["function"]["name"] for item in calls[0].kwargs["tools"]}
     assert "read_session" in tool_names
-    assert {"create_goal", "update_goal", "spawn", "cron"}.isdisjoint(tool_names)
+    assert {"create_goal", "update_goal", "subagent", "cron"}.isdisjoint(tool_names)
     assert "first answer" in str(calls[1].kwargs["messages"])
     session = loop.sessions.get_cached(key)
     assert session is not None
@@ -132,7 +132,7 @@ async def test_session_discard_control_cancels_active_turn(tmp_path, monkeypatch
     previous_file_state = loop._file_state_store.for_session(key)
     loop.sessions.get_or_create_transient(
         key,
-        disabled_tools={"create_goal", "update_goal", "spawn", "cron"},
+        disabled_tools={"create_goal", "update_goal", "subagent", "cron"},
     )
     run_task = asyncio.create_task(loop.run())
     await loop.bus.publish_inbound(_message(key, "private"))

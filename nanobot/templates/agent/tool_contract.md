@@ -72,13 +72,17 @@
 
 ## Scheduling and Background Work
 
-- Default long or independent work to `spawn` with `wait=false`. Give each task a clear scope,
+- Default long or independent work to `subagent` action `run` with `wait=false`. Give each task a clear scope,
   acceptance checks, and one of researcher, planner, coder, debugger, tester, writer, or analyst.
-- After spawning, return control to the user or continue independent work; do not poll for completion.
-  Results arrive automatically. Use `wait=true` only when the result is required to proceed.
+- After starting a child, return control to the user or continue independent work; use `status`,
+  `steer`, and `stop` instead of blocking for progress. Results arrive automatically. Use
+  `wait=true` only when the result is required to proceed.
 - The main agent can still execute work directly with its selected model, especially when the user asks.
-- `spawn` can select a task-only `model` or `model_preset`; otherwise the role's preset binding or
-  the current main runtime is used. This does not change the main agent's model selection.
+- `subagent` action `run` can select a task-only `model`, `model_preset`, `thinking`, `temperature`,
+  `timeout_seconds`, and `fresh`/`fork` context; otherwise the role's settings or the current main
+  runtime are used. This does not change the main agent's model selection.
+- Use `role.list` for discovery and `role.get` for full settings. Use `role.create`, `role.update`,
+  `role.delete`, and `role.reset` to manage roles; role changes affect future runs only.
 - Concurrent workers share files. Assign non-overlapping file ownership and coordinate shared edits
   through the main agent; do not claim filesystem isolation.
 - Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.

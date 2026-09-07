@@ -21,6 +21,14 @@ function phaseBadgeClass(phase: string): string {
   return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
 }
 
+function stateBadgeClass(state: string): string {
+  if (state === "queued") return "bg-muted text-muted-foreground";
+  if (state === "failed") return "bg-destructive/10 text-destructive";
+  if (state === "stopped") return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  if (state === "completed") return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
+}
+
 function formatElapsed(startedAtMs: number, now: number): string {
   const totalSeconds = Math.max(0, Math.round((now - startedAtMs) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -55,6 +63,20 @@ function PhaseBadge({ phase, compact }: { phase: string; compact?: boolean }) {
   );
 }
 
+function StateBadge({ state }: { state: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10.5px] font-medium",
+        stateBadgeClass(state),
+      )}
+      data-testid="fleet-state"
+    >
+      {state}
+    </span>
+  );
+}
+
 function SummaryCard({
   subagent,
   now,
@@ -76,6 +98,7 @@ function SummaryCard({
         <span className="min-w-0 truncate text-[12.5px] font-medium text-sidebar-foreground">
           {subagent.label}
         </span>
+        <StateBadge state={subagent.state} />
         <PhaseBadge phase={subagent.phase} compact={showFinished} />
         {subagent.iteration ? (
           <span className="shrink-0 text-[11px] text-muted-foreground">
@@ -84,6 +107,9 @@ function SummaryCard({
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        {subagent.role ? <span className="shrink-0">{subagent.role}</span> : null}
+        {subagent.model ? <span className="min-w-0 truncate" title={subagent.model}>{subagent.model}</span> : null}
+        {subagent.thinking ? <span className="shrink-0">think:{subagent.thinking}</span> : null}
         {subagent.started_at_ms ? (
           <span className="shrink-0">
             {t("fleet.elapsed", { defaultValue: "{{time}}", time: formatElapsed(subagent.started_at_ms, now) })}
@@ -123,8 +149,8 @@ export function FleetView({ token }: { token: string }) {
 
   if (!payload) return null;
 
-  const running = payload.subagents.filter((subagent) => subagent.state === "running");
-  const finished = payload.subagents.filter((subagent) => subagent.state !== "running");
+  const running = payload.subagents.filter((subagent) => ["queued", "running"].includes(subagent.state));
+  const finished = payload.subagents.filter((subagent) => !["queued", "running"].includes(subagent.state));
 
   return (
     <section

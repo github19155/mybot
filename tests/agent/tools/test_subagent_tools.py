@@ -215,7 +215,7 @@ async def test_spawn_forwards_temperature_to_run_spec(tmp_path):
 async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
     """Background tasks should be accepted and start when capacity becomes available."""
     from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.spawn import SpawnTool
+    from nanobot.agent.tools.subagent import SubagentTool
     from nanobot.bus.queue import MessageBus
 
     bus = MessageBus()
@@ -253,19 +253,19 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
 
     from nanobot.agent.tools.context import RequestContext, request_context
 
-    tool = SpawnTool(mgr)
+    tool = SubagentTool(mgr)
     with request_context(RequestContext(
         channel="test",
         chat_id="c1",
         session_key="test:c1",
         runtime=_runtime(provider),
     )):
-        first_result = await tool.execute(task="first task")
-        assert "started" in first_result
+        first_result = await tool.execute(action="run", task="first task")
+        assert "id:" in first_result.lower()
         await asyncio.wait_for(first_entered.wait(), timeout=1.0)
 
-        second_result = await tool.execute(task="second task")
-        assert "started" in second_result
+        second_result = await tool.execute(action="run", task="second task")
+        assert "id:" in second_result.lower()
         tasks = list(mgr._running_tasks.values())
         await asyncio.sleep(0)
         assert not second_entered.is_set()
@@ -283,14 +283,14 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
 @pytest.mark.asyncio
 async def test_spawn_tool_waits_for_inline_result():
     from nanobot.agent.tools.context import RequestContext, request_context
-    from nanobot.agent.tools.spawn import SpawnTool
+    from nanobot.agent.tools.subagent import SubagentTool
 
     class Manager:
         max_concurrent_subagents = 1
 
         def __init__(self):
             self.inline = AsyncMock(return_value="review result")
-            self.spawn = AsyncMock(return_value="started")
+            self.spawn = AsyncMock(return_value="queued")
 
         def get_running_count(self):
             return 0
@@ -299,7 +299,7 @@ async def test_spawn_tool_waits_for_inline_result():
             return await self.inline(**kwargs)
 
     manager = Manager()
-    tool = SpawnTool(manager)
+    tool = SubagentTool(manager)
     runtime = _runtime(MagicMock())
     with request_context(RequestContext(
         channel="test",
@@ -307,7 +307,7 @@ async def test_spawn_tool_waits_for_inline_result():
         session_key="test:c1",
         runtime=runtime,
     )):
-        result = await tool.execute(task="review this", wait=True)
+        result = await tool.execute(action="run", task="review this", wait=True)
 
     assert result == "review result"
     manager.inline.assert_awaited_once()
@@ -318,7 +318,7 @@ async def test_spawn_tool_waits_for_inline_result():
 async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
     from nanobot.agent.subagent import SubagentManager
     from nanobot.agent.tools.context import RequestContext, request_context
-    from nanobot.agent.tools.spawn import SpawnTool
+    from nanobot.agent.tools.subagent import SubagentTool
     from nanobot.bus.queue import MessageBus
 
     manager = SubagentManager(
@@ -348,22 +348,22 @@ async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
         )
 
     manager.runner.run = AsyncMock(side_effect=fake_run)
-    tool = SpawnTool(manager)
+    tool = SubagentTool(manager)
     with request_context(RequestContext(
         channel="test",
         chat_id="c1",
         session_key="test:c1",
         runtime=_runtime(MagicMock()),
     )):
-        first = asyncio.create_task(tool.execute(task="first", wait=True))
+        first = asyncio.create_task(tool.execute(action="run", task="first", wait=True))
         await asyncio.wait_for(first_entered.wait(), timeout=1.0)
 
-        second = asyncio.create_task(tool.execute(task="second", wait=True))
+        second = asyncio.create_task(tool.execute(action="run", task="second", wait=True))
         await asyncio.sleep(0)
 
         assert not second.done()
         assert not second_entered.is_set()
-        assert manager.get_running_count() == 2
+        assert manager.get_running_count() == 1
         release_first.set()
         assert await first == "done"
         await asyncio.wait_for(second_entered.wait(), timeout=1.0)
@@ -382,7 +382,7 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
     from nanobot.agent.tools.context import RequestContext, request_context
     from nanobot.agent.tools.execution import execute_tool_calls
     from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.agent.tools.spawn import SpawnTool
+    from nanobot.agent.tools.subagent import SubagentTool
     from nanobot.bus.queue import MessageBus
     from nanobot.providers.base import ToolCallRequest
 
@@ -410,18 +410,18 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
 
     manager.runner.run = AsyncMock(side_effect=fake_run)
     tools = ToolRegistry()
-    tools.register(SpawnTool(manager))
+    tools.register(SubagentTool(manager))
     runtime = _runtime(MagicMock())
     calls = [
         ToolCallRequest(
-            id="spawn-1",
-            name="spawn",
-            arguments={"task": "first", "wait": True},
+            id="subagent-1",
+            name="subagent",
+            arguments={"action": "run", "task": "first", "wait": True},
         ),
         ToolCallRequest(
-            id="spawn-2",
-            name="spawn",
-            arguments={"task": "second", "wait": True},
+            id="subagent-2",
+            name="subagent",
+            arguments={"action": "run", "task": "second", "wait": True},
         ),
     ]
 

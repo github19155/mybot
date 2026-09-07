@@ -1143,7 +1143,14 @@ def model_settings_payload(
         ),
         "providers": providers,
         "subagent_roles": [
-            {"name": name, **metadata, "model_preset": config.subagent_roles[cast(SubagentRoleName, name)].model_preset}
+            {
+                "name": name,
+                **metadata,
+                "model_preset": config.subagent_roles.get(
+                    name,
+                    SubagentRoleConfig(),
+                ).model_preset,
+            }
             for name, metadata in SUBAGENT_ROLES.items()
         ],
         "max_concurrent_subagents": defaults.max_concurrent_subagents,
@@ -1537,7 +1544,12 @@ def update_subagent_roles(config: Config, query: QueryParams) -> None:
             raise WebUISettingsError("unknown subagent role")
         if preset is not None and preset != "default" and preset not in config.model_presets:
             raise WebUISettingsError("unknown model preset in role bindings")
-        updates[cast(SubagentRoleName, name)] = SubagentRoleConfig(model_preset=preset)
+        current = config.subagent_roles.get(name, SubagentRoleConfig())
+        values = current.model_dump()
+        values["model_preset"] = preset
+        if preset is not None:
+            values["model"] = None
+        updates[name] = SubagentRoleConfig.model_validate(values)
     config.subagent_roles.update(updates)
 
 

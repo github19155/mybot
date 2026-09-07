@@ -289,6 +289,17 @@ def update_model_prompt_overrides(
     return settings_payload(config_path=config_path)
 
 
+def update_subagent_roles(
+    query: QueryParams,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, Any]:
+    config = _load_settings_config(config_path)
+    models.update_subagent_roles(config, query)
+    _save_settings_config(config, config_path)
+    return settings_payload(config_path=config_path)
+
+
 def migrate_model_configurations(
     _query: QueryParams | None = None,
     *,

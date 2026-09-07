@@ -72,6 +72,15 @@
 
 ## Scheduling and Background Work
 
+- Default long or independent work to `spawn` with `wait=false`. Give each task a clear scope,
+  acceptance checks, and one of researcher, planner, coder, debugger, tester, writer, or analyst.
+- After spawning, return control to the user or continue independent work; do not poll for completion.
+  Results arrive automatically. Use `wait=true` only when the result is required to proceed.
+- The main agent can still execute work directly with its selected model, especially when the user asks.
+- `spawn` can select a task-only `model` or `model_preset`; otherwise the role's preset binding or
+  the current main runtime is used. This does not change the main agent's model selection.
+- Concurrent workers share files. Assign non-overlapping file ownership and coordinate shared edits
+  through the main agent; do not claim filesystem isolation.
 - Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.
 - For heartbeat tasks, update `HEARTBEAT.md`; the default gateway heartbeat cron job handles periodic checks when enabled.
 - Do not write reminders only to memory files when the user expects an actual notification.

@@ -78,6 +78,9 @@ export function SettingsPage({
     changeModelCallOrder,
     promptOverrides,
     promptOverridesSaving,
+    roleBindingsDraft,
+    roleBindingsSaving,
+    setRoleBindingsDraft,
     channelsQuery,
     cliApps,
     cliAppsAction,
@@ -163,6 +166,7 @@ export function SettingsPage({
     saveImageGenerationSettings,
     saveModelSettings,
     savePromptOverrides,
+    saveRoleBindings,
     saveNetworkSafetySettings,
     saveProvider,
     saveTranscriptionSettings,
@@ -257,6 +261,10 @@ export function SettingsPage({
               promptOverrides={promptOverrides}
               promptOverridesSaving={promptOverridesSaving}
               onSavePromptOverrides={savePromptOverrides}
+              roleBindingsDraft={roleBindingsDraft}
+              roleBindingsSaving={roleBindingsSaving}
+              setRoleBindingsDraft={setRoleBindingsDraft}
+              onSaveRoleBindings={saveRoleBindings}
               saving={saving}
               orderSaving={modelCallOrderSaving || modelConfigurationSaving}
               migrationSaving={modelMigrationSaving}

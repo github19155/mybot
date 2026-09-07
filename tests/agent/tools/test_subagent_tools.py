@@ -3,7 +3,7 @@
 import asyncio
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -494,7 +494,7 @@ def test_subagent_default_max_concurrent_matches_agent_defaults(tmp_path):
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     )
 
-    assert AgentDefaults().max_concurrent_subagents == 4
+    assert AgentDefaults().max_concurrent_subagents == 16
     assert mgr.max_concurrent_subagents == AgentDefaults().max_concurrent_subagents
 
 
@@ -627,85 +627,9 @@ async def test_drain_pending_no_block_when_no_subagents(tmp_path):
     assert await asyncio.wait_for(injection_callback(), timeout=1.0) == []
     assert await asyncio.wait_for(terminal_injection_callback(), timeout=1.0) == []
 
-
 @pytest.mark.asyncio
-async def test_terminal_drain_timeout(tmp_path):
-    """The terminal drain should return empty after its shared timeout expires."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.session.manager import Session
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
-
-    pending_queue: asyncio.Queue = asyncio.Queue()
-    session = Session(key="test:drain-timeout")
-    terminal_injection_callback = None
-
-    async def fake_runner_run(spec):
-        nonlocal terminal_injection_callback
-        terminal_injection_callback = spec.terminal_injection_callback
-        return SimpleNamespace(
-            stop_reason="done",
-            final_content="done",
-            error=None,
-            tool_events=[],
-            messages=[],
-            usage=None,
-            had_injections=False,
-            tools_used=[],
-            provider_state=None,
-        )
-
-    loop.runner.run = AsyncMock(side_effect=fake_runner_run)
-
-    # Register a "running" sub-agent that will never complete
-    async def _hang_forever():
-        await asyncio.Event().wait()
-
-    hang_task = asyncio.create_task(_hang_forever())
-    loop.subagents._session_tasks.setdefault(session.key, set()).add("sub-timeout-1")
-    loop.subagents._running_tasks["sub-timeout-1"] = hang_task
-
-    runtime = loop.llm_runtime()
-    await loop._run_agent_loop(
-        TranscriptInput(history=[{"role": "user", "content": "test"}], current_message=None),
-        runtime=runtime,
-        session=session,
-        request_context=RequestContext(
-            channel="test",
-            chat_id="c1",
-            session_key=session.key,
-            runtime=runtime,
-        ),
-        pending_queue=pending_queue,
-    )
-
-    assert terminal_injection_callback is not None
-
-    # Patch the timeout path without leaking the queue.get() coroutine.
-    async def _timeout(awaitable, timeout):
-        awaitable.close()
-        raise asyncio.TimeoutError
-
-    with patch("nanobot.agent.loop.asyncio.wait_for", side_effect=_timeout):
-        results = await terminal_injection_callback()
-        assert results == []
-
-    # Cleanup
-    hang_task.cancel()
-    try:
-        await hang_task
-    except asyncio.CancelledError:
-        pass
-
-
-@pytest.mark.asyncio
-async def test_terminal_drain_reuses_one_timeout_budget(tmp_path):
-    """Repeated terminal rendezvous calls share one 300-second deadline."""
+async def test_terminal_drain_returns_available_without_waiting(tmp_path):
+    """The terminal drain returns already-available messages and never blocks."""
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.events import InboundMessage
     from nanobot.bus.queue import MessageBus
@@ -718,7 +642,7 @@ async def test_terminal_drain_reuses_one_timeout_budget(tmp_path):
         model="test-model",
     )
     pending_queue: asyncio.Queue[InboundMessage] = asyncio.Queue()
-    session = Session(key="test:shared-deadline")
+    session = Session(key="test:no-block")
     terminal_injection_callback = None
 
     async def fake_runner_run(spec):
@@ -738,12 +662,70 @@ async def test_terminal_drain_reuses_one_timeout_budget(tmp_path):
 
     loop.runner.run = AsyncMock(side_effect=fake_runner_run)
 
-    async def _hang_forever():
-        await asyncio.Event().wait()
+    await loop._run_agent_loop(
+        TranscriptInput(history=[{"role": "user", "content": "test"}], current_message=None),
+        runtime=loop.llm_runtime(),
+        session=session,
+        pending_queue=pending_queue,
+    )
+    assert terminal_injection_callback is not None
 
-    hang_task = asyncio.create_task(_hang_forever())
-    loop.subagents._session_tasks.setdefault(session.key, set()).add("sub-deadline-1")
-    loop.subagents._running_tasks["sub-deadline-1"] = hang_task
+    # A pending subagent result and a user message are both already available:
+    # the drain returns them immediately, user input first, and does not await
+    # any further messages or running subagent tasks.
+    pending_queue.put_nowait(
+        InboundMessage(
+            sender_id="subagent",
+            channel="system",
+            chat_id="test:c1",
+            content="subagent result",
+            metadata={"injected_event": "subagent_result", "subagent_task_id": "sub-1"},
+        )
+    )
+    pending_queue.put_nowait(
+        InboundMessage(sender_id="user", channel="test", chat_id="c1", content="user message")
+    )
+
+    items = await asyncio.wait_for(terminal_injection_callback(), timeout=1.0)
+    assert [item["content"] for item in items] == ["user message", "subagent result"]
+    # The queue is fully drained; nothing is left for a later rendezvous.
+    assert await asyncio.wait_for(terminal_injection_callback(), timeout=1.0) == []
+
+
+@pytest.mark.asyncio
+async def test_terminal_drain_refills_excess_messages(tmp_path):
+    """The terminal drain returns only the cap and puts the rest back."""
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.queue import MessageBus
+    from nanobot.session.manager import Session
+
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=MagicMock(),
+        workspace=tmp_path,
+        model="test-model",
+    )
+    pending_queue: asyncio.Queue[InboundMessage] = asyncio.Queue()
+    session = Session(key="test:cap")
+    terminal_injection_callback = None
+
+    async def fake_runner_run(spec):
+        nonlocal terminal_injection_callback
+        terminal_injection_callback = spec.terminal_injection_callback
+        return SimpleNamespace(
+            stop_reason="done",
+            final_content="done",
+            error=None,
+            tool_events=[],
+            messages=[],
+            usage=None,
+            had_injections=False,
+            tools_used=[],
+            provider_state=None,
+        )
+
+    loop.runner.run = AsyncMock(side_effect=fake_runner_run)
 
     await loop._run_agent_loop(
         TranscriptInput(history=[{"role": "user", "content": "test"}], current_message=None),
@@ -753,29 +735,13 @@ async def test_terminal_drain_reuses_one_timeout_budget(tmp_path):
     )
     assert terminal_injection_callback is not None
 
-    timeouts: list[float] = []
-    clock = MagicMock(side_effect=[10.0, 110.0])
-
-    async def _deliver(awaitable, timeout):
-        awaitable.close()
-        timeouts.append(timeout)
-        return InboundMessage(
-            sender_id="subagent",
-            channel="test",
-            chat_id="c1",
-            content="result",
+    for index in range(5):
+        pending_queue.put_nowait(
+            InboundMessage(sender_id="user", channel="test", chat_id="c1", content=f"msg {index}")
         )
 
-    fake_loop = SimpleNamespace(time=clock)
-    with (
-        patch("nanobot.agent.loop.asyncio.get_running_loop", return_value=fake_loop),
-        patch("nanobot.agent.loop.asyncio.wait_for", side_effect=_deliver),
-    ):
-        assert await terminal_injection_callback()
-        assert await terminal_injection_callback()
+    items = await asyncio.wait_for(terminal_injection_callback(), timeout=1.0)
+    assert len(items) == 3
+    assert pending_queue.qsize() == 2
 
-    assert timeouts == [300.0, 200.0]
 
-    hang_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await hang_task

@@ -136,6 +136,15 @@
       "configurationNamePlaceholder": "快速写作",
       "callOrder": "模型调用顺序",
       "primary": "主模型",
+      "subagentRoles": {
+        "title": "子代理角色",
+        "concurrency": "并发后台任务",
+        "concurrencyHelp": "最多同时运行 {{count}} 个任务，超出的任务将排队。继承角色使用父任务模型。",
+        "presetLabel": "{{role}} 的模型预设",
+        "inherit": "继承父任务模型",
+        "save": "保存角色绑定",
+        "saving": "正在保存角色绑定…"
+      },
       "fallbackNumber": "备用模型 {{number}}",
       "addToOrder": "启用预设",
       "newPreset": "新建模型预设",

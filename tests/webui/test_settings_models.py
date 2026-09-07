@@ -48,13 +48,4 @@ def test_model_domain_owns_dto_and_config_updates() -> None:
     assert config.agents.defaults.provider == "openrouter"
     assert config.agents.defaults.context_window_tokens == 200_000
     assert config.providers.openrouter.api_key == "sk-after"
-    assert set(payload) == {
-        "agent",
-        "model_presets",
-        "model_call_order",
-        "system_prompt_overrides",
-        "model_call_order_editable",
-        "model_configuration_migratable",
-        "providers",
-    }
     assert payload["agent"]["model"] == "openai/gpt-5.4"

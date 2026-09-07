@@ -132,6 +132,28 @@ async def test_tavily_search(monkeypatch):
     assert "https://openclaw.io" in result
 
 
+@pytest.mark.asyncio
+async def test_tavily_search_uses_configured_base_url(monkeypatch):
+    """configured base_url proxy must receive the /search POST (regression: hardcoded official URL)."""
+    seen: list[str] = []
+
+    async def mock_post(self, url, **kw):
+        seen.append(url)
+        return _response(json={
+            "results": [{"title": "ViaProxy", "url": "https://proxy.example", "content": "ok"}]
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    tool = _tool(
+        provider="tavily",
+        api_key="tavily-key",
+        base_url="https://proxy.example/",
+    )
+    result = await tool.execute(query="openclaw")
+    assert seen == ["https://proxy.example/search"]
+    assert "ViaProxy" in result
+
+
 def test_keenable_without_api_key_is_concurrency_safe(monkeypatch):
     monkeypatch.delenv("KEENABLE_API_KEY", raising=False)
     tool = _tool(provider="keenable", api_key="")

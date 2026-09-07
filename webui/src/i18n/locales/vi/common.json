@@ -414,6 +414,15 @@
       "configurationNamePlaceholder": "Viết nhanh",
       "callOrder": "Thứ tự gọi mô hình",
       "primary": "Chính",
+      "subagentRoles": {
+        "title": "Vai trò của tác nhân phụ",
+        "concurrency": "Tác vụ nền chạy đồng thời",
+        "concurrencyHelp": "Tối đa {{count}} tác vụ chạy cùng lúc; các tác vụ còn lại xếp hàng chờ. Vai trò kế thừa dùng mô hình của tác vụ cha.",
+        "presetLabel": "Cấu hình sẵn mô hình cho {{role}}",
+        "inherit": "Kế thừa mô hình cha",
+        "save": "Lưu gắn kết vai trò",
+        "saving": "Đang lưu gắn kết vai trò…"
+      },
       "fallbackNumber": "Dự phòng {{number}}",
       "addToOrder": "Bật cấu hình đặt trước",
       "newPreset": "Cấu hình mô hình đặt trước mới",

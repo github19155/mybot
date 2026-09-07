@@ -277,6 +277,8 @@ def _snapshot_subagent_status(status: SubagentStatus) -> dict[str, object]:
         "task_id": status.task_id,
         "label": status.label,
         "task_description": status.task_description,
+        "role": status.role,
+        "model": status.model,
         "started_at": status.started_at,
         "phase": status.phase,
         "iteration": status.iteration,

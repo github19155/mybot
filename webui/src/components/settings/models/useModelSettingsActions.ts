@@ -26,6 +26,7 @@ import {
   updateModelCallOrder,
   updateModelConfiguration,
   updateSystemPromptOverrides,
+  updateSubagentRoles,
   updateProviderSettings,
 } from "@/lib/api";
 import type { NanobotClient } from "@/lib/nanobot-client";
@@ -92,6 +93,8 @@ export function useModelSettingsActions({
     modelMigrationSaving,
     promptOverrides,
     promptOverridesSaving,
+    roleBindingsDraft,
+    roleBindingsSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
     modelPresetEditingName,
@@ -111,6 +114,8 @@ export function useModelSettingsActions({
     setModelMigrationSaving,
     setPromptOverrides,
     setPromptOverridesSaving,
+    setRoleBindingsDraft,
+    setRoleBindingsSaving,
     setModelPresetCreating,
     setModelPresetEditingName,
     setModelPresetNameError,
@@ -357,6 +362,30 @@ export function useModelSettingsActions({
       setPromptOverridesSaving(false);
     }
   };
+
+  const saveRoleBindings = async () => {
+    if (!settings || roleBindingsSaving) return;
+    const bindings = Object.fromEntries(
+      (settings.subagent_roles ?? [])
+        .filter((role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_preset)
+        .map((role) => [role.name, roleBindingsDraft[role.name]]),
+    );
+    if (!Object.keys(bindings).length) return;
+    setRoleBindingsSaving(true);
+    try {
+      const payload = await updateSubagentRoles(client, bindings);
+      applyPayload(payload, { preserveAgentForm: true });
+      setRoleBindingsDraft((current) => Object.fromEntries(
+        Object.entries(current).filter(([name, preset]) => !(name in bindings) || preset !== bindings[name]),
+      ));
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRoleBindingsSaving(false);
+    }
+  };
+
   const handleMigrateModelConfigurations = async () => {
     if (modelMigrationSaving) return;
     setModelMigrationSaving(true);
@@ -619,6 +648,7 @@ export function useModelSettingsActions({
     cancelModelPresetCreation,
     changeModelCallOrder,
     savePromptOverrides,
+    saveRoleBindings,
     completeProviderOAuthResponse,
     createCustomProvider,
     handleDeleteModelConfiguration,

@@ -136,6 +136,15 @@
       "configurationNamePlaceholder": "Escrita rápida",
       "callOrder": "Ordem de chamada dos modelos",
       "primary": "Principal",
+      "subagentRoles": {
+        "title": "Papéis dos subagentes",
+        "concurrency": "Tarefas em segundo plano simultâneas",
+        "concurrencyHelp": "Até {{count}} tarefas são executadas ao mesmo tempo; as demais entram na fila. Papéis herdados usam o modelo da tarefa pai.",
+        "presetLabel": "Predefinição de modelo para {{role}}",
+        "inherit": "Herdar modelo pai",
+        "save": "Salvar vínculos de papel",
+        "saving": "Salvando vínculos de papel…"
+      },
       "fallbackNumber": "Alternativo {{number}}",
       "addToOrder": "Ativar predefinição",
       "newPreset": "Nova predefinição de modelo",

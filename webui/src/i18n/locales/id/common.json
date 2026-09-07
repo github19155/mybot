@@ -414,6 +414,15 @@
       "configurationNamePlaceholder": "Menulis cepat",
       "callOrder": "Urutan pemanggilan model",
       "primary": "Utama",
+      "subagentRoles": {
+        "title": "Peran subagen",
+        "concurrency": "Tugas latar belakang serentak",
+        "concurrencyHelp": "Hingga {{count}} tugas berjalan bersamaan; sisanya mengantre. Peran yang diwarisi memakai model tugas induk.",
+        "presetLabel": "Prasetel model untuk {{role}}",
+        "inherit": "Warisi model induk",
+        "save": "Simpan pengikatan peran",
+        "saving": "Menyimpan pengikatan peran…"
+      },
       "fallbackNumber": "Cadangan {{number}}",
       "addToOrder": "Aktifkan prasetel",
       "newPreset": "Prasetel model baru",

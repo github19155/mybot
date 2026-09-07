@@ -89,6 +89,54 @@ async function togglePresetEditor(name = "primary") {
 describe("Settings models", () => {
   installSettingsViewTestHooks();
 
+  it("saves role bindings without discarding a selection changed during the request", async () => {
+    const payload: SettingsPayload = {
+      ...settingsPayload(),
+      system_prompt_overrides: [],
+      max_concurrent_subagents: 16,
+      subagent_roles: [
+        { name: "coder", description: "Implement changes", permissions: "read-write-exec", model_preset: null },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    let completeSave!: (payload: SettingsPayload) => void;
+    requestMutationMock.mockImplementationOnce(() => new Promise<SettingsPayload>((resolve) => {
+      completeSave = resolve;
+    }));
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    const binding = screen.getByRole("combobox", { name: "Model preset for coder" });
+    fireEvent.change(binding, { target: { value: "primary" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save role bindings" }));
+    fireEvent.change(binding, { target: { value: "" } });
+    const savedPayload: SettingsPayload = {
+      ...payload,
+      subagent_roles: [{ ...payload.subagent_roles![0], model_preset: "primary" }],
+    };
+    completeSave(savedPayload);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save role bindings" })).toBeEnabled();
+    });
+    expect(binding).toHaveValue("");
+    expect(requestMutationMock).toHaveBeenCalledWith(
+      "settings.subagent_roles.update", { bindings: { coder: "primary" } }, 20_000,
+    );
+
+    requestMutationMock.mockRejectedValueOnce(new Error("Preset is unavailable"));
+    fireEvent.click(screen.getByRole("button", { name: "Save role bindings" }));
+    await screen.findByText("Preset is unavailable");
+    expect(binding).toHaveValue("");
+    requestMutationMock.mockResolvedValueOnce(payload);
+    fireEvent.click(screen.getByRole("button", { name: "Save role bindings" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save role bindings" })).toBeDisabled();
+    });
+    expect(requestMutationMock).toHaveBeenLastCalledWith(
+      "settings.subagent_roles.update", { bindings: { coder: null } }, 20_000,
+    );
+    expect(screen.queryByText("Preset is unavailable")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Model preset for coder" })).toHaveValue("");
+  });
+
   it("uses the preset name as the canonical identity", async () => {
     const payload = settingsPayload();
     payload.model_presets[0] = {

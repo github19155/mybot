@@ -8,12 +8,13 @@ import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, NotRequired, TypedDict
 
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
+from nanobot.agent.subagent_roles import ROLE_TOOL_MODULES, SUBAGENT_ROLES
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.context import (
     RequestContext,
@@ -39,6 +40,9 @@ from nanobot.security.workspace_access import (
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.prompt_templates import render_template
 
+if TYPE_CHECKING:
+    from nanobot.agent.model_management import ModelManagement
+
 
 class _SubagentOrigin(TypedDict):
     channel: str
@@ -62,6 +66,9 @@ class SubagentStatus:
     usage: LLMUsage | None = None
     stop_reason: str | None = None
     error: str | None = None
+    role: str = "coder"
+    model: str | None = None
+    model_preset: str | None = None
 
 
 class _SubagentHook(AgentHook):
@@ -106,6 +113,7 @@ class SubagentManager:
         max_iterations: int | None = None,
         max_concurrent_subagents: int | None = None,
         llm_wall_timeout_for_session: Callable[[str | None], float | None] | None = None,
+        model_management: "ModelManagement | None" = None,
     ):
         if workspace is None:
             raise TypeError("SubagentManager.__init__() missing required argument: 'workspace'")
@@ -152,6 +160,7 @@ class SubagentManager:
         self.runner = AgentRunner()
         self._exec_session_manager = ExecSessionManager()
         self._llm_wall_timeout_for_session = llm_wall_timeout_for_session
+        self.model_management = model_management
         self._running_tasks: dict[str, asyncio.Task[str]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
@@ -195,6 +204,24 @@ class SubagentManager:
             context_window_tokens=runtime.context_window_tokens,
         )
 
+    def _resolve_task_runtime(
+        self,
+        runtime: LLMRuntime,
+        *,
+        role: str,
+        model: str | None,
+        model_preset: str | None,
+    ) -> LLMRuntime:
+        if role not in SUBAGENT_ROLES:
+            raise ValueError(f"Unknown subagent role '{role}'. Choose: {', '.join(SUBAGENT_ROLES)}")
+        if self.model_management is not None:
+            return self.model_management.resolve_task_runtime(
+                runtime, role=role, model=model, model_preset=model_preset,
+            )
+        if model is not None or model_preset is not None:
+            raise ValueError("Per-task model selection requires configured model management")
+        return runtime
+
     def _subagent_tools_config(self) -> ToolsConfig:
         """Build a ToolsConfig scoped for subagent use."""
         return ToolsConfig(
@@ -208,6 +235,8 @@ class SubagentManager:
         self,
         workspace: Path | None = None,
         tools_config: ToolsConfig | None = None,
+        *,
+        role: str = "coder",
     ) -> ToolRegistry:
         """Build an isolated subagent tool registry via ToolLoader."""
         root = self.workspace if workspace is None else workspace
@@ -224,6 +253,12 @@ class SubagentManager:
             ),
         )
         ToolLoader().load(ctx, registry, scope="subagent")
+        allowed = ROLE_TOOL_MODULES[SUBAGENT_ROLES[role]["permissions"]]
+        for name in registry.tool_names:
+            tool = registry.get(name)
+            # Names alone are insufficient: a plugin can claim a built-in name.
+            if name not in allowed or type(tool).__module__ != f"nanobot.agent.tools.{allowed[name]}":
+                registry.unregister(name)
         return registry
 
     async def spawn(
@@ -238,10 +273,19 @@ class SubagentManager:
         workspace_scope: WorkspaceScope | None = None,
         *,
         runtime: LLMRuntime | None = None,
+        role: str = "coder",
+        model: str | None = None,
+        model_preset: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         if runtime is None:
             runtime = self._compat_spawn_runtime()
+        try:
+            runtime = self._resolve_task_runtime(
+                runtime, role=role, model=model, model_preset=model_preset,
+            )
+        except ValueError as exc:
+            return ToolResult.error(f"Error: {exc}")
         if temperature is not None:
             runtime = runtime.with_generation_overrides(temperature=temperature)
         task_id = str(uuid.uuid4())[:8]
@@ -258,6 +302,10 @@ class SubagentManager:
             label=display_label,
             task_description=task,
             started_at=time.monotonic(),
+            phase="queued",
+            role=role,
+            model=runtime.model,
+            model_preset=runtime.model_preset,
         )
         self._task_statuses[task_id] = status
 
@@ -302,10 +350,19 @@ class SubagentManager:
         workspace_scope: WorkspaceScope | None = None,
         *,
         runtime: LLMRuntime | None = None,
+        role: str = "coder",
+        model: str | None = None,
+        model_preset: str | None = None,
     ) -> str:
         """Run a subagent synchronously and return its result to the caller."""
         if runtime is None:
             runtime = self._compat_spawn_runtime()
+        try:
+            runtime = self._resolve_task_runtime(
+                runtime, role=role, model=model, model_preset=model_preset,
+            )
+        except ValueError as exc:
+            return ToolResult.error(f"Error: {exc}")
         if temperature is not None:
             runtime = runtime.with_generation_overrides(temperature=temperature)
         task_id = str(uuid.uuid4())[:8]
@@ -321,6 +378,10 @@ class SubagentManager:
             label=display_label,
             task_description=task,
             started_at=time.monotonic(),
+            phase="queued",
+            role=role,
+            model=runtime.model,
+            model_preset=runtime.model_preset,
         )
         self._task_statuses[task_id] = status
         logger.info("Running inline subagent [{}]: {}", task_id, display_label)
@@ -409,8 +470,10 @@ class SubagentManager:
                 cfg = self._subagent_tools_config()
                 cfg.restrict_to_workspace = workspace_scope.restrict_to_workspace
             # Construct from the agent workspace; the bound scope below supplies the project cwd.
-            tools = self._build_tools(tools_config=cfg)
-            system_prompt = self._build_subagent_prompt(workspace=root)
+            tools = self._build_tools(tools_config=cfg, role=status.role)
+            system_prompt = self._build_subagent_prompt(workspace=root, role=status.role)
+            if runtime.system_prompt_prefix:
+                system_prompt = f"{runtime.system_prompt_prefix}\n\n{system_prompt}"
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
@@ -538,7 +601,7 @@ class SubagentManager:
         await self.bus.publish_inbound(msg)
         logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
 
-    def _build_subagent_prompt(self, workspace: Path | None = None) -> str:
+    def _build_subagent_prompt(self, workspace: Path | None = None, *, role: str = "coder") -> str:
         """Build a focused system prompt for the subagent."""
         from nanobot.agent.skills import SkillsLoader
 
@@ -555,6 +618,9 @@ class SubagentManager:
         )
         return render_template(
             "agent/subagent_system.md",
+            role=role,
+            role_description=SUBAGENT_ROLES[role]["description"],
+            permissions=SUBAGENT_ROLES[role]["permissions"],
             workspace=str(project_workspace),
             agent_workspace=str(agent_workspace),
             history_log=history_log,

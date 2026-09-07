@@ -608,6 +608,13 @@ export interface SettingsPayload {
     prompt: string;
     models: string[];
   }>;
+  subagent_roles?: Array<{
+    name: string;
+    description: string;
+    permissions: string;
+    model_preset: string | null;
+  }>;
+  max_concurrent_subagents?: number;
   /** Whether an actual legacy model configuration is available to convert. */
   model_configuration_migratable?: boolean;
   created_model_preset?: string;

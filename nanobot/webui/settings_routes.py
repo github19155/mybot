@@ -55,6 +55,7 @@ from nanobot.webui.settings_api import (
     update_model_prompt_overrides,
     update_network_safety_settings,
     update_provider_settings,
+    update_subagent_roles,
     update_transcription_settings,
     update_web_search_settings,
 )
@@ -108,6 +109,7 @@ _MODEL_ROUTES = {
     "/api/settings/model-configurations/delete": "model-delete",
     "/api/settings/model-configurations/migrate": "models-migrate",
     "/api/settings/model-call-order/update": "call-order-update",
+    "/api/settings/subagent-roles/update": "subagent-roles-update",
     "/api/settings/model-prompt-overrides/update": "prompt-overrides-update",
     "/api/settings/provider/update": "provider-update",
     "/api/settings/provider/create": "provider-create",
@@ -156,6 +158,7 @@ _SETTINGS_MUTATION_PATHS = frozenset({
     "/api/settings/model-configurations/delete",
     "/api/settings/model-configurations/migrate",
     "/api/settings/model-call-order/update",
+    "/api/settings/subagent-roles/update",
     "/api/settings/model-prompt-overrides/update",
     "/api/settings/provider/update",
     "/api/settings/provider/create",
@@ -447,6 +450,7 @@ class WebUISettingsRouter:
             oauth_login=login_oauth_provider,
             oauth_complete=complete_oauth_provider,
             oauth_logout=logout_oauth_provider,
+            update_subagent_roles=update_subagent_roles,
             apply_image_runtime_change=self._apply_image_generation_runtime_change_result,
         )
 

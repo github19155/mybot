@@ -29,6 +29,7 @@ from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
+from nanobot.agent.model_management import ModelManagement
 from nanobot.agent.model_runtime import ModelRuntimeResolver
 from nanobot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
@@ -125,7 +126,6 @@ if TYPE_CHECKING:
 
 _T = TypeVar("_T")
 _SUBAGENT_PROVIDER_TASK_META = "subagent_provider_task_id"
-_SUBAGENT_TERMINAL_WAIT_SECONDS = 300.0
 
 
 class TurnKind(Enum):
@@ -308,6 +308,7 @@ class AgentLoop:
         local_trigger_store: LocalTriggerStore | None = None,
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
+        model_management_config: Config | None = None,
     ):
         from nanobot.config.schema import ToolsConfig
 
@@ -404,6 +405,10 @@ class AgentLoop:
         self.tools = tool_registry if tool_registry is not None else ToolRegistry()
         self._exec_session_manager = ExecSessionManager()
         self.runner = AgentRunner()
+        self.model_management = (
+            ModelManagement(model_management_config, invalidate=self.invalidate_runtime_config)
+            if model_management_config is not None else None
+        )
         self.subagents = SubagentManager(
             workspace=workspace,
             bus=bus,
@@ -414,6 +419,7 @@ class AgentLoop:
             max_iterations=self.max_iterations,
             max_concurrent_subagents=max_concurrent_subagents,
             llm_wall_timeout_for_session=lambda sk: runner_wall_llm_timeout_s(self.sessions, sk),
+            model_management=self.model_management,
         )
         self._unified_session = unified_session
         self._running = False
@@ -542,6 +548,7 @@ class AgentLoop:
             preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
             prompt_for_model=prompt_for_model,
+            model_management_config=config,
             **extra,
         )
 
@@ -659,6 +666,7 @@ class AgentLoop:
             workspace_sandbox=self.workspace_scopes.sandbox_status,
             runtime_events=self.runtime_events,
             runtime_control=AgentRuntimeControl(self),
+            model_management=self.model_management,
         )
         loader = ToolLoader()
         registered = loader.load(ctx, self.tools)
@@ -993,7 +1001,6 @@ class AgentLoop:
         async def _drain_pending(
             *,
             limit: int = _MAX_INJECTIONS_PER_TURN,
-            first_msg: InboundMessage | None = None,
         ) -> list[dict[str, Any]]:
             """Drain only messages that are already available."""
             if pending_queue is None:
@@ -1066,52 +1073,19 @@ class AgentLoop:
                     row[PENDING_FOLLOWUP_ID_KEY] = followup_id
                 return row
 
-            items: list[dict[str, Any]] = []
-            if first_msg is not None:
-                items.append(await _to_user_message(first_msg))
-            while len(items) < limit:
+            pending: list[InboundMessage] = []
+            while True:
                 try:
-                    items.append(await _to_user_message(pending_queue.get_nowait()))
+                    pending.append(pending_queue.get_nowait())
                 except asyncio.QueueEmpty:
                     break
+            pending.sort(key=lambda message: not message.is_user_input)
+            for message in pending[limit:]:
+                pending_queue.put_nowait(message)
+            items = [await _to_user_message(message) for message in pending[:limit]]
 
             return items
 
-        terminal_wait_deadline: float | None = None
-
-        async def _wait_for_pending(
-            *,
-            limit: int = _MAX_INJECTIONS_PER_TURN,
-        ) -> list[dict[str, Any]]:
-            """Wait for a pending result only when the runner is ready to exit."""
-            nonlocal terminal_wait_deadline
-
-            items = await _drain_pending(limit=limit)
-            if (
-                items
-                or pending_queue is None
-                or session is None
-                or self.subagents.get_running_count_by_session(session.key) == 0
-            ):
-                return items
-
-            now = asyncio.get_running_loop().time()
-            if terminal_wait_deadline is None:
-                terminal_wait_deadline = now + _SUBAGENT_TERMINAL_WAIT_SECONDS
-            remaining = terminal_wait_deadline - now
-            if remaining <= 0:
-                return []
-
-            try:
-                msg = await asyncio.wait_for(pending_queue.get(), timeout=remaining)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Timeout waiting for sub-agent completion before session {} exits",
-                    session.key,
-                )
-                return []
-
-            return await _drain_pending(limit=limit, first_msg=msg)
 
         request_ctx = request_context or RequestContext(
             channel="cli",
@@ -1214,7 +1188,7 @@ class AgentLoop:
                     else None
                 ),
                 injection_callback=_drain_pending,
-                terminal_injection_callback=_wait_for_pending,
+                terminal_injection_callback=_drain_pending,
                 # Sustained goals may legitimately exceed NANOBOT_LLM_TIMEOUT_S; idle stall
                 # is still capped by NANOBOT_STREAM_IDLE_TIMEOUT_S in streaming providers.
                 llm_timeout_s=runner_wall_llm_timeout_s(

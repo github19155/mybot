@@ -990,6 +990,13 @@ export async function updateSystemPromptOverrides(
   });
 }
 
+export async function updateSubagentRoles(
+  transport: WebUIMutationTransport,
+  bindings: Record<string, string | null>,
+): Promise<SettingsPayload> {
+  return mutation<SettingsPayload>(transport, "settings.subagent_roles.update", { bindings });
+}
+
 export async function updateProviderSettings(
   transport: WebUIMutationTransport,
   update: ProviderSettingsUpdate,

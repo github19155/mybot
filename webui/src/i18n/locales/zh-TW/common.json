@@ -415,6 +415,15 @@
       "callOrder": "模型呼叫順序",
       "primary": "主要模型",
       "fallbackNumber": "備用模型 {{number}}",
+      "subagentRoles": {
+        "title": "子代理角色",
+        "concurrency": "並行背景任務",
+        "concurrencyHelp": "最多同時執行 {{count}} 個任務，超出的任務會排隊。繼承角色使用父任務模型。",
+        "presetLabel": "{{role}} 的模型設定",
+        "inherit": "繼承父任務模型",
+        "save": "儲存角色繫結",
+        "saving": "正在儲存角色繫結…"
+      },
       "addToOrder": "啟用預設",
       "newPreset": "新增模型預設",
       "newPresetHelp": "儲存可重複使用的模型與生成參數。",

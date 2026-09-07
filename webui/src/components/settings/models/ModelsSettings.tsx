@@ -188,6 +188,10 @@ export function ModelsSettings({
   callOrder,
   promptOverrides,
   promptOverridesSaving,
+  roleBindingsDraft,
+  roleBindingsSaving,
+  setRoleBindingsDraft,
+  onSaveRoleBindings,
   saving,
   orderSaving,
   migrationSaving,
@@ -216,6 +220,10 @@ export function ModelsSettings({
   callOrder: string[];
   promptOverrides: SettingsPayload["system_prompt_overrides"];
   promptOverridesSaving: boolean;
+  roleBindingsDraft: Record<string, string | null>;
+  roleBindingsSaving: boolean;
+  setRoleBindingsDraft: Dispatch<SetStateAction<Record<string, string | null>>>;
+  onSaveRoleBindings: () => void;
   saving: boolean;
   orderSaving: boolean;
   migrationSaving: boolean;
@@ -256,6 +264,10 @@ export function ModelsSettings({
     if (!creating) suggestedPresetNameRef.current = null;
   }, [creating]);
   const namedPresets = settings.model_presets.filter((preset) => !preset.is_default);
+  const roles = settings.subagent_roles ?? [];
+  const roleBindingsDirty = roles.some(
+    (role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_preset,
+  );
   const namedPresetsByName = new Map(namedPresets.map((preset) => [preset.name, preset]));
   const unorderedPresets = namedPresets.filter((preset) => !callOrder.includes(preset.name));
   const callOrderOccurrences = new Map<string, number>();
@@ -891,6 +903,69 @@ export function ModelsSettings({
           )}
         </SettingsGroup>
       </section>
+      {roles.length > 0 ? (
+        <section>
+          <SettingsSectionTitle>
+            {tx("settings.models.subagentRoles.title", "Subagent roles")}
+          </SettingsSectionTitle>
+          <SettingsGroup>
+            <SettingsRow
+              title={tx("settings.models.subagentRoles.concurrency", "Concurrent background tasks")}
+              description={tx(
+                "settings.models.subagentRoles.concurrencyHelp",
+                "Up to {{count}} tasks run at once; additional tasks queue. Inherited roles use the parent task's model.",
+                { count: settings.max_concurrent_subagents ?? 16 },
+              )}
+            >
+              <StatusPill tone="neutral">{settings.max_concurrent_subagents ?? 16}</StatusPill>
+            </SettingsRow>
+            {roles.map((role) => (
+              <SettingsRow
+                key={role.name}
+                title={tx(`settings.models.subagentRoles.names.${role.name}`, role.name)}
+                description={tx(`settings.models.subagentRoles.descriptions.${role.name}`, role.description)}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill tone="neutral">
+                    {tx(`settings.models.subagentRoles.permissions.${role.permissions}`, role.permissions)}
+                  </StatusPill>
+                  <select
+                    aria-label={tx("settings.models.subagentRoles.presetLabel", "Model preset for {{role}}", {
+                      role: tx(`settings.models.subagentRoles.names.${role.name}`, role.name),
+                    })}
+                    value={(role.name in roleBindingsDraft ? roleBindingsDraft[role.name] : role.model_preset) ?? ""}
+                    onChange={(event) => {
+                      const preset = event.target.value || null;
+                      setRoleBindingsDraft((current) => ({ ...current, [role.name]: preset }));
+                    }}
+                    className="h-9 max-w-full rounded-control border border-input bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <option value="">
+                      {tx("settings.models.subagentRoles.inherit", "Inherit parent model")}
+                    </option>
+                    {namedPresets.map((preset) => (
+                      <option key={preset.name} value={preset.name}>{preset.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </SettingsRow>
+            ))}
+            <div className="flex justify-end px-4 py-3 sm:px-5">
+              <Button
+                type="button"
+                aria-label={tx("settings.models.subagentRoles.save", "Save role bindings")}
+                disabled={!roleBindingsDirty || roleBindingsSaving}
+                onClick={onSaveRoleBindings}
+              >
+                {roleBindingsSaving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                {roleBindingsSaving
+                  ? tx("settings.models.subagentRoles.saving", "Saving role bindings...")
+                  : tx("settings.models.subagentRoles.save", "Save role bindings")}
+              </Button>
+            </div>
+          </SettingsGroup>
+        </section>
+      ) : null}
       <section>
         <SettingsSectionTitle>
           {tx("settings.models.promptOverrides", "System prompt overrides")}

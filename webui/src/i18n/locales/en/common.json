@@ -136,6 +136,15 @@
       "configurationNamePlaceholder": "Fast writing",
       "callOrder": "Model call order",
       "primary": "Primary",
+      "subagentRoles": {
+        "title": "Subagent roles",
+        "concurrency": "Concurrent background tasks",
+        "concurrencyHelp": "Up to {{count}} tasks run at once; additional tasks queue. Inherited roles use the parent task's model.",
+        "presetLabel": "Model preset for {{role}}",
+        "inherit": "Inherit parent model",
+        "save": "Save role bindings",
+        "saving": "Saving role bindings..."
+      },
       "fallbackNumber": "Fallback {{number}}",
       "addToOrder": "Enable preset",
       "newPreset": "New model preset",

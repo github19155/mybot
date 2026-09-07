@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, get_args
 
 from pydantic import AliasChoices, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -120,6 +120,17 @@ class SystemPromptOverrideConfig(Base):
     models: list[str] = Field(min_length=1)
 
 
+SubagentRoleName = Literal[
+    "researcher", "planner", "coder", "debugger", "tester", "writer", "analyst",
+]
+
+
+class SubagentRoleConfig(Base):
+    """Optional default model preset for a built-in subagent role."""
+
+    model_preset: str | None = None
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -135,7 +146,7 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     fallback_models: list[FallbackCandidate] = Field(default_factory=list)
     max_tool_iterations: int = 200
-    max_concurrent_subagents: int = Field(default=4, ge=1)
+    max_concurrent_subagents: int = Field(default=16, ge=1)
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
     tool_hint_max_length: int = Field(
@@ -449,6 +460,11 @@ class Config(BaseSettings):
         validation_alias=AliasChoices("systemPromptOverrides", "system_prompt_overrides"),
         serialization_alias="systemPromptOverrides",
     )
+    subagent_roles: dict[SubagentRoleName, SubagentRoleConfig] = Field(
+        default_factory=lambda: {name: SubagentRoleConfig() for name in get_args(SubagentRoleName)},
+        validation_alias=AliasChoices("subagentRoles", "subagent_roles"),
+        serialization_alias="subagentRoles",
+    )
 
     def __init__(self, **values: Any) -> None:
         if not type(self).__pydantic_complete__:
@@ -458,6 +474,11 @@ class Config(BaseSettings):
     def bind_source_path(self, path: Path) -> None:
         """Record the config file that owns instance-level runtime data."""
         self._source_path = path.expanduser().resolve(strict=False)
+
+    @property
+    def source_path(self) -> Path | None:
+        """Return the exact configuration path that owns this instance."""
+        return self._source_path
 
     @property
     def runtime_data_dir(self) -> Path | None:
@@ -480,6 +501,10 @@ class Config(BaseSettings):
         for fallback in self.agents.defaults.fallback_models:
             if isinstance(fallback, str) and fallback not in self.model_presets:
                 raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")
+        for role in get_args(SubagentRoleName):
+            binding = self.subagent_roles.setdefault(role, SubagentRoleConfig()).model_preset
+            if binding and binding != "default" and binding not in self.model_presets:
+                raise ValueError(f"Subagent role {role!r} refers to unknown model preset {binding!r}")
         return self
 
     @model_validator(mode="after")

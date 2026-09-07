@@ -43,6 +43,8 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     SettingsPayload["system_prompt_overrides"]
   >(() => initialSettings?.system_prompt_overrides ?? []);
   const [promptOverridesSaving, setPromptOverridesSaving] = useState(false);
+  const [roleBindingsDraft, setRoleBindingsDraft] = useState<Record<string, string | null>>({});
+  const [roleBindingsSaving, setRoleBindingsSaving] = useState(false);
 
   return {
     editingProviderKeys,
@@ -53,6 +55,8 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     modelConfigurationSaving,
     promptOverrides,
     promptOverridesSaving,
+    roleBindingsDraft,
+    roleBindingsSaving,
     modelMigrationSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
@@ -76,6 +80,8 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     setModelMigrationSaving,
     setPromptOverrides,
     setPromptOverridesSaving,
+    setRoleBindingsDraft,
+    setRoleBindingsSaving,
     setModelPresetCreating,
     setModelPresetEditingName,
     setModelPresetNameError,

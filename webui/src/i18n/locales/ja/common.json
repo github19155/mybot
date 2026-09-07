@@ -414,6 +414,15 @@
       "configurationNamePlaceholder": "高速執筆",
       "callOrder": "モデル呼び出し順序",
       "primary": "プライマリ",
+      "subagentRoles": {
+        "title": "サブエージェントのロール",
+        "concurrency": "同時実行バックグラウンドタスク",
+        "concurrencyHelp": "最大 {{count}} 件のタスクが同時に実行され、残りは待機します。継承ロールは親タスクのモデルを使用します。",
+        "presetLabel": "{{role}} のモデルプリセット",
+        "inherit": "親モデルを継承",
+        "save": "ロール設定を保存",
+        "saving": "ロール設定を保存中…"
+      },
       "fallbackNumber": "フォールバック {{number}}",
       "addToOrder": "プリセットを有効化",
       "newPreset": "新しいモデルプリセット",

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from nanobot.agent.subagent_roles import SUBAGENT_ROLES
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.schema import (
@@ -25,6 +26,13 @@ if TYPE_CHECKING:
     tool_parameters_schema(
         task=StringSchema("The task for the subagent to complete"),
         label=StringSchema("Optional short label for the task (for display)"),
+        role=StringSchema(
+            "Task role (default coder). Researcher/planner read and search only; "
+            "writer may also write; coder/debugger/tester/analyst may execute.",
+            enum=list(SUBAGENT_ROLES),
+        ),
+        model=StringSchema("Optional configured provider/model for this task only"),
+        model_preset=StringSchema("Optional model preset for this task only; overrides the role binding"),
         temperature=NumberSchema(
             description=(
                 "Optional sampling temperature for the subagent "
@@ -66,11 +74,12 @@ class SpawnTool(Tool):
     def description(self) -> str:
         return (
             "Spawn a subagent to handle a task in the background. "
-            "Use this for complex or time-consuming tasks that can run independently. "
-            "Set wait=true for a consultation whose result must inform the current turn. "
-            "The subagent will complete the task and report back when done. "
-            "For deliverables or existing projects, inspect the workspace first "
-            "and use a dedicated subdirectory when helpful."
+            "Default long or independent work to background execution, then return control "
+            "without polling. Set wait=true only if its result is required to proceed. "
+            "Completion is reported automatically. The main agent may still execute directly "
+            "when requested or appropriate. Assign concurrent writers separate files and "
+            "coordinate shared changes; their filesystem is shared, not isolated. "
+            "Role/model/preset selections affect only this task."
         )
 
     @property
@@ -84,6 +93,9 @@ class SpawnTool(Tool):
         label: str | None = None,
         temperature: float | None = None,
         wait: bool = False,
+        role: str = "coder",
+        model: str | None = None,
+        model_preset: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Spawn a subagent to execute the given task."""
@@ -98,6 +110,9 @@ class SpawnTool(Tool):
             task=task,
             runtime=request_ctx.runtime,
             label=label,
+            role=role,
+            model=model,
+            model_preset=model_preset,
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
             session_key=session_key,

@@ -414,6 +414,15 @@
       "configurationNamePlaceholder": "Rédaction rapide",
       "callOrder": "Ordre d’appel des modèles",
       "primary": "Principal",
+      "subagentRoles": {
+        "title": "Rôles des sous-agents",
+        "concurrency": "Tâches d’arrière-plan simultanées",
+        "concurrencyHelp": "Jusqu’à {{count}} tâches s’exécutent en même temps ; les autres patientent dans la file. Les rôles hérités utilisent le modèle de la tâche parente.",
+        "presetLabel": "Préréglage de modèle pour {{role}}",
+        "inherit": "Hériter du modèle parent",
+        "save": "Enregistrer les rôles",
+        "saving": "Enregistrement des rôles…"
+      },
       "fallbackNumber": "Secours {{number}}",
       "addToOrder": "Activer le préréglage",
       "newPreset": "Nouveau préréglage de modèle",

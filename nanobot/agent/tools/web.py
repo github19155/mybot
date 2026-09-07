@@ -634,7 +634,7 @@ class WebSearchTool(Tool):
         try:
             async with httpx.AsyncClient(proxy=self.proxy) as client:
                 r = await client.post(
-                    "https://api.tavily.com/search",
+                    url,
                     headers={"Authorization": f"Bearer {api_key}", "User-Agent": self.user_agent},
                     json={"query": query, "max_results": n},
                     timeout=15.0,

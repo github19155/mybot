@@ -24,12 +24,15 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict, cast
 
 import httpx
 
+from nanobot.agent.subagent_roles import SUBAGENT_ROLES
 from nanobot.config.loader import resolve_config_env_vars
 from nanobot.config.schema import (
     Config,
     FallbackCandidate,
     ModelPresetConfig,
     ProviderConfig,
+    SubagentRoleConfig,
+    SubagentRoleName,
     SystemPromptOverrideConfig,
 )
 from nanobot.providers.image_generation import get_image_gen_provider
@@ -77,6 +80,7 @@ class ModelSettingsOperations:
     oauth_login: SettingsOperation
     oauth_complete: SettingsOperation
     oauth_logout: SettingsOperation
+    update_subagent_roles: SettingsOperation
     apply_image_runtime_change: Callable[
         [dict[str, Any]],
         Awaitable[tuple[dict[str, Any], bool]],
@@ -91,6 +95,8 @@ class ModelSettingsPayload(TypedDict):
     model_call_order_editable: bool
     model_configuration_migratable: bool
     providers: list[dict[str, Any]]
+    subagent_roles: list[dict[str, Any]]
+    max_concurrent_subagents: int
 
 
 _CONTEXT_WINDOW_TOKEN_OPTIONS = {65_536, 200_000, 262_144, 500_000, 1_048_576}
@@ -862,6 +868,9 @@ def _rename_model_configuration(config: Config, old_name: str, new_name: str) ->
     ]
     if defaults.dream.model_override == old_name:
         defaults.dream.model_override = new_name
+    for binding in config.subagent_roles.values():
+        if binding.model_preset == old_name:
+            binding.model_preset = new_name
     return True
 
 
@@ -1133,6 +1142,11 @@ def model_settings_payload(
             oauth_status,
         ),
         "providers": providers,
+        "subagent_roles": [
+            {"name": name, **metadata, "model_preset": config.subagent_roles[cast(SubagentRoleName, name)].model_preset}
+            for name, metadata in SUBAGENT_ROLES.items()
+        ],
+        "max_concurrent_subagents": defaults.max_concurrent_subagents,
     }
 
 
@@ -1491,6 +1505,12 @@ def delete_model_configuration(config: Config, query: QueryParams) -> None:
         raise WebUISettingsError("model configuration is required")
     if name not in config.model_presets:
         raise WebUISettingsError("unknown model configuration")
+    bound_roles = [role for role, binding in config.subagent_roles.items() if binding.model_preset == name]
+    if bound_roles:
+        raise WebUISettingsError(
+            "Rebind or clear these subagent roles before deleting the preset: " + ", ".join(bound_roles),
+            status=409,
+        )
     defaults = config.agents.defaults
     referenced = defaults.model_preset == name or any(
         fallback == name for fallback in defaults.fallback_models
@@ -1501,6 +1521,24 @@ def delete_model_configuration(config: Config, query: QueryParams) -> None:
             status=409,
         )
     del config.model_presets[name]
+
+
+def update_subagent_roles(config: Config, query: QueryParams) -> None:
+    raw = query_first(query, "bindings")
+    try:
+        bindings = json.loads(raw) if raw is not None else None
+    except (TypeError, json.JSONDecodeError):
+        raise WebUISettingsError("bindings must be an object of role names to presets or null") from None
+    if not isinstance(bindings, dict):
+        raise WebUISettingsError("bindings must be an object of role names to presets or null")
+    updates: dict[SubagentRoleName, SubagentRoleConfig] = {}
+    for name, preset in cast(dict[str, str | None], bindings).items():
+        if name not in SUBAGENT_ROLES:
+            raise WebUISettingsError("unknown subagent role")
+        if preset is not None and preset != "default" and preset not in config.model_presets:
+            raise WebUISettingsError("unknown model preset in role bindings")
+        updates[cast(SubagentRoleName, name)] = SubagentRoleConfig(model_preset=preset)
+    config.subagent_roles.update(updates)
 
 
 def create_provider_settings(config: Config, query: QueryParams) -> str:
@@ -1848,6 +1886,7 @@ class ModelSettingsHandler:
                 "call-order-update": operations.update_call_order,
                 "prompt-overrides-update": operations.update_prompt_overrides,
                 "provider-create": operations.create_provider,
+                "subagent-roles-update": operations.update_subagent_roles,
             }.get(action)
             if mutation is not None:
                 payload = self.settings.mutate(mutation, request.query)

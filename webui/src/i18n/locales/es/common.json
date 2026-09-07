@@ -414,6 +414,15 @@
       "configurationNamePlaceholder": "Escritura rápida",
       "callOrder": "Orden de llamada de modelos",
       "primary": "Principal",
+      "subagentRoles": {
+        "title": "Roles de los subagentes",
+        "concurrency": "Tareas en segundo plano simultáneas",
+        "concurrencyHelp": "Hasta {{count}} tareas se ejecutan a la vez; las demás esperan en cola. Los roles heredados usan el modelo de la tarea principal.",
+        "presetLabel": "Preajuste de modelo para {{role}}",
+        "inherit": "Heredar modelo principal",
+        "save": "Guardar asignaciones de roles",
+        "saving": "Guardando asignaciones de roles…"
+      },
       "fallbackNumber": "Alternativa {{number}}",
       "addToOrder": "Activar preajuste",
       "newPreset": "Nuevo preajuste de modelo",

@@ -256,6 +256,8 @@ class MyTool(Tool):
             started_at = st.get("started_at", time.monotonic())
             raw_events = st.get("tool_events", [])
             phase = st.get("phase", "unknown")
+            role = st.get("role", "coder")
+            model = st.get("model", "")
             iteration = st.get("iteration", 0)
             usage = st.get("usage", {})
             error = st.get("error")
@@ -264,6 +266,8 @@ class MyTool(Tool):
             started_at = st.started_at
             raw_events = st.tool_events
             phase = st.phase
+            role = st.role
+            model = st.model
             iteration = st.iteration
             usage = st.usage
             error = st.error
@@ -283,6 +287,7 @@ class MyTool(Tool):
         tool_summary = ", ".join(tool_summaries) or "none"
         lines = [
             f"{indent}phase: {phase}, iteration: {iteration}, elapsed: {elapsed:.1f}s",
+            f"{indent}role: {role}, model: {model}",
             f"{indent}tools: {tool_summary}",
             f"{indent}usage: {usage or 'n/a'}",
         ]

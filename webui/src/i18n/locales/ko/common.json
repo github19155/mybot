@@ -414,6 +414,15 @@
       "configurationNamePlaceholder": "빠른 작성",
       "callOrder": "모델 호출 순서",
       "primary": "기본",
+      "subagentRoles": {
+        "title": "서브에이전트 역할",
+        "concurrency": "동시 백그라운드 작업",
+        "concurrencyHelp": "최대 {{count}}개의 작업이 동시에 실행되며 나머지는 대기열에 쌓입니다. 상속된 역할은 상위 작업의 모델을 사용합니다.",
+        "presetLabel": "{{role}}용 모델 프리셋",
+        "inherit": "상위 모델 상속",
+        "save": "역할 바인딩 저장",
+        "saving": "역할 바인딩 저장 중…"
+      },
       "fallbackNumber": "대체 {{number}}",
       "addToOrder": "프리셋 활성화",
       "newPreset": "새 모델 프리셋",

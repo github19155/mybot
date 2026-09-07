@@ -128,7 +128,14 @@ from nanobot.webui.skills_marketplace import (
     trending_marketplace_skills,
 )
 from nanobot.webui.thread_disk import delete_webui_thread
-from nanobot.webui.transcript import build_webui_thread_response
+from nanobot.webui.transcript import (
+    WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+    _session_backfill_turns,  # pyright: ignore[reportPrivateUsage]
+    build_webui_thread_response,
+    completed_turn_ids,
+    has_pending_tool_calls,
+    replay_transcript_to_ui_messages,
+)
 from nanobot.webui.workspaces import WebUIWorkspaceController
 
 _SLOW_WEBUI_HTTP_LOG_MS = 1_000
@@ -332,6 +339,7 @@ class GatewayHTTPHandler:
         recovery_action: (
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
+        fleet_snapshot_loader: Callable[[], dict[str, Any]] | None = None,
         log: Any = logger,
     ) -> None:
         self.config = config
@@ -350,6 +358,7 @@ class GatewayHTTPHandler:
         )
         self.skill_state_action = skill_state_action
         self.recovery_action = recovery_action
+        self.fleet_snapshot_loader = fleet_snapshot_loader
         self._skill_install_lock = asyncio.Lock()
         self._folder_picker_lock = asyncio.Lock()
         self.cron_service = cron_service
@@ -738,13 +747,25 @@ class GatewayHTTPHandler:
             return _http_error(exc.status, str(exc))
         return _http_json_response(result)
 
+    def _accepts_session_key(self, key: str) -> bool:
+        """True for WebUI chats or any channel session with a persisted file.
+
+        Channel sessions (e.g. ``weixin:*``) become readable through the
+        WebUI once their session file exists; unknown keys stay 404.
+        """
+        if is_webui_session_key(key):
+            return True
+        if self.session_manager is None:
+            return False
+        return isinstance(self.session_manager.read_session_file(key), dict)
+
     async def _handle_session_context_get(self, request: WsRequest, key: str) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
-        if not _is_websocket_channel_session_key(decoded_key):
+        if not self._accepts_session_key(decoded_key):
             return _http_error(404, "session not found")
         if self.session_manager is None:
             return _http_error(503, "session manager unavailable")
@@ -767,6 +788,13 @@ class GatewayHTTPHandler:
             accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
         )
 
+    def _handle_subagents(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.fleet_snapshot_loader is None:
+            return _http_error(503, "subagent fleet unavailable")
+        return _http_json_response(self.fleet_snapshot_loader())
+
     def _sessions_list_payload(self) -> dict[str, Any]:
         assert self.session_manager is not None
         from nanobot.session.webui_turns import websocket_turn_wall_started_at
@@ -777,7 +805,7 @@ class GatewayHTTPHandler:
         default_scope: WorkspaceScope | None = None
         for s in sessions:
             key = s.get("key")
-            if not (isinstance(key, str) and is_webui_session_key(key)):
+            if not isinstance(key, str):
                 continue
             row = {
                 k: v
@@ -788,7 +816,7 @@ class GatewayHTTPHandler:
             # older clients and compact list responses stay unchanged.
             if row.get("recovery_state") is None:
                 row.pop("recovery_state", None)
-            chat_id = key.split(":", 1)[1]
+            chat_id = key.split(":", 1)[-1]
             started_at = websocket_turn_wall_started_at(chat_id)
             if started_at is not None:
                 row["run_started_at"] = started_at
@@ -813,7 +841,7 @@ class GatewayHTTPHandler:
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
-        if not _is_websocket_channel_session_key(decoded_key):
+        if not self._accepts_session_key(decoded_key):
             return _http_error(404, "session not found")
         scope = self.workspaces.scope_for_session_key(decoded_key)
 
@@ -874,7 +902,34 @@ class GatewayHTTPHandler:
             before=before,
         )
         if data is None:
-            return _http_error(404, "webui thread not found")
+            session_messages = load_session_messages()
+            if not session_messages:
+                return _http_error(404, "webui thread not found")
+            # Channel session (e.g. weixin:*) with no WebUI transcript:
+            # replay the persisted session file as the thread so the
+            # conversation is viewable in the WebUI.
+            # ponytail: replayed from the session file on every request; a
+            # channel transcript cache would avoid the replay cost if needed.
+            lines: list[dict[str, Any]] = []
+            for turn in _session_backfill_turns(decoded_key, session_messages):
+                lines.append(turn.user_event)
+                lines.extend(turn.assistant_records)
+            data = {
+                "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+                "sessionKey": decoded_key,
+                "messages": replay_transcript_to_ui_messages(
+                    lines,
+                    augment_user_media=self.media.augment_transcript_media,
+                    augment_assistant_media=self.media.augment_transcript_media,
+                    augment_assistant_text=lambda text: self.media.rewrite_local_markdown_images(
+                        text,
+                        workspace_path=scope.project_path,
+                    ),
+                ),
+                "completed_turn_ids": completed_turn_ids(lines),
+                "has_pending_tool_calls": has_pending_tool_calls(lines),
+                "active_turn_id": active_turn_id,
+            }
         data["workspace_scope"] = scope.payload()
         return _http_json_response(
             data,
@@ -887,7 +942,7 @@ class GatewayHTTPHandler:
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
-        if not _is_websocket_channel_session_key(decoded_key):
+        if not self._accepts_session_key(decoded_key):
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         path = _query_first(query, "path")
@@ -910,7 +965,7 @@ class GatewayHTTPHandler:
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
-        if not _is_websocket_channel_session_key(decoded_key):
+        if not self._accepts_session_key(decoded_key):
             return _http_error(404, "session not found")
         pending_job_ids = self._pending_automation_ids_for_session(decoded_key)
         return _http_json_response(
@@ -1154,6 +1209,8 @@ class GatewayHTTPHandler:
     ) -> Response | None:
         if got == "/api/sessions":
             return await self._handle_sessions_list(request)
+        if got == "/api/subagents":
+            return self._handle_subagents(request)
         if got == "/api/commands":
             return self._handle_commands(request)
         if got == "/api/workspaces/pick-folder":

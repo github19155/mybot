@@ -5259,21 +5259,31 @@ def test_sessions_list_includes_active_run_started_at(monkeypatch) -> None:
 
     assert resp.status_code == 200
     body = json.loads(resp.body.decode())
+    assert len(body["sessions"]) == 2
     workspace_scope = body["sessions"][0].pop("workspace_scope")
     assert workspace_scope["project_path"] == str(channel.gateway.media.workspace_path)
     assert workspace_scope["access_mode"] in {"restricted", "full"}
-    assert body["sessions"] == [
-        {
-            "key": "websocket:chat-1",
-            "created_at": "2026-05-19T10:00:00Z",
-            "updated_at": "2026-05-19T10:01:00Z",
-            "title": "Running",
-            "preview": "work",
-            "model_preset": "fast",
-            "run_started_at": 1_700_000_000.0,
-            "handle": handle.public_payload(),
-        }
-    ]
+    # Every channel session with a persisted file is part of the webui surface;
+    # the cli row has no run state or handle but still surfaces.
+    assert body["sessions"][0] == {
+        "key": "websocket:chat-1",
+        "created_at": "2026-05-19T10:00:00Z",
+        "updated_at": "2026-05-19T10:01:00Z",
+        "title": "Running",
+        "preview": "work",
+        "model_preset": "fast",
+        "run_started_at": 1_700_000_000.0,
+        "handle": handle.public_payload(),
+    }
+    cli_row = body["sessions"][1]
+    assert cli_row.pop("workspace_scope")["project_path"] == str(
+        channel.gateway.media.workspace_path
+    )
+    assert cli_row == {
+        "key": "cli:chat-2",
+        "created_at": "2026-05-19T10:00:00Z",
+        "updated_at": "2026-05-19T10:01:00Z",
+    }
 
 
 @pytest.mark.parametrize(

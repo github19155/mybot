@@ -38,6 +38,7 @@ import type {
   SkillsTrendingPayload,
   SlashCommand,
   SlashCommandLifecycle,
+  SubagentsPayload,
   TranscriptionSettingsUpdate,
   WebSearchSettingsUpdate,
   WorkspacesPayload,
@@ -308,6 +309,18 @@ export async function fetchAutomations(
 ): Promise<AutomationsPayload> {
   return request<AutomationsPayload>(
     `${base}/api/webui/automations`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function fetchSubagents(
+  token: string,
+  base: string = "",
+): Promise<SubagentsPayload> {
+  return request<SubagentsPayload>(
+    `${base}/api/subagents`,
     token,
     undefined,
     API_READ_TIMEOUT_MS,

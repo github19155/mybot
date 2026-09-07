@@ -84,6 +84,7 @@ def _make_handler(
     channel_runtime_status: Any | None = None,
     mcp_reload: Any | None = None,
     recovery_action: Any | None = None,
+    fleet_snapshot_loader: Any | None = None,
 ) -> GatewayServices:
     config = WebSocketConfig.model_validate(cfg) if isinstance(cfg, dict) else cfg
     workspace = workspace_path or Path.cwd()
@@ -105,6 +106,7 @@ def _make_handler(
         channel_runtime_status=channel_runtime_status,
         mcp_reload=mcp_reload,
         recovery_action=recovery_action,
+        fleet_snapshot_loader=fleet_snapshot_loader,
     )
 
 
@@ -124,6 +126,7 @@ def _ch(
     channel_runtime_status: Any | None = None,
     mcp_reload: Any | None = None,
     recovery_action: Any | None = None,
+    fleet_snapshot_loader: Any | None = None,
     **extra: Any,
 ) -> WebSocketChannel:
     cfg: dict[str, Any] = {
@@ -149,6 +152,7 @@ def _ch(
         channel_runtime_status=channel_runtime_status,
         mcp_reload=mcp_reload,
         recovery_action=recovery_action,
+        fleet_snapshot_loader=fleet_snapshot_loader,
     )
     return InProcessHttpChannel(cfg, bus, gateway=gateway)
 
@@ -2160,7 +2164,7 @@ async def test_mcp_presets_routes_require_token_and_return_payload(
 
 
 @pytest.mark.asyncio
-async def test_sessions_list_only_returns_websocket_sessions_by_default(
+async def test_sessions_list_returns_all_channel_sessions_with_files(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Seed a realistic multi-channel disk state: CLI, Slack, Lark and
@@ -2171,6 +2175,7 @@ async def test_sessions_list_only_returns_websocket_sessions_by_default(
             "cli:direct",
             "slack:C123",
             "lark:oc_abc",
+            "weixin:wx-chat",
             "websocket:alpha",
             "websocket:beta",
         ],
@@ -2196,9 +2201,16 @@ async def test_sessions_list_only_returns_websocket_sessions_by_default(
         assert listing.status_code == 200
         sessions = listing.json()["sessions"]
         keys = {s["key"] for s in sessions}
-        # Only websocket-channel sessions are part of the webui surface; CLI /
-        # Slack / Lark rows would be non-resumable from the browser.
-        assert keys == {"websocket:alpha", "websocket:beta"}
+        # Every channel session with a persisted file is part of the webui
+        # surface; weixin/slack/lark rows are readable once their file exists.
+        assert keys == {
+            "cli:direct",
+            "slack:C123",
+            "lark:oc_abc",
+            "weixin:wx-chat",
+            "websocket:alpha",
+            "websocket:beta",
+        }
         rows = {row["key"]: row for row in sessions}
         handles = {
             handle.session_key: handle
@@ -2215,6 +2227,88 @@ async def test_sessions_list_only_returns_websocket_sessions_by_default(
         )
         assert rows["websocket:beta"]["workspace_scope"]["access_mode"] == "restricted"
         assert all(not any(key.startswith("_") for key in row) for row in sessions)
+    finally:
+        await channel.stop()
+        await server_task
+
+
+@pytest.mark.asyncio
+async def test_subagents_route_requires_token_and_passthrough_loader(
+    bus: MagicMock, tmp_path: Path
+) -> None:
+    sm = _seed_session(tmp_path)
+    loader_calls: list[None] = []
+    snapshot = {"subagents": [], "budget": {"max_per_session": 8, "running_by_session": {}}}
+
+    def fleet_snapshot_loader() -> dict[str, Any]:
+        loader_calls.append(None)
+        return snapshot
+
+    channel = _ch(
+        bus,
+        session_manager=sm,
+        fleet_snapshot_loader=fleet_snapshot_loader,
+        port=29921,
+    )
+    server_task = asyncio.create_task(channel.start())
+    try:
+        deny = await _http_get("http://127.0.0.1:29921/api/subagents")
+        assert deny.status_code == 401
+        assert loader_calls == []
+
+        token = channel.gateway.tokens.issue_api_token(300)
+        auth = {"Authorization": f"Bearer {token}"}
+        listing = await _http_get("http://127.0.0.1:29921/api/subagents", headers=auth)
+        assert listing.status_code == 200
+        assert listing.json() == snapshot
+        assert loader_calls == [None]
+    finally:
+        await channel.stop()
+        await server_task
+
+
+@pytest.mark.asyncio
+async def test_subagents_route_returns_503_without_loader(
+    bus: MagicMock, tmp_path: Path
+) -> None:
+    sm = _seed_session(tmp_path)
+    channel = _ch(bus, session_manager=sm, port=29922)
+    server_task = asyncio.create_task(channel.start())
+    try:
+        token = channel.gateway.tokens.issue_api_token(300)
+        auth = {"Authorization": f"Bearer {token}"}
+        listing = await _http_get("http://127.0.0.1:29922/api/subagents", headers=auth)
+        assert listing.status_code == 503
+    finally:
+        await channel.stop()
+        await server_task
+
+
+@pytest.mark.asyncio
+async def test_webui_thread_get_accepts_channel_session_key_with_file(
+    bus: MagicMock, tmp_path: Path
+) -> None:
+    sm = _seed_session(tmp_path, key="weixin:wx-chat")
+    channel = _ch(bus, session_manager=sm, port=29923)
+    server_task = asyncio.create_task(channel.start())
+    try:
+        token = channel.gateway.tokens.issue_api_token(300)
+        auth = {"Authorization": f"Bearer {token}"}
+
+        existing = await _http_get(
+            "http://127.0.0.1:29923/api/sessions/"
+            "weixin%3Awx-chat/webui-thread",
+            headers=auth,
+        )
+        assert existing.status_code == 200
+        assert existing.json()["sessionKey"] == "weixin:wx-chat"
+
+        unknown = await _http_get(
+            "http://127.0.0.1:29923/api/sessions/"
+            "weixin%3Aunknown/webui-thread",
+            headers=auth,
+        )
+        assert unknown.status_code == 404
     finally:
         await channel.stop()
         await server_task

@@ -734,6 +734,7 @@ def _run_gateway(
         webui_mcp_reload=mcp_provider.reload,
         webui_skill_state_action=_webui_skill_state_action,
         webui_recovery_action=recovery.handle_action,
+        webui_fleet_snapshot_loader=agent.subagents.fleet_snapshot,
         config_path=Path(config_path),
     )
 

@@ -48,6 +48,7 @@ class GatewayServices:
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
     local_trigger_pending_ids: Callable[[str], set[str]] | None
+    fleet_snapshot_loader: Callable[[], dict[str, Any]] | None = None
 
 
 def build_gateway_services(
@@ -74,6 +75,7 @@ def build_gateway_services(
     mcp_reload: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     skill_state_action: Callable[[set[str]], None] | None = None,
     recovery_action: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    fleet_snapshot_loader: Callable[[], dict[str, Any]] | None = None,
     logger: Any = default_logger,
 ) -> GatewayServices:
     settings = WebUISettingsServices.create(
@@ -138,6 +140,7 @@ def build_gateway_services(
         mcp_reload=mcp_reload,
         skill_state_action=skill_state_action,
         recovery_action=recovery_action,
+        fleet_snapshot_loader=fleet_snapshot_loader,
         log=logger,
     )
     endpoint = WebUIGatewayEndpoint(config=config, http=http, tokens=tokens)
@@ -157,4 +160,5 @@ def build_gateway_services(
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,
         local_trigger_pending_ids=local_trigger_pending_ids,
+        fleet_snapshot_loader=fleet_snapshot_loader,
     )

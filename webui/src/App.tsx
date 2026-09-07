@@ -11,6 +11,7 @@ import {
 import { Eye, EyeOff, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
+import { FleetView } from "@/components/FleetView";
 import { Sidebar } from "@/components/Sidebar";
 import type { SidebarDeleteItem } from "@/components/ChatList";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
@@ -2495,6 +2496,7 @@ function Shell({
     showArchived: sidebarState.view.show_archived,
     archivedCount: sidebarArchivedTabKeys.length,
     defaultWorkspacePath: workspaces?.default_scope.project_path ?? null,
+    fleetPanel: <FleetView token={getToken()} />,
   };
   const hostSidebarFlowWidth = hostSidebarOpen ? SIDEBAR_WIDTH : SIDEBAR_RAIL_WIDTH;
 

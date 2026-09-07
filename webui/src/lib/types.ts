@@ -235,6 +235,48 @@ export interface SessionDeleteResult {
   automations?: SessionAutomationJob[];
 }
 
+export interface SubagentOrigin {
+  channel?: string;
+  chat_id?: string;
+  session_key?: string;
+  message_id?: string;
+}
+
+export interface SubagentUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface SubagentToolEvent {
+  name: string;
+  summary?: string;
+}
+
+export interface SubagentSummary {
+  task_id: string;
+  label: string;
+  state: "running" | "finished";
+  phase: string;
+  iteration?: number;
+  role?: string;
+  model?: string;
+  origin?: SubagentOrigin;
+  started_at_ms?: number;
+  ended_at_ms?: number | null;
+  error?: string | null;
+  usage?: SubagentUsage | null;
+  tool_events?: SubagentToolEvent[];
+}
+
+export interface SubagentsPayload {
+  subagents: SubagentSummary[];
+  budget?: {
+    max_per_session: number;
+    running_by_session: Record<string, number>;
+  };
+}
+
 export interface SkillSummary {
   name: string;
   description: string;

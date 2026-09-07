@@ -5,8 +5,10 @@ import json
 import time
 import uuid
 import warnings
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NotRequired, TypedDict
 
@@ -69,6 +71,12 @@ class SubagentStatus:
     role: str = "coder"
     model: str | None = None
     model_preset: str | None = None
+    origin_channel: str | None = None
+    origin_chat_id: str | None = None
+    session_key: str | None = None
+    origin_message_id: str | None = None
+    started_at_ms: int | None = None   # wall clock ms, for fleet snapshots
+    ended_at_ms: int | None = None
 
 
 class _SubagentHook(AgentHook):
@@ -164,6 +172,9 @@ class SubagentManager:
         self._running_tasks: dict[str, asyncio.Task[str]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        self._finished: deque[SubagentStatus] = deque(maxlen=50)
+        self._steer_queues: dict[str, asyncio.Queue[str]] = {}
+        self.max_concurrent_per_session = 8
 
     def runtime_statuses(self) -> Mapping[str, SubagentStatus]:
         """Return the observable task statuses used by runtime-control snapshots."""
@@ -278,6 +289,12 @@ class SubagentManager:
         model_preset: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
+        if self.get_running_count_by_session(session_key) >= self.max_concurrent_per_session:
+            return ToolResult.error(
+                f"Error: too many subagents already running for this session "
+                f"(max {self.max_concurrent_per_session}). "
+                "Wait for one to complete and try again."
+            )
         if runtime is None:
             runtime = self._compat_spawn_runtime()
         try:
@@ -302,10 +319,15 @@ class SubagentManager:
             label=display_label,
             task_description=task,
             started_at=time.monotonic(),
+            started_at_ms=int(time.time() * 1000),
             phase="queued",
             role=role,
             model=runtime.model,
             model_preset=runtime.model_preset,
+            origin_channel=origin_channel,
+            origin_chat_id=origin_chat_id,
+            session_key=session_key,
+            origin_message_id=origin_message_id,
         )
         self._task_statuses[task_id] = status
 
@@ -327,7 +349,8 @@ class SubagentManager:
 
         def _cleanup(_: asyncio.Task[str]) -> None:
             self._running_tasks.pop(task_id, None)
-            self._task_statuses.pop(task_id, None)
+            self._steer_queues.pop(task_id, None)
+            self._record_finished(self._task_statuses.pop(task_id, None))
             if session_key and (ids := self._session_tasks.get(session_key)):
                 ids.discard(task_id)
                 if not ids:
@@ -378,10 +401,15 @@ class SubagentManager:
             label=display_label,
             task_description=task,
             started_at=time.monotonic(),
+            started_at_ms=int(time.time() * 1000),
             phase="queued",
             role=role,
             model=runtime.model,
             model_preset=runtime.model_preset,
+            origin_channel=origin_channel,
+            origin_chat_id=origin_chat_id,
+            session_key=session_key,
+            origin_message_id=origin_message_id,
         )
         self._task_statuses[task_id] = status
         logger.info("Running inline subagent [{}]: {}", task_id, display_label)
@@ -408,7 +436,8 @@ class SubagentManager:
             return result
         finally:
             self._running_tasks.pop(task_id, None)
-            self._task_statuses.pop(task_id, None)
+            self._steer_queues.pop(task_id, None)
+            self._record_finished(self._task_statuses.pop(task_id, None))
             if session_key and (ids := self._session_tasks.get(session_key)):
                 ids.discard(task_id)
                 if not ids:
@@ -512,6 +541,8 @@ class SubagentManager:
                         "llm_usage_source",
                         current_llm_usage_source(),
                     ),
+                    injection_callback=partial(self._drain_steer_queue, task_id),
+                    terminal_injection_callback=partial(self._drain_steer_queue, task_id),
                 ))
             finally:
                 if token is not None:
@@ -658,3 +689,96 @@ class SubagentManager:
             1 for tid in tids
             if tid in self._running_tasks and not self._running_tasks[tid].done()
         )
+
+    async def steer(self, task_id: str, message: str) -> bool:
+        """Queue a steer message for a running subagent.
+
+        Bounded per-task queue (maxsize 5); overflow drops the oldest message.
+        Returns False when no live task with that id exists.
+        """
+        task = self._running_tasks.get(task_id)
+        if task is None or task.done():
+            return False
+        queue = self._steer_queues.get(task_id)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=5)
+            self._steer_queues[task_id] = queue
+        if queue.full():
+            queue.get_nowait()  # drop oldest
+        queue.put_nowait(message)
+        if task.done():
+            self._steer_queues.pop(task_id, None)
+            return False
+        return True
+
+    async def _drain_steer_queue(self, task_id: str, limit: int = 3) -> list[str]:
+        """Injection callback: drain queued steer messages for one task."""
+        queue = self._steer_queues.get(task_id)
+        if queue is None:
+            return []
+        items: list[str] = []
+        while len(items) < limit and not queue.empty():
+            items.append(queue.get_nowait())
+        return items
+
+    def _record_finished(self, status: SubagentStatus | None) -> None:
+        """Retain a finished status in the bounded history (done/error only)."""
+        if status is None or status.phase not in ("done", "error"):
+            return
+        status.ended_at_ms = int(time.time() * 1000)
+        self._finished.append(status)
+
+    def fleet_snapshot(self) -> dict:
+        """Snapshot of the subagent fleet per the /api/subagents contract."""
+        now_ms = int(time.time() * 1000)
+        rows = [
+            self._status_to_snapshot(s, now_ms)
+            for s in (*self._task_statuses.values(), *self._finished)
+        ]
+        rows.sort(key=lambda row: row["started_at_ms"], reverse=True)
+        return {
+            "subagents": [r for r in rows if r["state"] == "running"]
+            + [r for r in rows if r["state"] == "finished"],
+            "budget": {
+                "max_per_session": self.max_concurrent_per_session,
+                "running_by_session": {
+                    key: self.get_running_count_by_session(key)
+                    for key in sorted(self._session_tasks)
+                },
+            },
+        }
+
+    @staticmethod
+    def _status_to_snapshot(status: SubagentStatus, now_ms: int) -> dict:
+        started_at_ms = status.started_at_ms
+        if started_at_ms is None:
+            started_at_ms = now_ms - int((time.monotonic() - status.started_at) * 1000)
+        usage = status.usage
+        return {
+            "task_id": status.task_id,
+            "label": status.label,
+            "task": status.task_description,
+            "state": "finished" if status.phase in ("done", "error") else "running",
+            "phase": status.phase,
+            "iteration": status.iteration,
+            "role": status.role,
+            "model": status.model,
+            "origin": {
+                "channel": status.origin_channel,
+                "chat_id": status.origin_chat_id,
+                "session_key": status.session_key,
+                "message_id": status.origin_message_id,
+            },
+            "started_at_ms": started_at_ms,
+            "ended_at_ms": status.ended_at_ms,
+            "error": status.error,
+            "usage": {
+                "input_tokens": usage.input_tokens if usage else 0,
+                "output_tokens": usage.output_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
+            },
+            "tool_events": [
+                {"name": e.get("name", ""), "summary": e.get("detail", "")}
+                for e in status.tool_events[-20:]
+            ],
+        }

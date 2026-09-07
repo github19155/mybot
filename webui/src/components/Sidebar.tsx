@@ -88,6 +88,7 @@ interface SidebarProps {
   archivedCount?: number;
   defaultWorkspacePath?: string | null;
   hostChromeInset?: boolean;
+  fleetPanel?: ReactNode;
 }
 
 type NavigatorWithUserAgentData = Navigator & {
@@ -286,6 +287,7 @@ export function Sidebar(props: SidebarProps) {
           />
         )}
       </div>
+      {props.fleetPanel && !collapsed ? props.fleetPanel : null}
       <div
         className={cn(
           "flex items-center gap-1 bg-sidebar/55 px-2.5 py-3 text-xs",

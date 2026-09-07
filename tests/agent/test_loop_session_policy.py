@@ -72,6 +72,23 @@ async def test_transient_session_keeps_history_without_persisting_or_durable_too
     assert loop.sessions.read_session_file(key) is None
 
 
+def test_temporary_chat_disables_the_current_subagent_tool(tmp_path) -> None:
+    from nanobot.webui.temporary_chats import WebUITemporaryChats
+
+    loop = _loop(tmp_path, [])
+    chats = WebUITemporaryChats(
+        bus=loop.bus,
+        session_manager=loop.sessions,
+        workspaces=MagicMock(),
+        logger=MagicMock(),
+    )
+    chat_id = chats.create(object(), trusted_webui=True)
+
+    session = loop.sessions.get_cached(f"websocket:{chat_id}")
+    assert session is not None
+    assert "subagent" in session.policy.disabled_tools
+
+
 @pytest.mark.asyncio
 async def test_transient_session_stays_outside_unified_session(tmp_path) -> None:
     loop = _loop(tmp_path, ["private answer"], unified_session=True)

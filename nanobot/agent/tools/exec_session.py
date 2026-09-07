@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_session_key
+from nanobot.agent.tools.context import ToolContext, current_request_exec_owner_key
 from nanobot.agent.tools.schema import (
     BooleanSchema,
     IntegerSchema,
@@ -602,7 +602,7 @@ class ExecSessionTool(Tool):
                     terminate=True,
                     yield_time_ms=0,
                     max_output_chars=DEFAULT_MAX_OUTPUT_CHARS,
-                    owner_session_key=current_request_session_key(),
+                    owner_session_key=current_request_exec_owner_key(),
                 )
                 result = format_session_poll(session_id, poll)
                 return ToolResult.error(result) if poll.timed_out else result
@@ -659,7 +659,7 @@ class ExecSessionTool(Tool):
                 terminate=False,
                 yield_time_ms=step_ms,
                 max_output_chars=MAX_OUTPUT_CHARS,
-                owner_session_key=current_request_session_key(),
+                owner_session_key=current_request_exec_owner_key(),
             )
             first = False
             upstream_truncated += poll.truncated_chars
@@ -730,7 +730,7 @@ class ListExecSessionsTool(Tool):
     async def execute(self, **kwargs: Any) -> str:
         try:
             sessions = await self._manager.list(
-                owner_session_key=current_request_session_key(),
+                owner_session_key=current_request_exec_owner_key(),
             )
             if not sessions:
                 return "No active exec sessions."

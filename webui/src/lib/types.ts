@@ -256,6 +256,7 @@ export interface SubagentToolEvent {
 export interface SubagentSummary {
   task_id: string;
   label: string;
+  task?: string;
   state: "queued" | "running" | "completed" | "failed" | "stopped" | "finished";
   phase: string;
   iteration?: number;
@@ -267,6 +268,10 @@ export interface SubagentSummary {
   started_at_ms?: number;
   ended_at_ms?: number | null;
   error?: string | null;
+  stop_reason?: string | null;
+  output?: string | null;
+  completion_delivered?: boolean;
+  completion_delivery_error?: string | null;
   usage?: SubagentUsage | null;
   tool_events?: SubagentToolEvent[];
 }

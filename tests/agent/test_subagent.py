@@ -263,6 +263,55 @@ async def test_role_registry_enforces_permissions(tmp_path, role, can_write, can
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["researcher", "planner"])
+async def test_builtin_role_tool_override_cannot_escalate_permissions(tmp_path, role):
+    """A builtin read-only role cannot gain execution tools through an override."""
+    from nanobot.agent.subagent_roles import resolve_role
+    from nanobot.config.schema import Config
+
+    config = Config(subagentRoles={role: {"tools": ["read_file", "exec"]}})
+    manager = SubagentManager(
+        workspace=tmp_path, bus=MessageBus(), max_tool_result_chars=16_000,
+    )
+
+    tools = manager._build_tools(
+        role=role,
+        role_definition=resolve_role(config, role),
+    )
+
+    assert "read_file" in tools.tool_names
+    assert "exec" not in tools.tool_names
+    assert "exec_session" not in tools.tool_names
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_custom_role_keeps_explicit_tools(tmp_path):
+    """Custom roles keep their explicitly configured tools."""
+    from nanobot.agent.subagent_roles import resolve_role
+    from nanobot.config.schema import Config
+
+    config = Config(subagentRoles={
+        "implementation": {
+            "description": "Implement changes",
+            "systemPrompt": "Implement and test the requested changes.",
+            "tools": ["read_file", "write_file", "exec"],
+        },
+    })
+    manager = SubagentManager(
+        workspace=tmp_path, bus=MessageBus(), max_tool_result_chars=16_000,
+    )
+
+    tools = manager._build_tools(
+        role="implementation",
+        role_definition=resolve_role(config, "implementation"),
+    )
+
+    assert {"read_file", "write_file", "exec"}.issubset(tools.tool_names)
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_read_only_role_rejects_plugin_using_allowed_name(tmp_path, monkeypatch):
     from nanobot.agent.tools.base import Tool
     from nanobot.agent.tools.loader import ToolLoader, _LegacyErrorPrefixTool

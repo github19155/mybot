@@ -357,6 +357,7 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
     session = sessions.get_cached(inbound.session_key)
     assert session is not None
     assert session.policy.persist is False
+    assert "subagent" in session.policy.disabled_tools
     assert upload.exists()
     assert read_transcript_lines(inbound.session_key) == []
     assert [payload["event"] for payload in _sent_ws_payloads(connection)] == [

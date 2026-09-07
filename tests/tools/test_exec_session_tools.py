@@ -13,7 +13,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
+from nanobot.agent.tools.context import (
+    RequestContext,
+    bind_request_context,
+    request_context,
+    reset_request_context,
+)
 from nanobot.agent.tools.exec_session import (
     MAX_OUTPUT_CHARS,
     ExecSessionManager,
@@ -61,6 +66,39 @@ def _session_id(output: str) -> str:
     match = re.search(r"session_id:\s*([0-9a-f]+)", output)
     assert match, output
     return match.group(1)
+
+
+@pytest.mark.asyncio
+async def test_exec_session_tools_use_the_request_exec_owner_key():
+    owner_key = "parent:subagent:child"
+    seen: list[str | None] = []
+
+    async def write(**kwargs: object) -> _SessionPoll:
+        seen.append(kwargs["owner_session_key"])
+        return _SessionPoll(output="", done=True, exit_code=0)
+
+    async def list_sessions(**kwargs: object) -> list[object]:
+        seen.append(kwargs["owner_session_key"])
+        return []
+
+    manager = SimpleNamespace(
+        write=AsyncMock(side_effect=write),
+        list=AsyncMock(side_effect=list_sessions),
+    )
+    session_tool = ExecSessionTool(manager=manager)
+    list_tool = ListExecSessionsTool(manager=manager)
+
+    with request_context(RequestContext(
+        channel="test",
+        chat_id="child",
+        session_key="parent",
+        exec_owner_session_key=owner_key,
+    )):
+        await session_tool.execute(session_id="session", terminate=True)
+        await session_tool.execute(session_id="session", timeout_ms=1)
+        await list_tool.execute()
+
+    assert seen == [owner_key, owner_key, owner_key]
 
 
 async def _poll_if_running(
@@ -703,6 +741,60 @@ def test_exec_sessions_are_scoped_to_request_session_key(tmp_path):
     assert unbound_listing == "No active exec sessions."
     assert other_listing == "No active exec sessions."
     assert other_write == f"Error: exec session not found: {sid!r}"
+    assert "Session terminated." in cleanup
+
+
+def test_subagent_exec_sessions_are_scoped_to_the_exec_owner_key(tmp_path):
+    async def run() -> tuple[str, str, str, str, str]:
+        manager = ExecSessionManager()
+        exec_tool = ExecTool(working_dir=str(tmp_path), timeout=5, session_manager=manager)
+        list_tool = ListExecSessionsTool(manager=manager)
+        stdin_tool = ExecSessionTool(manager=manager)
+        command = _python_command("import time; print('ready', flush=True); time.sleep(5)")
+        owner = "cli:parent:subagent:child"
+
+        child_context = bind_request_context(RequestContext(
+            channel="cli",
+            chat_id="parent",
+            session_key="cli:parent",
+            exec_owner_session_key=owner,
+        ))
+        try:
+            initial = await exec_tool.execute(command=command, yield_time_ms=100)
+            sid = _session_id(initial)
+            child_listing = await list_tool.execute()
+        finally:
+            reset_request_context(child_context)
+
+        parent_context = bind_request_context(RequestContext(
+            channel="cli",
+            chat_id="parent",
+            session_key="cli:parent",
+        ))
+        try:
+            parent_listing = await list_tool.execute()
+            parent_write = await stdin_tool.execute(session_id=sid, timeout_ms=0)
+        finally:
+            reset_request_context(parent_context)
+
+        child_context = bind_request_context(RequestContext(
+            channel="cli",
+            chat_id="parent",
+            session_key="cli:parent",
+            exec_owner_session_key=owner,
+        ))
+        try:
+            cleanup = await stdin_tool.execute(session_id=sid, terminate=True)
+        finally:
+            reset_request_context(child_context)
+
+        return sid, child_listing, parent_listing, parent_write, cleanup
+
+    sid, child_listing, parent_listing, parent_write, cleanup = asyncio.run(run())
+
+    assert sid in child_listing
+    assert parent_listing == "No active exec sessions."
+    assert parent_write == f"Error: exec session not found: {sid!r}"
     assert "Session terminated." in cleanup
 
 

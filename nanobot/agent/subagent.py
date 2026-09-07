@@ -379,6 +379,8 @@ class SubagentManager:
         role_definition = role_definition or self._resolve_role(role)
         allowed = ROLE_TOOL_MODULES[role_definition.permissions]
         allowed_names = set(role_definition.tools)
+        if role_definition.builtin:
+            allowed_names.intersection_update(allowed)
         if allowed_tools is not None:
             allowed_names.intersection_update(allowed_tools)
         allowed_names.discard("subagent")

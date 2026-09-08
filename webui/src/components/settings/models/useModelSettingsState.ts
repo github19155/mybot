@@ -18,6 +18,7 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
   const [modelConfigurationSaving, setModelConfigurationSaving] = useState(false);
   const [modelCallOrderSaving, setModelCallOrderSaving] = useState(false);
   const [modelMigrationSaving, setModelMigrationSaving] = useState(false);
+  const [imageAnalysisSaving, setImageAnalysisSaving] = useState(false);
   const [modelPresetPendingDelete, setModelPresetPendingDelete] =
     useState<SettingsPayload["model_presets"][number] | null>(null);
   const modelPresetBeforeCreateRef = useRef<string | null>(null);
@@ -51,6 +52,7 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     expandedProvider,
     form,
     modelCallOrder,
+    imageAnalysisSaving,
     modelCallOrderSaving,
     modelConfigurationSaving,
     promptOverrides,
@@ -74,6 +76,7 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     setEditingProviderKeys,
     setExpandedProvider,
     setForm,
+    setImageAnalysisSaving,
     setModelCallOrder,
     setModelCallOrderSaving,
     setModelConfigurationSaving,

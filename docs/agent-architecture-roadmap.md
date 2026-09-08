@@ -22,7 +22,7 @@ Read [`design-principles.md`](./design-principles.md) first for the project-leve
   - Prefer informed agent decisions over broad hard-coded restrictions.
 
 - **Dream = specialist evolution**
-  - Learn recurring task patterns from durable evidence.
+  - Learn recurring task patterns from durable evidence, including a compact candidate ledger across Dream cycles.
   - Create or refine focused specialists when repetition justifies them.
   - Mark rarely useful Dream specialists cold instead of deleting them; deletion remains a user decision.
 
@@ -68,12 +68,16 @@ Human takeover keeps priority until control is returned. AI and human must opera
 
 ## Specialist evolution with Dream
 
-Dream may evolve its own specialists under the agent workspace after repeated evidence shows a stable recurring responsibility.
+Dream may evolve its own specialists under the agent workspace after repeated evidence shows a stable recurring responsibility. Because repetitions may land in different Dream batches, a compact `_candidates.json` ledger carries promising responsibility evidence across cycles without making candidates routable agents.
 
 Lifecycle:
 
 ```text
-repeated task pattern
+first credible occurrence
+        ↓
+record / merge candidate evidence
+        ↓
+separate occurrence repeats the responsibility
         ↓
 compare general + existing specialists
         ↓
@@ -90,6 +94,8 @@ Dream reviews repeated evidence
                          ↓
                     user decides deletion
 ```
+
+Candidates are evidence memory only. Main never routes to them, and Dream should merge semantic duplicates, avoid counting repeated mentions of one task as independent occurrences, and prune stale one-off candidates.
 
 Dream should not optimize a role from one noisy run. Meaningful changes should keep a version/evolution trail so a specialist can improve incrementally instead of being replaced by another near-duplicate role.
 

@@ -503,7 +503,6 @@ class TestBuildMessages:
         assert system.startswith("Always answer in haiku.\n\n---\n\n")
 
     def test_no_prefix_keeps_system_prompt_untouched(self, tmp_path):
-        builder = _builder(tmp_path)
         without = _builder(tmp_path).build_transcript(
             TranscriptInput(history=[], current_message="hi")
         )[0]["content"]

@@ -19,8 +19,8 @@ class ProviderSnapshot:
     signature: tuple[object, ...]
     generation: GenerationSettings | None = None
     model_preset: str | None = None
-    supports_vision: bool = False
     system_prompt_prefix: str | None = None
+    supports_vision: bool = False
 
 
 @dataclass(frozen=True)

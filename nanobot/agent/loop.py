@@ -272,6 +272,7 @@ class AgentLoop:
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,
+        supports_vision: bool = False,
         max_iterations: int | None = None,
         max_concurrent_subagents: int | None = None,
         context_window_tokens: int | None = None,
@@ -349,6 +350,7 @@ class AgentLoop:
                 provider,
                 initial_model,
                 context_window_tokens=initial_context_window,
+                supports_vision=supports_vision,
                 snapshot_signature=provider_signature,
                 system_prompt_prefix=(
                     prompt_for_model(initial_model) if prompt_for_model else None
@@ -513,6 +515,7 @@ class AgentLoop:
         provider = extra.pop("provider", None) or make_provider(config)
         resolved = config.resolve_preset()
         model = extra.pop("model", None) or resolved.model
+        supports_vision = extra.pop("supports_vision", resolved.supports_vision)
         prompt_for_model = extra.pop("prompt_for_model", None) or config.system_prompt_for
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
@@ -525,6 +528,7 @@ class AgentLoop:
             provider=provider,
             workspace=config.workspace_path,
             model=model,
+            supports_vision=supports_vision,
             max_iterations=defaults.max_tool_iterations,
             max_concurrent_subagents=defaults.max_concurrent_subagents,
             context_window_tokens=context_window_tokens,
@@ -643,6 +647,18 @@ class AgentLoop:
         """Select a context limit for future turns."""
         return self.runtime_resolver.select_context_window(context_window_tokens)
 
+    @staticmethod
+    def _tools_for_runtime(tools: ToolRegistry, runtime: LLMRuntime) -> ToolRegistry:
+        """Hide the fallback image tool from models with native vision support."""
+        if not runtime.supports_vision or not tools.has("image_analyze"):
+            return tools
+        filtered = ToolRegistry()
+        for name in tools.tool_names:
+            tool = tools.get(name)
+            if name != "image_analyze" and tool is not None:
+                filtered.register(tool)
+        return filtered
+
     def _register_default_tools(
         self,
         *,
@@ -760,6 +776,7 @@ class AgentLoop:
             session_summary=ctx.pending_summary,
             runtime_context_blocks=ctx.runtime_context_blocks,
             system_prompt_prefix=ctx.system_prompt_prefix,
+            include_images=runtime.supports_vision,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -1020,6 +1037,7 @@ class AgentLoop:
                 user_content = self.context.build_user_content(
                     content,
                     image_paths=image_paths,
+                    include_images=runtime.supports_vision,
                 )
                 row: dict[str, Any] = {"role": "user", "content": user_content}
                 metadata_value = cast(object, pending_msg.metadata)
@@ -1882,6 +1900,7 @@ class AgentLoop:
             ctx.runtime = runtime
         if ctx.system_prompt_prefix is None:
             ctx.system_prompt_prefix = runtime.system_prompt_prefix
+        ctx.tools = self._tools_for_runtime(ctx.tools or self.tools, runtime)
         if ctx.session_key.startswith("dream:"):
             logger.info(
                 "Dream run using model={} (preset={})",
@@ -1940,6 +1959,7 @@ class AgentLoop:
                 ctx.msg.content,
                 media=ctx.msg.media if ctx.kind is TurnKind.USER and ctx.msg.media else None,
                 runtime_context_blocks=ctx.runtime_context_blocks,
+                include_images=runtime.supports_vision,
             )
             task_id = ctx.msg.metadata.get("subagent_task_id") if is_subagent else None
             already_staged = False

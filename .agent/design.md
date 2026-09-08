@@ -4,18 +4,26 @@ These rules govern architectural decisions. When adding a feature or fixing a bu
 
 ## Main Agent orchestrates; subagents execute
 
-The Main Agent is primarily the user-facing coordinator. It should stay responsive, understand intent, consult project docs, split work, choose specialist subagents, track progress, and summarize results.
+The Main Agent is primarily the user-facing coordinator. It should stay responsive, understand intent, consult project docs, split work, choose workers, track progress, and summarize results.
 
 Long or specialized operational work should normally run in subagents so the Main Agent remains available for conversation. Short, immediate actions may still run directly when that is simpler.
+
+Subagents have a permanent `general` fallback plus focused specialists. Main should prefer a clearly matching active specialist and use `general` when no specialist materially fits. Specialist discovery is dynamic because the user and Dream may add roles over time.
 
 Treat this as the project-level mental model:
 
 ```text
 Main Agent = conversation + orchestration
-Subagents  = background execution
+Subagents  = general worker + specialist workers
 Tools      = capabilities
 Docs       = project knowledge
+Dream      = specialist discovery and evolution
+User       = final governance for specialist deletion
 ```
+
+Responsibilities belong in roles; capabilities belong in tools. Browser is a capability that eligible workers may use, not a reason to create a separate Browser Agent type. Shared browser state still requires orchestration so multiple workers do not operate the same persistent Chromium session concurrently.
+
+Dream may create or refine its own specialist roles only from repeated evidence. A rarely useful Dream specialist should be marked `cold`, not automatically deleted or disabled; the user decides whether it is eventually removed.
 
 ## Read the intended design before repairing it
 
@@ -26,7 +34,7 @@ Start with `docs/design-principles.md` and `docs/README.md`, then follow the sub
 - browser runtime and handoff: `docs/browser.md`;
 - browser failures: `docs/troubleshooting/browser-runtime.md`;
 - runtime persistence: `docs/runtime-storage.md`;
-- future agent structure: `docs/agent-architecture-roadmap.md`.
+- agent structure and evolution: `docs/agent-architecture-roadmap.md`.
 
 Changing the architecture is allowed when justified. Make the new invariant explicit and update the documentation with the change.
 

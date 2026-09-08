@@ -103,3 +103,7 @@ exp/
 .playwright-mcp/
 bridge/node_modules/
 webui/.verify-*
+
+# Local collaboration artifacts
+.agent/handoff-subagent-fleet.md
+.fleet-patches/

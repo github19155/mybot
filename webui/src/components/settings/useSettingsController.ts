@@ -271,7 +271,7 @@ export function useSettingsController({
       form.contextWindowTokens !== normalizeContextWindowTokens(selectedPreset.context_window_tokens) ||
       form.temperature !== selectedPreset.temperature ||
       form.reasoningEffort !== (selectedPreset.reasoning_effort ?? "") ||
-      form.supportsVision !== selectedPreset.supports_vision
+      form.supportsVision !== (selectedPreset.supports_vision === true)
     );
   }, [form, modelPresetEditingName, settings]);
 

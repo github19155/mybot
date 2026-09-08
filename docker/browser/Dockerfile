@@ -8,12 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     curl \
     fonts-liberation \
-    novnc \
+    imagemagick \
     openbox \
     python3 \
     tini \
-    websockify \
-    x11vnc \
+    xdotool \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
@@ -29,6 +28,6 @@ USER browser
 WORKDIR /home/browser
 
 VOLUME ["/data/profile"]
-EXPOSE 9222 6080 6081
+EXPOSE 9222 6081
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/nanobot-browser/start.sh"]

@@ -91,6 +91,7 @@ class ModelManagement:
         return {
             "status": "ok",
             "model_presets": payload["model_presets"],
+            "image_analysis": payload["image_analysis"],
             "subagent_roles": payload["subagent_roles"],
             "max_concurrent_subagents": payload["max_concurrent_subagents"],
             "providers": [

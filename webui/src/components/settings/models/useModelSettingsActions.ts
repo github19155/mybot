@@ -110,6 +110,7 @@ export function useModelSettingsActions({
     setEditingProviderKeys,
     setExpandedProvider,
     setForm,
+    setImageAnalysisSaving,
     setModelCallOrder,
     setModelCallOrderSaving,
     setModelConfigurationSaving,

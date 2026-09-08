@@ -25,11 +25,7 @@ docker compose \
   up -d nanobot-browser nanobot-gateway
 ```
 
-Browser profile data is persisted at:
-
-```text
-~/.nanobot/browser-profile
-```
+Browser profile data is persisted in the Docker volume `nanobot-browser-profile`. Keeping it in a Docker-managed volume avoids host UID/permission problems while preserving cookies, local storage, and login state across container restarts.
 
 The default noVNC listener is published only on server loopback:
 

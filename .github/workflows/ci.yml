@@ -104,6 +104,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Compose overlays
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.root.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.browser.yml -f docker-compose.root.yml config >/dev/null
+
       - name: Build deployment image
         run: docker build -t nanobot:test .
 

@@ -1,0 +1,23 @@
+# Opt-in root mode for the nanobot gateway.
+#
+# Usage:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.browser.yml \
+#     -f docker-compose.root.yml \
+#     up -d --build nanobot-browser nanobot-gateway
+#
+# This grants root inside the nanobot-gateway container only. It does not mount
+# the host root filesystem, Docker socket, or enable privileged mode.
+services:
+  nanobot-gateway:
+    user: "0:0"
+    environment:
+      NANOBOT_RUN_AS_ROOT: "true"
+    # The base compose file deliberately drops every capability and enables
+    # no-new-privileges for the normal non-root deployment. Root mode opts out
+    # of those restrictions and returns to Docker's normal default capability
+    # set for a root container.
+    cap_drop: !reset []
+    cap_add: !reset []
+    security_opt: !reset []

@@ -1588,6 +1588,11 @@ def delete_model_configuration(config: Config, query: QueryParams) -> None:
             "remove the model preset from the call order first",
             status=409,
         )
+    if config.tools.image_analysis.model_preset == name:
+        raise WebUISettingsError(
+            "clear the image analysis model preset before deleting it",
+            status=409,
+        )
     del config.model_presets[name]
 
 

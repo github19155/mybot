@@ -135,7 +135,16 @@ class ImageAnalysisTool(Tool):
         model_preset: str | None = None,
         **kwargs: Any,
     ) -> str:
-        if len(image_paths) > self.config.max_images:
+        if not isinstance(image_paths, list):
+            return ToolResult.error("Error: image_paths must be an array.")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return ToolResult.error("Error: prompt must not be blank.")
+        paths = [
+            value.strip()
+            for value in image_paths
+            if isinstance(value, str) and value.strip()
+        ]
+        if len(paths) > self.config.max_images:
             return ToolResult.error(
                 "Error: image_paths exceeds tools.imageAnalysis.maxImages "
                 f"({self.config.max_images})"
@@ -146,7 +155,8 @@ class ImageAnalysisTool(Tool):
                 "Set tools.imageAnalysis.modelPreset to a vision-capable model preset."
             )
 
-        selected = (model_preset or self.config.model_preset or "").strip()
+        requested_preset = model_preset if isinstance(model_preset, str) else None
+        selected = (requested_preset or self.config.model_preset or "").strip()
         if not selected:
             return ToolResult.error(
                 "Error: no image analysis model is configured. "
@@ -154,7 +164,7 @@ class ImageAnalysisTool(Tool):
             )
 
         try:
-            images = [self._resolve_image(value) for value in image_paths if value.strip()]
+            images = [self._resolve_image(value) for value in paths]
             if not images:
                 return ToolResult.error("Error: at least one image path is required.")
             snapshot: ProviderSnapshot = self.provider_snapshot_loader(

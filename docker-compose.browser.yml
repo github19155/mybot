@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     shm_size: "1gb"
     volumes:
-      - ~/.nanobot/browser-profile:/data/profile
+      - nanobot-browser-profile:/data/profile
     expose:
       - "9222"
       - "6081"
@@ -37,3 +37,6 @@ services:
     depends_on:
       nanobot-browser:
         condition: service_healthy
+
+volumes:
+  nanobot-browser-profile:

@@ -115,7 +115,7 @@ export function agentDraftFromPayload(
     ),
     temperature: activePreset?.temperature ?? payload.agent.temperature,
     reasoningEffort: activePreset?.reasoning_effort ?? "",
-    supportsVision: activePreset?.supports_vision ?? payload.agent.supports_vision,
+    supportsVision: activePreset?.supports_vision ?? payload.agent.supports_vision ?? false,
     timezone: payload.agent.timezone,
     toolHintMaxLength: payload.agent.tool_hint_max_length,
   };
@@ -271,7 +271,7 @@ export function ModelsSettings({
     if (!creating) suggestedPresetNameRef.current = null;
   }, [creating]);
   const namedPresets = settings.model_presets.filter((preset) => !preset.is_default);
-  const visionPresets = settings.model_presets.filter((preset) => preset.supports_vision);
+  const visionPresets = settings.model_presets.filter((preset) => preset.supports_vision === true);
   const roles = settings.subagent_roles ?? [];
   const roleBindingsDirty = roles.some(
     (role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_preset,
@@ -358,7 +358,7 @@ export function ModelsSettings({
       contextWindowTokens: normalizeContextWindowTokens(preset.context_window_tokens),
       temperature: preset.temperature,
       reasoningEffort: preset.reasoning_effort ?? "",
-      supportsVision: preset.supports_vision,
+      supportsVision: preset.supports_vision === true,
     }));
     setEditorRowKey(rowKey);
     setEditorOpen(true);

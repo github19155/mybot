@@ -12,6 +12,7 @@ Do NOT guess paths. Route each item to its canonical location:
 | MEMORY.md | `memory/MEMORY.md` | Project context: goals, architecture, strategic decisions, infrastructure overview, integrated services |
 | SKILL.md | `skills/<name>/SKILL.md` | Reusable workflow templates with concrete steps, commands, and examples ([SKILL] entries only) |
 | Specialist role | `skills/.agents/<name>.json` | Dream-managed worker specialization: responsibility, prompt, capabilities, runtime preferences, evolution metadata |
+| Specialist candidates | `skills/.agents/_candidates.json` | Small Dream-maintained evidence ledger for recurring responsibilities not yet strong enough to become roles |
 | Specialist usage | `skills/.agents/_usage.json` | Runtime-generated advisory usage counters and last-used timestamps; read it, do not fabricate it |
 | Specialist index | `skills/.agents/_manifest.json` | Compact Dream-maintained index of Dream specialists and their status/version |
 
@@ -36,6 +37,7 @@ Cross-boundary rule: no technical configs in USER.md, no user facts in SOUL.md, 
 - MEMORY.md: project context (goals, architecture, strategic decisions, infrastructure overview, integrated services) — no operational details (commands, flags, tokens, URLs)
 - SKILL.md: reusable workflow templates with concrete steps, commands, and examples
 - Specialist role: a recurring worker responsibility and the capabilities/runtime guidance that make that worker materially better than `general` or an existing specialist
+- Specialist candidate: temporary cross-Dream evidence that a responsibility may be recurring; it is not a runtime role and must stay compact
 - If an item belongs in multiple places, keep it in the most specific place and remove redundant copies
 
 ## History attribute tags
@@ -115,16 +117,28 @@ Think of subagents as two classes:
 
 A specialist role represents **responsibility**. Tools represent **capabilities**. Browser use by itself is not a reason to create a Browser Agent; give an appropriate worker browser tools when its recurring responsibility needs them.
 
+### Candidate memory across Dream runs
+
+A repeated pattern may span multiple Dream batches, so do not require both observations to appear in one current history slice. Use `skills/.agents/_candidates.json` as a small evidence ledger for promising responsibilities that are not yet justified as runtime roles.
+
+- On a first credible occurrence, add or update one candidate with a normalized responsibility, an evidence count, first/last-seen timestamps when available from history, and at most a few short evidence summaries.
+- Match semantically equivalent occurrences to the same candidate instead of creating spelling variants.
+- Increment evidence only for genuinely separate occurrences; repeated mentions of one task in the same conversation are one occurrence.
+- A candidate is not a role and Main must never route work to it.
+- When a candidate is promoted to a specialist, remove it from `_candidates.json` after the role file is successfully written.
+- Prune candidates that were one-off, superseded, or stale enough to no longer suggest a recurring responsibility. Candidate pruning does not delete any runtime specialist.
+- Keep the file compact; it is evidence memory, not a second conversation archive.
+
 ### Before creating a specialist
 
-Read existing Dream role files, `skills/.agents/_manifest.json` when present, and `skills/.agents/_usage.json` when present. Also consider the built-in specialists listed above. Create a new Dream specialist only when ALL are true:
+Read existing Dream role files, `skills/.agents/_candidates.json`, `skills/.agents/_manifest.json` when present, and `skills/.agents/_usage.json` when present. Also consider the built-in specialists listed above. Create a new Dream specialist only when ALL are true:
 
-1. A substantially similar responsibility has appeared at least 2 times in the available history/evidence.
+1. A substantially similar responsibility has appeared in at least 2 genuinely separate occurrences across current history and/or persisted candidate evidence.
 2. The pattern is likely to recur and is more than a one-off project phase or temporary incident.
 3. `general` or an existing specialist is materially less suitable; a narrower role would improve focus, prompt guidance, capability selection, or runtime settings.
 4. The new role does not substantially overlap an existing specialist. Prefer improving or reusing an existing role over proliferation.
 
-Do not infer a recurring pattern from `_usage.json` alone; it records launches, not quality or task semantics.
+Do not infer a recurring pattern from `_usage.json` alone; it records launches, not quality or task semantics. Do not fabricate candidate counts: counts must be grounded in observed conversation/history evidence.
 
 ### Dream specialist format
 
@@ -172,7 +186,7 @@ Maintain `skills/.agents/_manifest.json` as a compact index of Dream-managed spe
 
 ## Editing
 - Current contents of SOUL.md, USER.md, and memory/MEMORY.md are provided by the agent system context. Edit those files directly; do not rely on a remembered version of a file.
-- Read existing specialist files before changing them; preserve user-managed/config roles outside `skills/.agents/`.
+- Read existing specialist files and candidate evidence before changing them; preserve user-managed/config roles outside `skills/.agents/`.
 - Batch changes into as few calls as possible. Surgical edits only.
 
 ## Verification

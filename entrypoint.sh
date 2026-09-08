@@ -23,11 +23,25 @@ if [ "$RENDER" = "true" ]; then
     set -- "$@" --config "$config"
 fi
 
-# Drop privileges whenever the container starts as root. Render mounts the
-# persistent disk root-owned, and a plain `docker run` also defaults to root now,
-# so this covers both. Chown the data dir so the non-root user can write it, then
-# re-exec as nanobot. Fail closed: if the privilege drop cannot be performed,
-# exit rather than run the agent as root.
+# Explicit opt-in container-root mode. This only affects the identity inside the
+# container; Docker's namespace isolation still separates the process from the
+# Linux host unless the deployment separately grants host mounts/capabilities.
+# The root compose overlay also restores Docker's normal root capability set and
+# removes no-new-privileges for the gateway service.
+if [ "$(id -u)" = "0" ] && [ "${NANOBOT_RUN_AS_ROOT:-false}" = "true" ]; then
+    mkdir -p "$dir" || {
+        echo "[entrypoint] error: cannot create $dir for root mode" >&2
+        exit 1
+    }
+    echo "[entrypoint] NANOBOT_RUN_AS_ROOT=true — running nanobot as container root"
+    exec nanobot "$@"
+fi
+
+# Default mode: drop privileges whenever the container starts as root. Render
+# mounts the persistent disk root-owned, and a plain `docker run` also defaults
+# to root, so this covers both. Chown the data dir so the non-root user can write
+# it, then re-exec as nanobot. Fail closed: if the privilege drop cannot be
+# performed, exit rather than run the agent as root.
 if [ "$(id -u)" = "0" ]; then
     chown -R nanobot:nanobot "$dir" 2>/dev/null || echo "[entrypoint] warning: chown $dir failed"
     if setpriv --reuid=nanobot --regid=nanobot --init-groups true 2>/dev/null; then

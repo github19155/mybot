@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from websockets.asyncio.server import ServerConnection
 from websockets.http11 import Request as WsRequest
 
+from nanobot.webui.browser_takeover import handle_browser_takeover_request
 from nanobot.webui.gateway_tokens import GatewayTokenStore
 from nanobot.webui.http_utils import (
     is_trusted_proxy_authenticated_request,
@@ -57,6 +58,15 @@ class WebUIGatewayEndpoint:
         is_allowed: Callable[[str], bool],
     ) -> Any:
         """Route one listener request to a WS handshake or the HTTP application."""
+        takeover_response = await handle_browser_takeover_request(
+            connection,
+            request,
+            config=self._config,
+            tokens=self._tokens,
+        )
+        if takeover_response is not None:
+            return takeover_response
+
         got, query = parse_request_path(request.path)
         expected_ws = normalize_config_path(self._config.path)
         if got == expected_ws and is_websocket_upgrade(request):

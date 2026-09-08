@@ -4,14 +4,14 @@ from typing import Any
 
 import pytest
 
-from nanobot.config.schema import Config
+from nanobot.config.schema import Config, ModelPresetConfig
+from nanobot.webui.settings_contracts import WebUISettingsError
 from nanobot.webui.settings_models import (
     delete_model_configuration,
     model_settings_payload,
     update_agent_model_settings,
     update_provider_settings,
 )
-from nanobot.webui.settings_contracts import WebUISettingsError
 
 
 def _oauth_status(_spec: Any) -> dict[str, Any]:

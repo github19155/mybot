@@ -114,8 +114,12 @@ class SubagentTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run and control child agents. Use run with wait=false for independent work, "
-            "then status/steer/stop by task ID. Use wait=true only when this turn needs the result. "
+            "Run and control child agents. Default long or independent work to run with "
+            "wait=false, especially installs/downloads, builds, broad test suites, environment "
+            "setup, multi-step debugging, or work likely to take more than about 10 seconds. "
+            "Background results are delivered automatically: do not repeatedly poll status or "
+            "sleep-and-check. Use wait=true only for short child work whose result is required "
+            "before the current turn can proceed. Use status/steer/stop by task ID when needed. "
             "Role and model settings apply only to the child; children cannot create children."
         )
 

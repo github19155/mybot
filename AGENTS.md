@@ -61,9 +61,21 @@ Messages flow through an async `MessageBus` (`nanobot/bus/queue.py`) that decoup
 
 ## Project-Specific Notes
 
+Before changing runtime, browser, subagent, deployment, or persistence behavior, read the relevant project docs instead of inventing a parallel workaround.
+
+Start with:
+
+- Project design principles: [`docs/design-principles.md`](docs/design-principles.md)
+- Documentation index: [`docs/README.md`](docs/README.md)
 - Architecture constraints: [`.agent/design.md`](.agent/design.md)
 - Security boundaries: [`.agent/security.md`](.agent/security.md)
 - Common gotchas: [`.agent/gotchas.md`](.agent/gotchas.md)
+- Browser runtime: [`docs/browser.md`](docs/browser.md)
+- Browser troubleshooting: [`docs/troubleshooting/browser-runtime.md`](docs/troubleshooting/browser-runtime.md)
+- Runtime persistence: [`docs/runtime-storage.md`](docs/runtime-storage.md)
+- Agent roadmap: [`docs/agent-architecture-roadmap.md`](docs/agent-architecture-roadmap.md)
+
+The project-level agent model is: **Main Agent = conversation + orchestration; subagents = background execution; tools = capabilities; docs = project knowledge.** Prefer diagnosing the intended architecture before replacing it.
 
 ## Contribution Flow
 

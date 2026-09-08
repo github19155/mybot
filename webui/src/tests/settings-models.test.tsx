@@ -137,6 +137,78 @@ describe("Settings models", () => {
     expect(screen.getByRole("combobox", { name: "Model preset for coder" })).toHaveValue("");
   });
 
+
+
+  it("marks a model as vision-capable in the preset editor", async () => {
+    const payload = settingsPayload();
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    requestMutationMock.mockResolvedValueOnce({
+      ...payload,
+      model_presets: [{ ...payload.model_presets[0], supports_vision: true }],
+    });
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    await togglePresetEditor();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));
+
+    const visionCheckbox = screen.getByRole("checkbox", {
+      name: "This model supports native image input",
+    });
+    expect(visionCheckbox).not.toBeChecked();
+    fireEvent.click(visionCheckbox);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(requestMutationMock).toHaveBeenCalledWith(
+        "settings.model_configuration.update",
+        { name: "primary", supports_vision: true },
+        20_000,
+      ),
+    );
+  });
+
+  it("selects a vision preset for image analysis fallback", async () => {
+    const base = settingsPayload();
+    const visionPreset = {
+      ...base.model_presets[0],
+      name: "vision",
+      label: "Vision",
+      active: false,
+      model: "openai/gpt-4o",
+      supports_vision: true,
+    };
+    const payload: SettingsPayload = {
+      ...base,
+      agent: { ...base.agent, image_analysis_model_preset: null },
+      model_presets: [...base.model_presets, visionPreset],
+      model_call_order: ["primary", "vision"],
+    };
+    const updatedPayload: SettingsPayload = {
+      ...payload,
+      agent: { ...payload.agent, image_analysis_model_preset: "vision" },
+      image_analysis: {
+        enabled: true,
+        model_preset: "vision",
+        max_image_mb: 10,
+        max_images: 4,
+      },
+    };
+    requestMutationMock.mockResolvedValueOnce(updatedPayload);
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    const fallback = screen.getByRole("combobox", { name: "Vision model" });
+    expect(fallback).toHaveValue("");
+    fireEvent.change(fallback, { target: { value: "vision" } });
+
+    await waitFor(() =>
+      expect(requestMutationMock).toHaveBeenCalledWith(
+        "settings.agent.update",
+        { image_analysis_model_preset: "vision" },
+        20_000,
+      ),
+    );
+  });
+
   it("uses the preset name as the canonical identity", async () => {
     const payload = settingsPayload();
     payload.model_presets[0] = {

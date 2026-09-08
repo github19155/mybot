@@ -30,7 +30,11 @@ from nanobot.security.workspace_access import WorkspaceScopeResolver
 from nanobot.session.keys import last_channel_from_metadata
 from nanobot.session.manager import Session
 from nanobot.session.summary import SessionSummary
-from nanobot.utils.helpers import detect_image_mime, load_bundled_template
+from nanobot.utils.helpers import (
+    content_with_media_breadcrumbs,
+    detect_image_mime,
+    load_bundled_template,
+)
 from nanobot.utils.prompt_templates import render_template
 
 
@@ -82,6 +86,7 @@ class TranscriptInput:
     session_summary: SessionSummary | None = None
     runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None
     system_prompt_prefix: str | None = None
+    include_images: bool = True
 
     @property
     def message_count(self) -> int:
@@ -313,6 +318,7 @@ class ContextBuilder:
             media=list(transcript.media) if transcript.media else None,
             current_role=transcript.current_role,
             runtime_context_blocks=transcript.runtime_context_blocks,
+            include_images=transcript.include_images,
         )
         messages.append(current)
         return messages
@@ -324,9 +330,14 @@ class ContextBuilder:
         media: list[str] | None = None,
         current_role: str = "user",
         runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
+        include_images: bool = True,
     ) -> dict[str, Any]:
         """Build only the fresh turn message without merging it into history."""
-        content = self.build_user_content(current_message, image_paths=media)
+        content = self.build_user_content(
+            current_message,
+            image_paths=media,
+            include_images=include_images,
+        )
         blocks: list[RuntimeContextBlock] = []
         if current_role == "user":
             blocks.extend(runtime_context_blocks or ())
@@ -345,10 +356,14 @@ class ContextBuilder:
         self,
         text: str,
         image_paths: list[str] | None,
+        *,
+        include_images: bool = True,
     ) -> str | list[dict[str, Any]]:
         """Build user message content from prefiltered image paths."""
         if not image_paths:
             return text
+        if not include_images:
+            return content_with_media_breadcrumbs("user", text, image_paths)
 
         image_blocks: list[dict[str, Any]] = []
         for path in image_paths:

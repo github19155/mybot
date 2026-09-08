@@ -663,7 +663,11 @@ class AgentLoop:
     @staticmethod
     def _tools_for_runtime(tools: ToolRegistry, runtime: LLMRuntime) -> ToolRegistry:
         """Hide the fallback image tool from models with native vision support."""
-        if not runtime.supports_vision or not tools.has("image_analyze"):
+        if (
+            not runtime.supports_vision
+            or not isinstance(tools, ToolRegistry)
+            or not tools.has("image_analyze")
+        ):
             return tools
         filtered = copy(tools)
         filtered._tools = {

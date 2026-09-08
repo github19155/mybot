@@ -527,7 +527,10 @@ class AgentLoop:
         if provider_snapshot_loader is None:
             from nanobot.providers.factory import build_provider_snapshot
 
-            provider_snapshot_loader = lambda **kwargs: build_provider_snapshot(config, **kwargs)
+            def _load_provider_snapshot(**kwargs: Any) -> Any:
+                return build_provider_snapshot(config, **kwargs)
+
+            provider_snapshot_loader = _load_provider_snapshot
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
             provider_snapshot_loader,

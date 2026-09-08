@@ -92,7 +92,7 @@ export function useSettingsController({
   const modelState = useModelSettingsState(initialSettings);
   const {
     editingProviderKeys, expandedProvider, form, modelCallOrder, modelCallOrderSaving,
-    modelConfigurationSaving, modelMigrationSaving, modelPresetBeforeCreateRef,
+    imageAnalysisSaving, modelConfigurationSaving, modelMigrationSaving, modelPresetBeforeCreateRef,
     promptOverrides, promptOverridesSaving,
     roleBindingsDraft, roleBindingsSaving, setRoleBindingsDraft,
     modelPresetCreating, modelPresetEditingName, modelPresetNameError, modelPresetPendingDelete,
@@ -270,7 +270,8 @@ export function useSettingsController({
       form.maxTokens !== selectedPreset.max_tokens ||
       form.contextWindowTokens !== normalizeContextWindowTokens(selectedPreset.context_window_tokens) ||
       form.temperature !== selectedPreset.temperature ||
-      form.reasoningEffort !== (selectedPreset.reasoning_effort ?? "")
+      form.reasoningEffort !== (selectedPreset.reasoning_effort ?? "") ||
+      form.supportsVision !== selectedPreset.supports_vision
     );
   }, [form, modelPresetEditingName, settings]);
 
@@ -432,6 +433,7 @@ export function useSettingsController({
     handleMigrateModelConfigurations,
     handleToggleProvider,
     runProviderOAuth,
+    saveImageAnalysisModel,
     saveModelSettings,
     savePromptOverrides,
     saveRoleBindings,
@@ -518,6 +520,7 @@ export function useSettingsController({
     handleWebSearchProviderChange,
     hasPendingRestart,
     hostEngineApplying,
+    imageAnalysisSaving,
     imageGenerationDirty,
     imageGenerationForm,
     imageGenerationSaving,
@@ -567,6 +570,7 @@ export function useSettingsController({
     resetWebSearchDraft,
     restartViaSettingsSurface,
     runProviderOAuth,
+    saveImageAnalysisModel,
     saveImageGenerationSettings,
     saveModelSettings,
     savePromptOverrides,

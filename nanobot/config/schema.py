@@ -283,7 +283,11 @@ class BedrockProviderConfig(ProviderConfig):
 
 
 class ProvidersConfig(Base):
-    """Provider configuration for all supported backends."""
+    """Configuration for LLM providers.
+
+    Supports custom providers via extra fields — any additional field
+    becomes an OpenAI-compatible custom provider.
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -766,7 +770,10 @@ class Config(BaseSettings):
         return p.api_key if p else None
 
     def get_api_base(
-        self, model: str | None = None, *, preset: ModelPresetConfig | None = None
+        self,
+        model: str | None = None,
+        *,
+        preset: ModelPresetConfig | None = None,
     ) -> str | None:
         """Get API base URL for the given model, falling back to the provider default when present."""
         from nanobot.providers.registry import find_by_name
@@ -789,7 +796,7 @@ class Config(BaseSettings):
 def _resolve_tool_config_refs() -> None:
     """Resolve forward references in ToolsConfig by importing tool config classes.
 
-    Must be called after all modules are loaded (breaks circular imports).
+    Must be called after all modules are loaded (breaks circular deps).
     Re-exports the classes into this module's namespace so existing imports
     like ``from nanobot.config.schema import ExecToolConfig`` continue to work.
     """

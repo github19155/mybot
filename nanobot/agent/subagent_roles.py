@@ -80,6 +80,13 @@ _WRITE_TOOLS = {
     "edit_file": "filesystem",
     "apply_patch": "apply_patch",
 }
+_EXEC_BASE_TOOLS = {
+    **_WRITE_TOOLS,
+    "exec": "shell",
+    "exec_session": "exec_session",
+    "list_exec_sessions": "exec_session",
+    "run_cli_app": "cli_apps",
+}
 _BROWSER_TOOLS = {
     "browser_open": "subagent_browser",
     "browser_snapshot": "subagent_browser",
@@ -94,18 +101,18 @@ _BROWSER_TOOLS = {
     "browser_status": "subagent_browser",
     "browser_close": "subagent_browser",
 }
-_EXEC_TOOLS = {
-    **_WRITE_TOOLS,
-    "exec": "shell",
-    "exec_session": "exec_session",
-    "list_exec_sessions": "exec_session",
-    "run_cli_app": "cli_apps",
-    **_BROWSER_TOOLS,
-}
+_EXEC_TOOLS = {**_EXEC_BASE_TOOLS, **_BROWSER_TOOLS}
 ROLE_TOOL_MODULES = {
     "read-only": _READ_TOOLS,
     "read-write": _WRITE_TOOLS,
+    # Permission ceiling: exec-capable roles may be configured with browser tools.
     "read-write-exec": _EXEC_TOOLS,
+}
+_DEFAULT_TOOL_MODULES = {
+    "read-only": _READ_TOOLS,
+    "read-write": _WRITE_TOOLS,
+    # Specialist builtins keep their historical defaults; browser stays opt-in.
+    "read-write-exec": _EXEC_BASE_TOOLS,
 }
 ALL_SUBAGENT_TOOL_NAMES = frozenset(_EXEC_TOOLS)
 ROLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -269,7 +276,14 @@ def normalize_role_name(name: object) -> str:
 
 
 def _default_tools(permissions: str) -> tuple[str, ...]:
-    return tuple(ROLE_TOOL_MODULES[permissions])
+    return tuple(_DEFAULT_TOOL_MODULES[permissions])
+
+
+def _default_tools_for_role(name: str, permissions: str) -> tuple[str, ...]:
+    tools = _default_tools(permissions)
+    if name == "general" and permissions == "read-write-exec":
+        return (*tools, *_BROWSER_TOOLS)
+    return tools
 
 
 def _permissions_for_custom_tools(tools: tuple[str, ...]) -> str:
@@ -344,7 +358,9 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
     description = (override.description or (builtin or {}).get("description") or "").strip()
     system_prompt = (override.system_prompt or description).strip()
     tools = tuple(
-        override.tools if override.tools is not None else _default_tools(base_permissions)
+        override.tools
+        if override.tools is not None
+        else _default_tools_for_role(normalized, base_permissions)
     )
     permissions = base_permissions if builtin else _permissions_for_custom_tools(tools)
     status = str(metadata.get("status") or "active").strip().lower() or "active"
@@ -475,7 +491,7 @@ class SubagentRoleStore:
             merged.update({
                 "description": base["description"],
                 "system_prompt": base["description"],
-                "tools": list(_default_tools(base["permissions"])),
+                "tools": list(_default_tools_for_role("general", base["permissions"])),
             })
         merged |= values
         from nanobot.config.schema import SubagentRoleConfig

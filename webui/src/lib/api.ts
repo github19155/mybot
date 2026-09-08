@@ -905,6 +905,9 @@ export async function updateSettings(
   }
   if (update.model !== undefined) payload.model = update.model;
   if (update.provider !== undefined) payload.provider = update.provider;
+  if (update.imageAnalysisModelPreset !== undefined) {
+    payload.image_analysis_model_preset = update.imageAnalysisModelPreset ?? "";
+  }
   if (update.contextWindowTokens !== undefined) {
     payload.context_window_tokens = update.contextWindowTokens;
   }
@@ -918,7 +921,7 @@ export async function updateSettings(
 function modelGenerationSettingsPayload(
   configuration: Pick<
     ModelConfigurationCreate,
-    "maxTokens" | "contextWindowTokens" | "temperature" | "reasoningEffort"
+    "maxTokens" | "contextWindowTokens" | "temperature" | "reasoningEffort" | "supportsVision"
   >,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
@@ -933,6 +936,9 @@ function modelGenerationSettingsPayload(
   }
   if (configuration.reasoningEffort !== undefined) {
     payload.reasoning_effort = configuration.reasoningEffort ?? "";
+  }
+  if (configuration.supportsVision !== undefined) {
+    payload.supports_vision = configuration.supportsVision;
   }
   return payload;
 }

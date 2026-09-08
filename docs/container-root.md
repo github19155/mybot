@@ -2,6 +2,8 @@
 
 nanobot normally starts the gateway as root only long enough to fix mounted-data ownership, then drops privileges to the `nanobot` user. For deployments where the agent is intentionally allowed to administer its own container (for example installing temporary packages with `apt`), an explicit root-mode overlay is available.
 
+Read [`runtime-storage.md`](./runtime-storage.md) before deciding where runtime-installed assets should live.
+
 ## Enable it
 
 Without the browser sidecar:
@@ -59,9 +61,16 @@ This means the agent can administer the gateway container (including ordinary `a
 
 ## Persistence
 
-Packages installed interactively with `apt` modify the running container filesystem. They survive a normal container restart, but they are lost when the image/container is recreated (for example after `docker compose up --build` creates a replacement container).
+Packages installed interactively with `apt` modify the running container filesystem. They survive a normal container restart, but they are lost when the image/container is recreated.
 
-For dependencies that should survive rebuilds, add them to the Dockerfile or another build layer after testing them interactively.
+Use these rules:
+
+- stable system packages required for normal operation -> add them to the Dockerfile/build layer;
+- reusable downloaded assets or tool caches -> place them in an intentional persistent path such as `/home/nanobot/.nanobot/cache/<tool>` or a mounted project workspace when genuinely project-scoped;
+- one-off diagnostic installs -> container filesystem is acceptable;
+- browser binaries for the standard browser capability -> use the `nanobot-browser` sidecar instead of installing a second Chromium in the gateway.
+
+The base Compose setup persists `~/.nanobot` at `/home/nanobot/.nanobot`, so data stored intentionally beneath that tree survives gateway recreation. Project workspaces may also be persistent when mounted by the deployment.
 
 ## Disable root mode
 

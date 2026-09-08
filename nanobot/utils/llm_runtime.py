@@ -107,7 +107,7 @@ def runtime_from_provider_snapshot(
         snapshot.provider,
         snapshot.model,
         context_window_tokens=snapshot.context_window_tokens,
-            model_preset=snapshot.model_preset,
+        model_preset=snapshot.model_preset,
         supports_vision=snapshot.supports_vision,
         system_prompt_prefix=snapshot.system_prompt_prefix,
         snapshot_signature=snapshot.signature,

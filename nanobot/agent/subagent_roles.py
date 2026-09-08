@@ -271,7 +271,7 @@ def normalize_role_name(name: object) -> str:
         raise ValueError("role name must be a string")
     normalized = name.strip().lower()
     if not ROLE_NAME_PATTERN.fullmatch(normalized):
-        raise ValueError("role name must match [a-z][a-z0-9_-]{0,63}")
+        raise ValueError("role name must match [a-z][a-z0-9_-]{0,63}$")
     return normalized
 
 
@@ -386,7 +386,7 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         temperature=override.temperature,
         timeout_seconds=override.timeout_seconds,
         context=override.context or "fresh",
-        disabled=override.disabled,
+        disabled=False if normalized == "general" else override.disabled,
         builtin=builtin is not None,
         permissions=permissions,
         category="general" if normalized == "general" else "specialist",
@@ -488,6 +488,8 @@ class SubagentRoleStore:
 
     def update(self, name: str, values: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_role_name(name)
+        if normalized == "general" and values.get("disabled") is True:
+            raise ValueError("The general subagent role is permanent and cannot be disabled")
         current = self.config.subagent_roles.get(normalized)
         dream_exists = normalized in _dream_role_entries(self.config)
         if normalized not in SUBAGENT_ROLES and current is None and not dream_exists:

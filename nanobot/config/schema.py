@@ -796,7 +796,7 @@ class Config(BaseSettings):
 def _resolve_tool_config_refs() -> None:
     """Resolve forward references in ToolsConfig by importing tool config classes.
 
-    Must be called after all modules are loaded (breaks circular deps).
+    Must be called after all modules are loaded (breaks circular imports).
     Re-exports the classes into this module's namespace so existing imports
     like ``from nanobot.config.schema import ExecToolConfig`` continue to work.
     """

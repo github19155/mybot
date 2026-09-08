@@ -4,10 +4,12 @@ from typing import Any
 
 from nanobot.config.schema import Config
 from nanobot.webui.settings_models import (
+    delete_model_configuration,
     model_settings_payload,
     update_agent_model_settings,
     update_provider_settings,
 )
+from nanobot.webui.settings_contracts import WebUISettingsError
 
 
 def _oauth_status(_spec: Any) -> dict[str, Any]:
@@ -49,3 +51,49 @@ def test_model_domain_owns_dto_and_config_updates() -> None:
     assert config.agents.defaults.context_window_tokens == 200_000
     assert config.providers.openrouter.api_key == "sk-after"
     assert payload["agent"]["model"] == "openai/gpt-5.4"
+
+
+
+def test_model_settings_configure_vision_fallback() -> None:
+    config = Config()
+    config.model_presets["vision"] = ModelPresetConfig(
+        model="openai/gpt-4o",
+        provider="openrouter",
+        supports_vision=True,
+    )
+
+    changed = update_agent_model_settings(
+        config,
+        {"image_analysis_model_preset": ["vision"]},
+        oauth_status=_oauth_status,
+    )
+    payload = model_settings_payload(config, oauth_status=_oauth_status)
+
+    assert changed is True
+    assert config.tools.image_analysis.model_preset == "vision"
+    assert payload["image_analysis"]["model_preset"] == "vision"
+    assert payload["model_presets"][-1]["supports_vision"] is True
+
+
+def test_model_settings_reject_nonvision_fallback() -> None:
+    config = Config()
+    config.model_presets["text"] = ModelPresetConfig(model="openai/gpt-4o-mini")
+
+    with pytest.raises(WebUISettingsError, match="supportsVision=true"):
+        update_agent_model_settings(
+            config,
+            {"image_analysis_model_preset": ["text"]},
+            oauth_status=_oauth_status,
+        )
+
+
+def test_model_preset_delete_rejects_configured_image_fallback() -> None:
+    config = Config()
+    config.model_presets["vision"] = ModelPresetConfig(
+        model="openai/gpt-4o",
+        supports_vision=True,
+    )
+    config.tools.image_analysis.model_preset = "vision"
+
+    with pytest.raises(WebUISettingsError, match="image analysis model preset"):
+        delete_model_configuration(config, {"name": ["vision"]})

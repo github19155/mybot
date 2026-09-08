@@ -90,6 +90,7 @@ class ModelSettingsOperations:
 class ModelSettingsPayload(TypedDict):
     agent: dict[str, Any]
     model_presets: list[dict[str, Any]]
+    image_analysis: dict[str, Any]
     system_prompt_overrides: list[dict[str, Any]]
     model_call_order: list[str]
     model_call_order_editable: bool

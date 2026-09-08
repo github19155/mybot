@@ -186,7 +186,7 @@ class AgentDefaults(Base):
     timezone: str = "UTC"  # Effective IANA timezone, e.g. "Asia/Shanghai"
     timezone_mode: Literal["auto", "manual"] = "auto"
     bot_name: str = "nanobot"  # Display name shown in CLI prompts (e.g. "{name} is thinking...")
-    bot_icon: str = "🐈"  # Short icon (emoji or text) shown next to the bot name (e.g. "{name} is thinking...")
+    bot_icon: str = "🐈"  # Short icon (emoji or text) shown next to the bot name in CLI; "" to omit
     unified_session: bool = False  # Share one session across all channels (single-user multi-device)
     disabled_skills: list[str] = Field(default_factory=list)  # Skill names to exclude from loading (e.g. ["summarize", "skill-creator"])
     session_ttl_minutes: int = Field(
@@ -283,17 +283,13 @@ class BedrockProviderConfig(ProviderConfig):
 
 
 class ProvidersConfig(Base):
-    """Configuration for LLM providers.
-
-    Supports custom providers via extra fields — any additional field
-    becomes an OpenAI-compatible custom provider.
-    """
+    """Provider configuration for all supported backends."""
 
     model_config = ConfigDict(extra="allow")
 
     custom: ProviderConfig = Field(default_factory=ProviderConfig)  # Any OpenAI-compatible endpoint
     azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)  # Azure OpenAI (model = deployment name)
-    bedrock: ProviderConfig = Field(default_factory=ProviderConfig)  # AWS Bedrock Converse
+    bedrock: BedrockProviderConfig = Field(default_factory=BedrockProviderConfig)  # AWS Bedrock Converse
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -320,7 +316,7 @@ class ProvidersConfig(Base):
     stepfun: ProviderConfig = Field(default_factory=ProviderConfig)  # Step Fun (阶跃星辰) — LLM + ASR (set apiBase to Plan URL for ASR)
     xiaomi_mimo: ProviderConfig = Field(default_factory=ProviderConfig)  # Xiaomi MIMO (小米)
     longcat: ProviderConfig = Field(default_factory=ProviderConfig)  # LongCat
-    ant_ling: ProviderConfig = Field(default_factory=ProviderConfig)  # Ant Ling (蚂蚁灵犀)
+    ant_ling: ProviderConfig = Field(default_factory=ProviderConfig)  # Ant Ling
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
     siliconflow: ProviderConfig = Field(default_factory=ProviderConfig)  # SiliconFlow (硅基流动)
     edenai: ProviderConfig = Field(default_factory=ProviderConfig)  # Eden AI API gateway
@@ -770,10 +766,7 @@ class Config(BaseSettings):
         return p.api_key if p else None
 
     def get_api_base(
-        self,
-        model: str | None = None,
-        *,
-        preset: ModelPresetConfig | None = None,
+        self, model: str | None = None, *, preset: ModelPresetConfig | None = None
     ) -> str | None:
         """Get API base URL for the given model, falling back to the provider default when present."""
         from nanobot.providers.registry import find_by_name

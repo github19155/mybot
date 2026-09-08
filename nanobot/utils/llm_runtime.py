@@ -25,9 +25,9 @@ class LLMRuntime:
     generation: GenerationSettings
     context_window_tokens: int
     model_preset: str | None = None
-    supports_vision: bool = False
     system_prompt_prefix: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
+    supports_vision: bool = False
 
     @classmethod
     def capture(

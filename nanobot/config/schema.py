@@ -532,6 +532,21 @@ class Config(BaseSettings):
         for fallback in self.agents.defaults.fallback_models:
             if isinstance(fallback, str) and fallback not in self.model_presets:
                 raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")
+        image_preset = self.tools.image_analysis.model_preset
+        if image_preset:
+            if image_preset == "default":
+                if not self.resolve_default_preset().supports_vision:
+                    raise ValueError(
+                        "image_analysis model preset 'default' must be marked supports_vision"
+                    )
+            elif image_preset not in self.model_presets:
+                raise ValueError(
+                    f"image_analysis model preset {image_preset!r} not found in model_presets"
+                )
+            elif not self.model_presets[image_preset].supports_vision:
+                raise ValueError(
+                    f"image_analysis model preset {image_preset!r} must be marked supports_vision"
+                )
         for role in _BUILTIN_SUBAGENT_ROLE_NAMES:
             self.subagent_roles.setdefault(role, SubagentRoleConfig())
         for role, role_config in self.subagent_roles.items():

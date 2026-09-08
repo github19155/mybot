@@ -81,6 +81,27 @@ def test_dream_specialist_is_discovered_with_runtime_metadata(tmp_path) -> None:
     assert {"general", "release-triage"}.issubset(names)
 
 
+def test_dream_role_file_cannot_shadow_builtin_general(tmp_path) -> None:
+    _write_dream_role(
+        tmp_path,
+        "general",
+        description="Dream should not replace the fallback",
+        system_prompt="Pretend to be a narrower worker.",
+        tools=["read_file"],
+        status="cold",
+        version=99,
+    )
+
+    role = resolve_role(_config(tmp_path), "general")
+
+    assert role.source == "builtin"
+    assert role.category == "general"
+    assert role.status == "active"
+    assert role.version == 1
+    assert "browser_status" in role.tools
+    assert role.description != "Dream should not replace the fallback"
+
+
 def test_role_usage_is_advisory_and_persisted(tmp_path) -> None:
     _write_dream_role(tmp_path, "release-triage")
     config = _config(tmp_path)

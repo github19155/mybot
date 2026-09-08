@@ -523,6 +523,10 @@ class AgentLoop:
         prompt_for_model = extra.pop("prompt_for_model", None) or config.system_prompt_for
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
+        if provider_snapshot_loader is None:
+            from nanobot.providers.factory import build_provider_snapshot
+
+            provider_snapshot_loader = lambda **kwargs: build_provider_snapshot(config, **kwargs)
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
             provider_snapshot_loader,

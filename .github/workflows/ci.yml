@@ -106,3 +106,6 @@ jobs:
 
       - name: Build deployment image
         run: docker build -t nanobot:test .
+
+      - name: Build browser sidecar image
+        run: docker build -f docker/browser/Dockerfile -t nanobot-browser:test .

@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Eye, EyeOff, Pencil } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { BrowserTakeoverPanel } from "@/components/settings/capabilities/BrowserTakeoverPanel";
 import { ProviderPicker } from "@/components/settings/shared/ModelControls";
 import {
   CapabilityInstallNotice,
@@ -123,6 +124,8 @@ export function WebSettings({
 
   return (
     <div className="space-y-7">
+      <BrowserTakeoverPanel />
+
       <section>
         <SettingsSectionTitle>{tx("settings.sections.webSearch", "Web search")}</SettingsSectionTitle>
         {form.provider === "olostep" && olostepFeature && !olostepFeature.installed ? (

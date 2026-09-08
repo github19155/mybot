@@ -1,0 +1,37 @@
+services:
+  nanobot-browser:
+    build:
+      context: .
+      dockerfile: docker/browser/Dockerfile
+    container_name: nanobot-browser
+    restart: unless-stopped
+    shm_size: "1gb"
+    volumes:
+      - nanobot-browser-profile:/data/profile
+    expose:
+      - "9222"
+      - "6081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9222/json/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  nanobot-gateway:
+    build:
+      args:
+        NANOBOT_EXTRAS: browser
+    environment:
+      NANOBOT_BROWSER_ENABLED: "true"
+      NANOBOT_BROWSER_CDP_ENDPOINT: "http://nanobot-browser:9222"
+      NANOBOT_BROWSER_CONTROL_ENDPOINT: "http://nanobot-browser:6081"
+      NANOBOT_BROWSER_TAKEOVER_URL: "${NANOBOT_BROWSER_TAKEOVER_URL:-}"
+      NANOBOT_BROWSER_HUMAN_TIMEOUT_SEC: "${NANOBOT_BROWSER_HUMAN_TIMEOUT_SEC:-600}"
+      NANOBOT_BROWSER_RECOVERY_ATTEMPTS: "${NANOBOT_BROWSER_RECOVERY_ATTEMPTS:-2}"
+    depends_on:
+      nanobot-browser:
+        condition: service_healthy
+
+volumes:
+  nanobot-browser-profile:

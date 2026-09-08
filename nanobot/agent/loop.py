@@ -272,7 +272,6 @@ class AgentLoop:
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,
-        supports_vision: bool = False,
         max_iterations: int | None = None,
         max_concurrent_subagents: int | None = None,
         context_window_tokens: int | None = None,
@@ -310,6 +309,7 @@ class AgentLoop:
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
         model_management_config: Config | None = None,
+        supports_vision: bool = False,
     ):
         from nanobot.config.schema import ToolsConfig
 

@@ -6,6 +6,10 @@ PROFILE_DIR="${NANOBOT_BROWSER_PROFILE_DIR:-/data/profile}"
 CONTROL_PORT="${NANOBOT_BROWSER_CONTROL_PORT:-6081}"
 CDP_PORT="${NANOBOT_BROWSER_CDP_PORT:-9222}"
 SCREEN="${NANOBOT_BROWSER_SCREEN:-1440x960x24}"
+SCREEN_SIZE="${SCREEN%x*}x${SCREEN#*x}"
+SCREEN_WIDTH="${SCREEN%%x*}"
+SCREEN_REST="${SCREEN#*x}"
+SCREEN_HEIGHT="${SCREEN_REST%%x*}"
 
 mkdir -p "$PROFILE_DIR"
 
@@ -42,11 +46,14 @@ chromium \
     --remote-debugging-address=0.0.0.0 \
     --remote-debugging-port="$CDP_PORT" \
     --user-data-dir="$PROFILE_DIR" \
-    --window-size=1440,960 \
+    --window-size="$SCREEN_WIDTH,$SCREEN_HEIGHT" \
     about:blank >/tmp/chromium.log 2>&1 &
 CHROME_PID=$!
 
-python3 /opt/nanobot-browser/control.py --port "$CONTROL_PORT" &
+python3 /opt/nanobot-browser/control.py \
+    --port "$CONTROL_PORT" \
+    --width "$SCREEN_WIDTH" \
+    --height "$SCREEN_HEIGHT" &
 CONTROL_PID=$!
 
 wait "$CHROME_PID"

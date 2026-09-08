@@ -185,7 +185,7 @@ def role_usage(workspace: Path, role: str) -> dict[str, Any]:
 
 
 def record_role_use(workspace: Path, role: str) -> None:
-    """Record a successful role launch so Dream can reason about hot/cold specialists."""
+    """Record an accepted role launch so Dream can reason about hot/cold specialists."""
     name = normalize_role_name(role)
     path = _usage_path(workspace)
     with _USAGE_LOCK:
@@ -272,6 +272,16 @@ def _default_tools(permissions: str) -> tuple[str, ...]:
     return tuple(ROLE_TOOL_MODULES[permissions])
 
 
+def _permissions_for_custom_tools(tools: tuple[str, ...]) -> str:
+    """Describe a custom role's effective capability tier from its explicit tools."""
+    names = set(tools)
+    if names & (set(_EXEC_TOOLS) - set(_WRITE_TOOLS)):
+        return "read-write-exec"
+    if names & (set(_WRITE_TOOLS) - set(_READ_TOOLS)):
+        return "read-write"
+    return "read-only"
+
+
 def _validate_role_tools(role: "SubagentRoleConfig") -> None:
     requested = set(role.tools or ())
     unknown = requested - ALL_SUBAGENT_TOOL_NAMES
@@ -330,12 +340,13 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         source = "builtin"
         metadata = {}
 
-    permissions = builtin["permissions"] if builtin else "read-only"
+    base_permissions = builtin["permissions"] if builtin else "read-only"
     description = (override.description or (builtin or {}).get("description") or "").strip()
     system_prompt = (override.system_prompt or description).strip()
     tools = tuple(
-        override.tools if override.tools is not None else _default_tools(permissions)
+        override.tools if override.tools is not None else _default_tools(base_permissions)
     )
+    permissions = base_permissions if builtin else _permissions_for_custom_tools(tools)
     status = str(metadata.get("status") or "active").strip().lower() or "active"
     raw_version = metadata.get("version", 1)
     version = raw_version if isinstance(raw_version, int) and not isinstance(raw_version, bool) else 1

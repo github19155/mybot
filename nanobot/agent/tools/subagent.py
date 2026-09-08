@@ -8,8 +8,10 @@ import copy
 import json
 from typing import TYPE_CHECKING, Any
 
+from nanobot.agent.subagent_roles import record_role_use
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import current_request_context
+from nanobot.agent.tools.registry import is_tool_error_result
 from nanobot.agent.tools.schema import (
     ArraySchema,
     BooleanSchema,
@@ -17,6 +19,7 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from nanobot.agent.tools.subagent_browser import bind_subagent_browser_bus
 from nanobot.security.workspace_access import current_workspace_scope
 
 if TYPE_CHECKING:
@@ -57,7 +60,7 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
     label=StringSchema("Optional short label", nullable=True),
     task_id=StringSchema("Task ID for status/steer/stop", nullable=True),
     message=StringSchema("Steering message", nullable=True),
-    role=StringSchema("Role name", nullable=True),
+    role=StringSchema("Role name; omitted uses the general fallback worker", nullable=True),
     system_prompt=StringSchema("Role system prompt", nullable=True),
     disabled=BooleanSchema(description="Disable a role", nullable=True),
     model=StringSchema("Explicit provider/model", nullable=True),
@@ -99,6 +102,10 @@ class SubagentTool(Tool):
 
     def __init__(self, manager: "SubagentManager") -> None:
         self._manager = manager
+        workspace = getattr(manager, "workspace", None)
+        bus = getattr(manager, "bus", None)
+        if workspace is not None and bus is not None:
+            bind_subagent_browser_bus(workspace, bus)
 
     @classmethod
     def create(cls, ctx: "ToolContext") -> Tool:
@@ -114,13 +121,16 @@ class SubagentTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run and control child agents. Default long or independent work to run with "
-            "wait=false, especially installs/downloads, builds, broad test suites, environment "
-            "setup, multi-step debugging, or work likely to take more than about 10 seconds. "
-            "Background results are delivered automatically: do not repeatedly poll status or "
-            "sleep-and-check. Use wait=true only for short child work whose result is required "
-            "before the current turn can proceed. Use status/steer/stop by task ID when needed. "
-            "Role and model settings apply only to the child; children cannot create children."
+            "Run and control child agents. Prefer a matching specialist role when one clearly "
+            "fits; otherwise omit role to use the permanent general worker. Use role.list to "
+            "discover current built-in, user, and Dream-managed roles. Default long or independent "
+            "work to run with wait=false, especially installs/downloads, builds, broad test suites, "
+            "environment setup, multi-step debugging, or work likely to take more than about 10 "
+            "seconds. Browser automation is a tool capability of eligible workers, not a separate "
+            "Agent type. Background results are delivered automatically: do not repeatedly poll "
+            "status or sleep-and-check. Use wait=true only for short child work whose result is "
+            "required before the current turn can proceed. Use status/steer/stop by task ID when "
+            "needed. Role and model settings apply only to the child; children cannot create children."
         )
 
     @property
@@ -164,12 +174,13 @@ class SubagentTool(Tool):
             runtime = request.runtime
             if runtime is None:
                 return ToolResult.error("Error: subagent run requires an active model runtime")
+            selected_role = role or "general"
             method = self._manager.run_inline if wait else self._manager.spawn
-            return await method(
+            result = await method(
                 task=task.strip(),
                 runtime=runtime,
                 label=label,
-                role=role or "coder",
+                role=selected_role,
                 model=model,
                 model_preset=model_preset,
                 thinking=thinking,
@@ -184,6 +195,16 @@ class SubagentTool(Tool):
                 allowed_tools=set(request.allowed_tools),
                 fork_history=_fork_snapshot(request.conversation_history),
             )
+            if not is_tool_error_result(result):
+                workspace = getattr(self._manager, "workspace", None)
+                if workspace is not None:
+                    try:
+                        record_role_use(workspace, selected_role)
+                    except OSError:
+                        # Usage telemetry is advisory input for Dream and must never
+                        # turn a successfully launched child into a failed tool call.
+                        pass
+            return result
 
         if action == "status":
             if task_id and not self._manager.owns_task(task_id, session_key):

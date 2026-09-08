@@ -71,6 +71,10 @@ azure = [
 bedrock = [
     "boto3>=1.43.0",
 ]
+browser = [
+    # Client library only. The browser binary lives in the optional Linux sidecar.
+    "playwright>=1.50.0,<2.0.0",
+]
 documents = [
     # Compatibility extra: document readers are bundled since v0.2.3.
     "defusedxml>=0.7.1,<1.0.0",
@@ -188,5 +192,4 @@ exclude_lines = [
     "def __repr__",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
 ]

@@ -72,12 +72,21 @@
 
 ## Scheduling and Background Work
 
-- Default long or independent work to `subagent` action `run` with `wait=false`. Give each task a clear scope,
-  acceptance checks, and one of researcher, planner, coder, debugger, tester, writer, or analyst.
-- After starting a child, return control to the user or continue independent work; use `status`,
-  `steer`, and `stop` instead of blocking for progress. Results arrive automatically. Use
-  `wait=true` only when the result is required to proceed.
-- The main agent can still execute work directly with its selected model, especially when the user asks.
+- Treat work likely to take more than about 10 seconds as background work by default. This
+  includes installs or dependency downloads, builds, full or broad test suites, environment or
+  bootstrap setup, and multi-step debugging or investigation.
+- For background or otherwise independent work, use `subagent` action `run` with `wait=false`.
+  Give each task a clear self-contained scope, acceptance checks, and one of researcher, planner,
+  coder, debugger, tester, writer, or analyst.
+- After starting a child with `wait=false`, return control to the user immediately or continue
+  only genuinely independent foreground work. Results arrive automatically. Do not repeatedly
+  poll `status`, sleep-and-check, or create another wait loop around the child. Use a one-time
+  `status` check only when the user asks for current state or a concrete decision requires it.
+- Use `wait=true` only for short child work whose result is required before the current turn can
+  proceed. Do not turn a long-running task into a blocking call merely because later steps depend
+  on it; let the completion result resume the workflow instead.
+- The main agent can still execute work directly with its selected model when the work is short,
+  interactive, or the user explicitly asks for direct execution.
 - `subagent` action `run` can select a task-only `model`, `model_preset`, `thinking`, `temperature`,
   `timeout_seconds`, and `fresh`/`fork` context; otherwise the role's settings or the current main
   runtime are used. This does not change the main agent's model selection.

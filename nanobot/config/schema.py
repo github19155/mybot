@@ -15,6 +15,7 @@ from nanobot.cron.types import CronSchedule
 if TYPE_CHECKING:
     from nanobot.agent.tools.cli_apps import CliAppsToolConfig
     from nanobot.agent.tools.filesystem import FileToolsConfig
+    from nanobot.agent.tools.image_analysis import ImageAnalysisToolConfig
     from nanobot.agent.tools.image_generation import ImageGenerationToolConfig
     from nanobot.agent.tools.self import MyToolConfig
     from nanobot.agent.tools.shell import ExecToolConfig
@@ -88,6 +89,7 @@ class InlineFallbackConfig(Base):
     provider: str
     max_tokens: int | None = None
     context_window_tokens: int | None = None
+    supports_vision: bool = False
     temperature: float | None = None
     reasoning_effort: str | None = None
 
@@ -102,6 +104,7 @@ class ModelPresetConfig(Base):
     provider: str = "auto"
     max_tokens: int = 8192
     context_window_tokens: int = 200_000
+    supports_vision: bool = False
     temperature: float = 0.1
     reasoning_effort: str | None = None
 
@@ -158,6 +161,7 @@ class AgentDefaults(Base):
 
     workspace: str = "~/.nanobot/workspace"
     model_preset: str | None = None  # Active preset name — takes precedence over fields below
+    supports_vision: bool = False  # Whether the active default model accepts native image inputs
     model: str = "anthropic/claude-opus-4-5"
     provider: str = (
         "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
@@ -438,6 +442,9 @@ class ToolsConfig(Base):
     image_generation: ImageGenerationToolConfig = Field(
         default_factory=lambda: _lazy_default("nanobot.agent.tools.image_generation", "ImageGenerationToolConfig"),
     )
+    image_analysis: ImageAnalysisToolConfig = Field(
+        default_factory=lambda: _lazy_default("nanobot.agent.tools.image_analysis", "ImageAnalysisToolConfig"),
+    )
     max_session_messages_per_minute: int = Field(default=6, ge=1)
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
     webui_allow_local_service_access: bool = Field(
@@ -569,6 +576,7 @@ class Config(BaseSettings):
         return ModelPresetConfig(
             model=d.model, provider=d.provider, max_tokens=d.max_tokens,
             context_window_tokens=d.context_window_tokens,
+            supports_vision=d.supports_vision,
             temperature=d.temperature, reasoning_effort=d.reasoning_effort,
         )
 
@@ -781,6 +789,7 @@ def _resolve_tool_config_refs() -> None:
 
     from nanobot.agent.tools.cli_apps import CliAppsToolConfig
     from nanobot.agent.tools.filesystem import FileToolsConfig
+    from nanobot.agent.tools.image_analysis import ImageAnalysisToolConfig
     from nanobot.agent.tools.image_generation import ImageGenerationToolConfig
     from nanobot.agent.tools.self import MyToolConfig
     from nanobot.agent.tools.shell import ExecToolConfig
@@ -795,6 +804,7 @@ def _resolve_tool_config_refs() -> None:
     mod.WebSearchConfig = WebSearchConfig  # type: ignore[attr-defined]
     mod.WebFetchConfig = WebFetchConfig  # type: ignore[attr-defined]
     mod.MyToolConfig = MyToolConfig  # type: ignore[attr-defined]
+    mod.ImageAnalysisToolConfig = ImageAnalysisToolConfig  # type: ignore[attr-defined]
     mod.ImageGenerationToolConfig = ImageGenerationToolConfig  # type: ignore[attr-defined]
 
     ToolsConfig.model_rebuild()

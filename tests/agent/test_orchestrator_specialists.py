@@ -44,6 +44,15 @@ def _write_dream_role(tmp_path, name: str, **overrides) -> None:
     )
 
 
+def test_config_registers_general_as_builtin_role() -> None:
+    config = Config()
+    partial = Config(subagentRoles={"general": {"thinking": "high"}})
+
+    assert "general" in config.subagent_roles
+    assert "general" in partial.subagent_roles
+    assert partial.subagent_roles["general"].thinking == "high"
+
+
 def test_general_is_permanent_capable_fallback() -> None:
     general = resolve_role(None, "general")
     coder = resolve_role(None, "coder")
@@ -189,6 +198,9 @@ async def test_general_worker_can_load_browser_capability(tmp_path, monkeypatch)
 
 
 def test_prompts_define_orchestration_and_specialist_evolution() -> None:
+    identity = (
+        pkg_files("nanobot") / "templates" / "agent" / "identity.md"
+    ).read_text(encoding="utf-8")
     tool_contract = (
         pkg_files("nanobot") / "templates" / "agent" / "tool_contract.md"
     ).read_text(encoding="utf-8")
@@ -196,6 +208,8 @@ def test_prompts_define_orchestration_and_specialist_evolution() -> None:
         pkg_files("nanobot") / "templates" / "agent" / "dream.md"
     ).read_text(encoding="utf-8")
 
+    assert "Main Agent / Orchestrator" in identity
+    assert "permanent `general` worker" in identity
     assert "## Main Orchestrator Contract" in tool_contract
     assert "permanent `general` worker" in tool_contract
     assert "Browser is a worker capability" in tool_contract

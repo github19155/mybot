@@ -48,6 +48,7 @@ export interface AgentSettingsDraft {
   contextWindowTokens: number;
   temperature: number;
   reasoningEffort: string;
+  supportsVision: boolean;
   timezone: string;
   toolHintMaxLength: number;
 }
@@ -90,6 +91,7 @@ export const DEFAULT_AGENT_SETTINGS_DRAFT: AgentSettingsDraft = {
   contextWindowTokens: 200_000,
   temperature: 0.1,
   reasoningEffort: "",
+  supportsVision: false,
   timezone: "UTC",
   toolHintMaxLength: 40,
 };
@@ -113,6 +115,7 @@ export function agentDraftFromPayload(
     ),
     temperature: activePreset?.temperature ?? payload.agent.temperature,
     reasoningEffort: activePreset?.reasoning_effort ?? "",
+    supportsVision: activePreset?.supports_vision ?? payload.agent.supports_vision ?? false,
     timezone: payload.agent.timezone,
     toolHintMaxLength: payload.agent.tool_hint_max_length,
   };
@@ -201,6 +204,8 @@ export function ModelsSettings({
   onProviderOAuthLogin,
   onSave,
   onSavePromptOverrides,
+  onSaveImageAnalysisModel,
+  imageAnalysisSaving,
   onMigrate,
   onBeginCreate,
   onCancelCreate,
@@ -233,6 +238,8 @@ export function ModelsSettings({
   onProviderOAuthLogin: (provider: string) => void;
   onSave: () => void;
   onSavePromptOverrides: (overrides: SettingsPayload["system_prompt_overrides"]) => void;
+  onSaveImageAnalysisModel: (preset: string | null) => void;
+  imageAnalysisSaving: boolean;
   onMigrate: () => void;
   onBeginCreate: () => void;
   onCancelCreate: () => void;
@@ -264,6 +271,7 @@ export function ModelsSettings({
     if (!creating) suggestedPresetNameRef.current = null;
   }, [creating]);
   const namedPresets = settings.model_presets.filter((preset) => !preset.is_default);
+  const visionPresets = settings.model_presets.filter((preset) => preset.supports_vision === true);
   const roles = settings.subagent_roles ?? [];
   const roleBindingsDirty = roles.some(
     (role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_preset,
@@ -350,6 +358,7 @@ export function ModelsSettings({
       contextWindowTokens: normalizeContextWindowTokens(preset.context_window_tokens),
       temperature: preset.temperature,
       reasoningEffort: preset.reasoning_effort ?? "",
+      supportsVision: preset.supports_vision === true,
     }));
     setEditorRowKey(rowKey);
     setEditorOpen(true);
@@ -557,6 +566,7 @@ export function ModelsSettings({
             contextWindowTokens={form.contextWindowTokens}
             temperature={form.temperature}
             reasoningEffort={form.reasoningEffort}
+            supportsVision={form.supportsVision}
             onChange={(value) => setForm((prev) => ({ ...prev, ...value }))}
           />
         </div>
@@ -903,6 +913,46 @@ export function ModelsSettings({
           )}
         </SettingsGroup>
       </section>
+      <section>
+        <SettingsSectionTitle>
+          {tx("settings.models.imageAnalysis.title", "Image analysis fallback")}
+        </SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.models.imageAnalysis.model", "Vision model")}
+            description={tx(
+              "settings.models.imageAnalysis.help",
+              "Used by the image_analyze tool when the active model cannot see images. Mark vision-capable presets in Advanced options.",
+            )}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                aria-label={tx("settings.models.imageAnalysis.model", "Vision model")}
+                value={settings.agent.image_analysis_model_preset ?? ""}
+                disabled={imageAnalysisSaving}
+                onChange={(event) =>
+                  onSaveImageAnalysisModel(event.target.value || null)
+                }
+                className="h-9 max-w-full rounded-control border border-input bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <option value="">
+                  {tx("settings.models.imageAnalysis.perRequest", "Choose per request")}
+                </option>
+                {visionPresets.map((preset) => (
+                  <option key={preset.name} value={preset.name}>
+                    {preset.is_default ? tx("settings.values.default", "Default") : preset.name}
+                    {" — "}
+                    {preset.model}
+                  </option>
+                ))}
+              </select>
+              {imageAnalysisSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label={tx("settings.actions.saving", "Saving...")} />
+              ) : null}
+            </div>
+          </SettingsRow>
+        </SettingsGroup>
+      </section>
       {roles.length > 0 ? (
         <section>
           <SettingsSectionTitle>
@@ -1067,17 +1117,19 @@ function ModelAdvancedFields({
   contextWindowTokens,
   temperature,
   reasoningEffort,
+  supportsVision,
   onChange,
 }: {
   maxTokens: number;
   contextWindowTokens: number;
   temperature: number;
   reasoningEffort: string;
+  supportsVision: boolean;
   onChange: (
     value: Partial<
       Pick<
         AgentSettingsDraft,
-        "maxTokens" | "contextWindowTokens" | "temperature" | "reasoningEffort"
+        "maxTokens" | "contextWindowTokens" | "temperature" | "reasoningEffort" | "supportsVision"
       >
     >,
   ) => void;
@@ -1139,6 +1191,17 @@ function ModelAdvancedFields({
           }
         />
       </div>
+      <label className="flex items-center gap-2 text-[13px] text-foreground">
+        <input
+          type="checkbox"
+          checked={supportsVision}
+          onChange={(event) => onChange({ supportsVision: event.target.checked })}
+          className="h-4 w-4 rounded border-input"
+        />
+        <span>
+          {tx("settings.models.supportsVision", "This model supports native image input")}
+        </span>
+      </label>
       <label className="block">
         <span className="mb-1.5 block text-[12px] font-medium text-muted-foreground">
           {tx("settings.models.reasoningEffort", "Reasoning effort")}

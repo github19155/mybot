@@ -90,6 +90,7 @@ class ModelSettingsOperations:
 class ModelSettingsPayload(TypedDict):
     agent: dict[str, Any]
     model_presets: list[dict[str, Any]]
+    image_analysis: dict[str, Any]
     system_prompt_overrides: list[dict[str, Any]]
     model_call_order: list[str]
     model_call_order_editable: bool
@@ -1081,6 +1082,7 @@ def model_settings_payload(
             "context_window_tokens": defaults.context_window_tokens,
             "temperature": defaults.temperature,
             "reasoning_effort": defaults.reasoning_effort,
+            "supports_vision": defaults.supports_vision,
             "reasoning_effort_values": reasoning_effort_values_for(
                 config.get_provider_name(
                     defaults.model,
@@ -1108,6 +1110,7 @@ def model_settings_payload(
                 "context_window_tokens": preset.context_window_tokens,
                 "temperature": preset.temperature,
                 "reasoning_effort": preset.reasoning_effort,
+                "supports_vision": preset.supports_vision,
                 "reasoning_effort_values": reasoning_effort_values_for(
                     resolved_preset_provider,
                     preset.model,
@@ -1127,10 +1130,18 @@ def model_settings_payload(
             "context_window_tokens": effective_preset.context_window_tokens,
             "temperature": effective_preset.temperature,
             "reasoning_effort": effective_preset.reasoning_effort,
+            "supports_vision": effective_preset.supports_vision,
+            "image_analysis_model_preset": config.tools.image_analysis.model_preset,
             "timezone": defaults.timezone,
             "tool_hint_max_length": defaults.tool_hint_max_length,
         },
         "model_presets": model_presets,
+        "image_analysis": {
+            "enabled": config.tools.image_analysis.enabled,
+            "model_preset": config.tools.image_analysis.model_preset,
+            "max_image_mb": config.tools.image_analysis.max_image_mb,
+            "max_images": config.tools.image_analysis.max_images,
+        },
         "model_call_order": model_call_order,
         "system_prompt_overrides": [
             {"prompt": row.prompt, "models": list(row.models)}
@@ -1203,6 +1214,38 @@ def update_agent_model_settings(
     ):
         defaults.context_window_tokens = context_window_tokens
         changed = True
+
+    if query_has_alias(query, "supports_vision", "supportsVision"):
+        supports_vision = parse_bool(
+            query_first_alias(query, "supports_vision", "supportsVision") or "",
+            "supports_vision",
+        )
+        if defaults.supports_vision != supports_vision:
+            defaults.supports_vision = supports_vision
+            changed = True
+
+    if query_has_alias(query, "image_analysis_model_preset", "imageAnalysisModelPreset"):
+        selected = (
+            query_first_alias(query, "image_analysis_model_preset", "imageAnalysisModelPreset")
+            or ""
+        ).strip()
+        selected_value = selected or None
+        if selected_value is not None:
+            if selected_value == "default":
+                if not config.resolve_default_preset().supports_vision:
+                    raise WebUISettingsError(
+                        "the default model must be marked supportsVision=true"
+                    )
+            elif selected_value not in config.model_presets:
+                raise WebUISettingsError("unknown image analysis model preset")
+            elif not config.model_presets[selected_value].supports_vision:
+                raise WebUISettingsError(
+                    "image analysis model preset must be marked supportsVision=true"
+                )
+        if config.tools.image_analysis.model_preset != selected_value:
+            config.tools.image_analysis.model_preset = selected_value
+            changed = True
+
     return changed
 
 
@@ -1248,6 +1291,12 @@ def create_model_configuration(
     )
     temperature = _parse_temperature(query_first(query, "temperature"))
     reasoning_effort = base.reasoning_effort
+    supports_vision = base.supports_vision
+    if query_has_alias(query, "supports_vision", "supportsVision"):
+        supports_vision = parse_bool(
+            query_first_alias(query, "supports_vision", "supportsVision") or "",
+            "supports_vision",
+        )
     if "reasoning_effort" in query or "reasoningEffort" in query:
         reasoning_effort = (
             query_first_alias(query, "reasoning_effort", "reasoningEffort") or ""
@@ -1263,6 +1312,7 @@ def create_model_configuration(
         ),
         temperature=temperature if temperature is not None else base.temperature,
         reasoning_effort=reasoning_effort,
+        supports_vision=supports_vision,
     )
     if activate_as_primary:
         config.agents.defaults.model_preset = name
@@ -1334,6 +1384,15 @@ def update_model_configuration(
     if temperature is not None and preset.temperature != temperature:
         preset.temperature = temperature
         changed = True
+
+    if query_has_alias(query, "supports_vision", "supportsVision"):
+        supports_vision = parse_bool(
+            query_first_alias(query, "supports_vision", "supportsVision") or "",
+            "supports_vision",
+        )
+        if preset.supports_vision != supports_vision:
+            preset.supports_vision = supports_vision
+            changed = True
 
     if "reasoning_effort" in query or "reasoningEffort" in query:
         reasoning_effort = (
@@ -1469,6 +1528,7 @@ def migrate_model_configurations(
             context_window_tokens=primary.context_window_tokens,
             temperature=primary.temperature,
             reasoning_effort=primary.reasoning_effort,
+            supports_vision=primary.supports_vision,
         )
         defaults.model_preset = name
         created.append(name)
@@ -1497,6 +1557,7 @@ def migrate_model_configurations(
                 else primary.temperature
             ),
             reasoning_effort=fallback.reasoning_effort,
+            supports_vision=fallback.supports_vision,
         )
         fallback_models.append(name)
         created.append(name)
@@ -1525,6 +1586,11 @@ def delete_model_configuration(config: Config, query: QueryParams) -> None:
     if referenced:
         raise WebUISettingsError(
             "remove the model preset from the call order first",
+            status=409,
+        )
+    if config.tools.image_analysis.model_preset == name:
+        raise WebUISettingsError(
+            "clear the image analysis model preset before deleting it",
             status=409,
         )
     del config.model_presets[name]

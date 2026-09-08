@@ -631,6 +631,8 @@ export interface SettingsPayload {
     resolved_provider: string | null;
     has_api_key: boolean;
     model_preset: string | null;
+    supports_vision?: boolean;
+    image_analysis_model_preset?: string | null;
     max_tokens: number;
     context_window_tokens: number;
     temperature: number;
@@ -651,8 +653,15 @@ export interface SettingsPayload {
     context_window_tokens: number;
     temperature: number;
     reasoning_effort: string | null;
+    supports_vision?: boolean;
     reasoning_effort_values?: string[];
   }>;
+  image_analysis?: {
+    enabled: boolean;
+    model_preset: string | null;
+    max_image_mb: number;
+    max_images: number;
+  };
   model_call_order: string[];
   model_call_order_editable: boolean;
   system_prompt_overrides: Array<{
@@ -1259,6 +1268,7 @@ export interface SettingsUpdate {
   model?: string;
   provider?: string;
   modelPreset?: string | null;
+  imageAnalysisModelPreset?: string | null;
   contextWindowTokens?: number;
   timezone?: string;
   toolHintMaxLength?: number;
@@ -1272,6 +1282,7 @@ export interface ModelConfigurationCreate {
   contextWindowTokens?: number;
   temperature?: number;
   reasoningEffort?: string | null;
+  supportsVision?: boolean;
 }
 
 export interface ModelConfigurationUpdate {
@@ -1283,6 +1294,7 @@ export interface ModelConfigurationUpdate {
   contextWindowTokens?: number;
   temperature?: number;
   reasoningEffort?: string | null;
+  supportsVision?: boolean;
 }
 
 export interface ProviderSettingsUpdate {

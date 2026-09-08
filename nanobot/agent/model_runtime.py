@@ -157,6 +157,7 @@ class ModelRuntimeResolver:
             self._runtime,
             model=model.strip(),
             model_preset=None,
+            supports_vision=False,
             system_prompt_prefix=self._prefix_for(model.strip()),
         )
         return self._runtime
@@ -185,6 +186,7 @@ class ModelRuntimeResolver:
             runtime.model,
             context_window_tokens=runtime.context_window_tokens,
             model_preset=runtime.model_preset,
+            supports_vision=runtime.supports_vision,
             snapshot_signature=runtime.snapshot_signature,
         )
         if captured.generation == runtime.generation:
@@ -213,6 +215,7 @@ class ModelRuntimeResolver:
         unchanged = (
             runtime.snapshot_signature == self._runtime.snapshot_signature
             and runtime.model_preset == self._runtime.model_preset
+            and runtime.supports_vision == self._runtime.supports_vision
         )
         self._refresh_required = False
         if unchanged:
@@ -250,5 +253,6 @@ class ModelRuntimeResolver:
                 generation=self._runtime.generation,
                 context_window_tokens=self._runtime.context_window_tokens,
                 snapshot_signature=("model_override", model),
+                supports_vision=False,
                 system_prompt_prefix=self._prefix_for(model),
             )

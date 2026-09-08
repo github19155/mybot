@@ -12,6 +12,7 @@ import time
 import weakref
 from collections.abc import Coroutine, Iterable, Mapping
 from contextlib import AbstractContextManager, ExitStack, nullcontext, suppress
+from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -250,6 +251,7 @@ class AgentLoop:
         if (
             runtime.model != previous.model
             or runtime.model_preset != previous.model_preset
+            or runtime.supports_vision != previous.supports_vision
             or runtime.snapshot_signature != previous.snapshot_signature
         ):
             self._publish_runtime_selection(runtime)
@@ -309,6 +311,7 @@ class AgentLoop:
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
         model_management_config: Config | None = None,
+        supports_vision: bool = True,
     ):
         from nanobot.config.schema import ToolsConfig
 
@@ -349,6 +352,7 @@ class AgentLoop:
                 provider,
                 initial_model,
                 context_window_tokens=initial_context_window,
+                supports_vision=supports_vision,
                 snapshot_signature=provider_signature,
                 system_prompt_prefix=(
                     prompt_for_model(initial_model) if prompt_for_model else None
@@ -512,10 +516,22 @@ class AgentLoop:
             )
         provider = extra.pop("provider", None) or make_provider(config)
         resolved = config.resolve_preset()
-        model = extra.pop("model", None) or resolved.model
+        model_override = extra.pop("model", None)
+        model = model_override or resolved.model
+        supports_vision = extra.pop(
+            "supports_vision",
+            resolved.supports_vision if model_override is None else False,
+        )
         prompt_for_model = extra.pop("prompt_for_model", None) or config.system_prompt_for
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
+        if provider_snapshot_loader is None:
+            from nanobot.providers.factory import build_provider_snapshot
+
+            def _load_provider_snapshot(**kwargs: Any) -> Any:
+                return build_provider_snapshot(config, **kwargs)
+
+            provider_snapshot_loader = _load_provider_snapshot
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
             provider_snapshot_loader,
@@ -525,6 +541,7 @@ class AgentLoop:
             provider=provider,
             workspace=config.workspace_path,
             model=model,
+            supports_vision=supports_vision,
             max_iterations=defaults.max_tool_iterations,
             max_concurrent_subagents=defaults.max_concurrent_subagents,
             context_window_tokens=context_window_tokens,
@@ -643,6 +660,24 @@ class AgentLoop:
         """Select a context limit for future turns."""
         return self.runtime_resolver.select_context_window(context_window_tokens)
 
+    @staticmethod
+    def _tools_for_runtime(tools: ToolRegistry, runtime: LLMRuntime) -> ToolRegistry:
+        """Hide the fallback image tool from models with native vision support."""
+        if (
+            not runtime.supports_vision
+            or not isinstance(tools, ToolRegistry)
+            or not tools.has("image_analyze")
+        ):
+            return tools
+        filtered = copy(tools)
+        filtered._tools = {
+            name: tool
+            for name, tool in tools._tools.items()
+            if name != "image_analyze"
+        }
+        filtered._cached_definitions = None
+        return filtered
+
     def _register_default_tools(
         self,
         *,
@@ -760,6 +795,7 @@ class AgentLoop:
             session_summary=ctx.pending_summary,
             runtime_context_blocks=ctx.runtime_context_blocks,
             system_prompt_prefix=ctx.system_prompt_prefix,
+            include_images=ctx.require_runtime().supports_vision,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -1020,6 +1056,7 @@ class AgentLoop:
                 user_content = self.context.build_user_content(
                     content,
                     image_paths=image_paths,
+                    include_images=runtime.supports_vision,
                 )
                 row: dict[str, Any] = {"role": "user", "content": user_content}
                 metadata_value = cast(object, pending_msg.metadata)
@@ -1113,7 +1150,7 @@ class AgentLoop:
                 request_ctx,
                 workspace=effective_scope.project_path,
             )
-        effective_tools = tools or self.tools
+        effective_tools = self._tools_for_runtime(tools or self.tools, runtime)
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
         workspace_token = bind_workspace_scope(effective_scope)
@@ -1882,6 +1919,7 @@ class AgentLoop:
             ctx.runtime = runtime
         if ctx.system_prompt_prefix is None:
             ctx.system_prompt_prefix = runtime.system_prompt_prefix
+        ctx.tools = self._tools_for_runtime(ctx.tools or self.tools, runtime)
         if ctx.session_key.startswith("dream:"):
             logger.info(
                 "Dream run using model={} (preset={})",
@@ -1940,6 +1978,7 @@ class AgentLoop:
                 ctx.msg.content,
                 media=ctx.msg.media if ctx.kind is TurnKind.USER and ctx.msg.media else None,
                 runtime_context_blocks=ctx.runtime_context_blocks,
+                include_images=runtime.supports_vision,
             )
             task_id = ctx.msg.metadata.get("subagent_task_id") if is_subagent else None
             already_staged = False

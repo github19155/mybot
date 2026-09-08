@@ -437,6 +437,18 @@ describe("webui API helpers", () => {
     );
   });
 
+  it("serializes image analysis model selection", async () => {
+    await updateSettings(mutationTransport, {
+      imageAnalysisModelPreset: "vision",
+    });
+
+    expect(requestMutation).toHaveBeenCalledWith(
+      "settings.agent.update",
+      { image_analysis_model_preset: "vision" },
+      20_000,
+    );
+  });
+
   it("serializes model configuration creation", async () => {
     await createModelConfiguration(mutationTransport, {
       name: "Fast writing",

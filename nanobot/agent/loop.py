@@ -250,6 +250,7 @@ class AgentLoop:
         if (
             runtime.model != previous.model
             or runtime.model_preset != previous.model_preset
+            or runtime.supports_vision != previous.supports_vision
             or runtime.snapshot_signature != previous.snapshot_signature
         ):
             self._publish_runtime_selection(runtime)

@@ -271,7 +271,7 @@ def normalize_role_name(name: object) -> str:
         raise ValueError("role name must be a string")
     normalized = name.strip().lower()
     if not ROLE_NAME_PATTERN.fullmatch(normalized):
-        raise ValueError("role name must match [a-z][a-z0-9_-]{0,63}$")
+        raise ValueError("role name must match [a-z][a-z0-9_-]{0,63}")
     return normalized
 
 

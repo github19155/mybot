@@ -2,6 +2,34 @@
 
 These rules govern architectural decisions. When adding a feature or fixing a bug, prefer paths that respect these boundaries.
 
+## Main Agent orchestrates; subagents execute
+
+The Main Agent is primarily the user-facing coordinator. It should stay responsive, understand intent, consult project docs, split work, choose specialist subagents, track progress, and summarize results.
+
+Long or specialized operational work should normally run in subagents so the Main Agent remains available for conversation. Short, immediate actions may still run directly when that is simpler.
+
+Treat this as the project-level mental model:
+
+```text
+Main Agent = conversation + orchestration
+Subagents  = background execution
+Tools      = capabilities
+Docs       = project knowledge
+```
+
+## Read the intended design before repairing it
+
+For architecture-sensitive failures, first locate the relevant project documentation and diagnose the intended topology before inventing a parallel workaround.
+
+Start with `docs/design-principles.md` and `docs/README.md`, then follow the subsystem guide. In particular:
+
+- browser runtime and handoff: `docs/browser.md`;
+- browser failures: `docs/troubleshooting/browser-runtime.md`;
+- runtime persistence: `docs/runtime-storage.md`;
+- future agent structure: `docs/agent-architecture-roadmap.md`.
+
+Changing the architecture is allowed when justified. Make the new invariant explicit and update the documentation with the change.
+
 ## Core stays small; extend at the edges
 
 New capabilities should be added via `channels/`, `tools/`, skills, or MCP servers. The files `agent/loop.py` and `agent/runner.py` form the critical core path; changes there should be minimal and justified. If a feature can live in a channel adapter, a tool, or an external MCP server, it should not be inlined into the agent loop.
@@ -11,6 +39,8 @@ Runtime state fan-out follows the same boundary. `AgentLoop` may publish generic
 ## Less structure, more intelligence
 
 Prefer simple, readable code over new framework layers and indirection. Add structure only when it removes real complexity, protects an important boundary, or matches an established local pattern. The best fix is often a smaller prompt, a tighter tool contract, a channel-local change, or one focused regression test.
+
+Prefer informed flexibility over broad prohibitions. Give agents enough project knowledge to choose the correct path; add hard constraints only for real safety, security, or shared-resource invariants.
 
 ## Prefer duplication over premature abstraction
 

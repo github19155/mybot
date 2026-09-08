@@ -2,16 +2,22 @@
 
 This document is the architectural baseline for how nanobot should evolve. Keep it updated when the design changes so future development can rely on one shared reference.
 
+Read [`design-principles.md`](./design-principles.md) first for the project-level philosophy.
+
 ## Core direction
 
 - **Main Agent = conversation + orchestration**
   - Stay responsive to the user.
-  - Understand intent, split work, choose the right child agent, and summarize results.
+  - Understand intent, consult project knowledge, split work, choose the right child agent, and summarize results.
   - Avoid owning long-running operational work when a child can do it.
 
 - **Subagents = background execution**
   - Run long or specialized work asynchronously by default.
   - Use role-specific capabilities instead of giving every child every tool.
+
+- **Docs = project knowledge**
+  - Architecture-sensitive work should consult the relevant docs before changing runtime topology.
+  - Prefer informed agent decisions over broad hard-coded restrictions.
 
 ## Planned specialist agents
 
@@ -41,7 +47,7 @@ Only one owner may actively control the browser at a time. Human takeover keeps 
 
 ## Main-Agent delegation policy
 
-The long-term goal is to move from prompt-only delegation guidance toward runtime-enforced routing.
+The goal is knowledge-guided orchestration: make the intended project architecture and specialist capabilities easy for the Main Agent to discover, then let it delegate accordingly.
 
 Typical routing:
 
@@ -54,7 +60,7 @@ browser work             -> Browser Operator
 server maintenance       -> Server Admin Agent
 ```
 
-The Main Agent should remain available for conversation while background work runs.
+The Main Agent should remain available for conversation while background work runs. Hard runtime routing should be reserved for cases where a real safety, security, or shared-resource invariant requires enforcement, not used as the default substitute for project knowledge.
 
 ## Permissions
 
@@ -66,7 +72,7 @@ Do not make every agent simultaneously hold root shell, browser access, and futu
 
 After browser delegation is solid, continue with:
 
-1. Runtime-enforced delegation for long work.
+1. Better project-knowledge discovery and delegation guidance.
 2. Unified task manager with running / queued / waiting-human / failed / completed states.
 3. Dedicated `server-admin` role and controlled host-management design.
 4. Cross-channel notifications, such as starting work in WebUI and receiving completion alerts in WeChat.
@@ -77,6 +83,8 @@ After browser delegation is solid, continue with:
 Main Agent stays responsive
 +
 Specialist subagents do background work
++
+Project knowledge guides decisions
 +
 Shared resources have explicit ownership
 +

@@ -4,6 +4,22 @@ Use these docs to get a working agent first, then open a task guide only when yo
 
 Repository docs follow the current source tree and can be newer than the latest package release. For published release docs, visit [nanobot.wiki](https://nanobot.wiki/docs/latest/getting-started/nanobot-overview).
 
+## Project Design and Runtime Knowledge
+
+If you are an AI agent, maintainer, or contributor changing runtime behavior, start here before troubleshooting by invention:
+
+| Need | Read |
+|---|---|
+| Project-level decision principles | [Design Principles](./design-principles.md) |
+| Main Agent / subagent direction | [Agent Architecture Roadmap](./agent-architecture-roadmap.md) |
+| Current runtime/source ownership | [Architecture](./architecture.md) |
+| Browser sidecar and human takeover | [Browser Runtime](./browser.md) |
+| Browser connectivity failures | [Browser Runtime Troubleshooting](./troubleshooting/browser-runtime.md) |
+| Runtime installs and persistence | [Runtime Storage and Persistence](./runtime-storage.md) |
+| Container root behavior | [Container Root Mode](./container-root.md) |
+
+The core project mental model is: **Main Agent = conversation + orchestration; subagents = background execution; tools = capabilities; docs = project knowledge.** Diagnose the intended architecture before replacing it with an ad hoc workaround.
+
 ## Start Here
 
 | Your situation | Read this | You are done when... |

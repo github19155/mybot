@@ -4,6 +4,8 @@ nanobot can optionally use a persistent Chromium sidecar for JavaScript-heavy an
 
 The browser capability is disabled by default and does not install a browser on the Linux host.
 
+Before changing this topology, read [`design-principles.md`](./design-principles.md). For failures, use [`troubleshooting/browser-runtime.md`](./troubleshooting/browser-runtime.md) before creating a workaround.
+
 ## Intended deployment
 
 A typical remote deployment can keep the same public surface nanobot already uses:
@@ -30,6 +32,18 @@ phone or desktop browser
 ```
 
 Neither CDP nor the browser takeover control service needs a host port. Cloudflare continues to publish only the existing nanobot WebUI.
+
+## Runtime invariants
+
+The standard browser architecture assumes:
+
+- the gateway is a Playwright/CDP client, not the owner of the Chromium binary;
+- `nanobot-browser` resolves through Docker DNS to the browser sidecar;
+- `9222` and `6081` stay private to the Compose network;
+- AI control and human takeover refer to the same Chromium desktop/profile;
+- the persistent profile belongs to the sidecar volume, not to an ad hoc gateway install.
+
+A different topology is allowed when intentionally designed, but it should be documented as an alternate architecture rather than introduced as an invisible repair step.
 
 ## What it is designed for
 
@@ -118,3 +132,7 @@ The normal policy is:
 Useful browser tools include `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_scroll`, `browser_wait`, `browser_screenshot`, `browser_tabs`, `browser_back`, `browser_handoff`, `browser_status`, and `browser_close`.
 
 `browser_handoff` is also available when the agent knows a user decision is required even if automatic challenge detection did not trigger, such as choosing an account or approving a sensitive login prompt.
+
+## Troubleshooting principle
+
+If the browser stops working, diagnose the sidecar chain before installing another Chromium, creating a second CDP proxy, or rewriting host resolution. The dedicated troubleshooting guide covers `9222`, `6081`, Docker DNS, stale `/etc/hosts`, and `browser_control_unavailable`.

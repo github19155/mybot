@@ -14,7 +14,7 @@ from nanobot.providers.factory import ProviderSnapshot
 from nanobot.utils.llm_runtime import LLMRuntime
 
 
-PNG_BYTES = b"\\x89PNG\\r\\n\\x1a\\nminimal"
+PNG_BYTES = b"\x89PNG\r\n\x1a\nminimal"
 
 
 class _VisionProvider:

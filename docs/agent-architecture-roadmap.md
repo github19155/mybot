@@ -8,85 +8,127 @@ Read [`design-principles.md`](./design-principles.md) first for the project-leve
 
 - **Main Agent = conversation + orchestration**
   - Stay responsive to the user.
-  - Understand intent, consult project knowledge, split work, choose the right child agent, and summarize results.
+  - Understand intent, consult project knowledge, split work, choose the right worker, track delegated work, and summarize results.
   - Avoid owning long-running operational work when a child can do it.
+  - Short, immediate, interactive work may still run directly when delegation would add needless delay.
 
-- **Subagents = background execution**
+- **Subagents = workers**
   - Run long or specialized work asynchronously by default.
-  - Use role-specific capabilities instead of giving every child every tool.
+  - Use a permanent general worker as the fallback and focused specialists when they materially improve execution.
+  - Keep responsibilities in roles and capabilities in tools.
 
 - **Docs = project knowledge**
   - Architecture-sensitive work should consult the relevant docs before changing runtime topology.
   - Prefer informed agent decisions over broad hard-coded restrictions.
 
-## Planned specialist agents
+- **Dream = specialist evolution**
+  - Learn recurring task patterns from durable evidence.
+  - Create or refine focused specialists when repetition justifies them.
+  - Mark rarely useful Dream specialists cold instead of deleting them; deletion remains a user decision.
 
-- `coder` — code and workspace changes
-- `debugger` — diagnosis and focused fixes
-- `tester` — verification and test execution
-- `browser-operator` — browser automation and human handoff
-- `server-admin` — future privileged server-management work
+## General and specialist workers
 
-## Browser design
+Subagents are divided conceptually into two groups:
 
-Browser work should move to a dedicated `browser-operator` subagent.
+- `general` — permanent general-purpose worker for mixed, cross-domain, or otherwise uncategorized execution. It is the fallback when no specialist clearly fits.
+- specialists — workers with a narrower responsibility, prompt, capability set, or runtime profile.
 
-That role should be allowed to use the browser tool family, including operations such as status, navigation, snapshot, click, type, wait, and human handoff.
+Built-in specialists include `researcher`, `planner`, `coder`, `debugger`, `tester`, `writer`, and `analyst`. Users may define additional roles, and Dream may create focused specialists from repeated task patterns.
 
-Because nanobot uses one persistent Chromium/profile, browser access must be treated as a shared exclusive resource.
-
-Planned ownership model:
-
-```text
-human
-main
-subagent:<task_id>
-```
-
-Only one owner may actively control the browser at a time. Human takeover keeps priority until control is explicitly returned.
+A role answers **what responsibility should this worker own?** A tool answers **what capability can this worker use?** Do not add a new Agent type merely because a new tool exists.
 
 ## Main-Agent delegation policy
 
-The goal is knowledge-guided orchestration: make the intended project architecture and specialist capabilities easy for the Main Agent to discover, then let it delegate accordingly.
+The goal is knowledge-guided orchestration: make project architecture and current worker capabilities easy for Main to discover, then let it choose intelligently.
 
 Typical routing:
 
 ```text
-conversation / tiny action -> Main Agent
-coding                  -> Coder Agent
-debugging               -> Debugger Agent
-build / broad tests      -> Tester or Coder Agent
-browser work             -> Browser Operator
-server maintenance       -> Server Admin Agent
+conversation / tiny action       -> Main Agent
+clear specialist responsibility  -> matching specialist
+a mixed task or no clear match   -> general
+browser work                      -> suitable worker + browser tools
 ```
 
-The Main Agent should remain available for conversation while background work runs. Hard runtime routing should be reserved for cases where a real safety, security, or shared-resource invariant requires enforcement, not used as the default substitute for project knowledge.
+Main owns the user conversation and final synthesis. Long or independent work should normally use background subagents so Main remains available while workers run.
+
+Main should use current role discovery rather than assuming the specialist list is static: Dream and the user can add or refine roles over time. Roles marked `cold` remain discoverable but should not be preferred unless their specialization is still the best match or the user asks for them.
+
+Hard runtime routing should be reserved for real safety, security, or shared-resource invariants, not used as a substitute for project knowledge.
+
+## Browser design
+
+Browser is a **tool capability**, not a dedicated Browser Agent.
+
+An eligible `general` or specialist worker may receive the browser tool family when its task needs persistent interactive browsing, including status, navigation, snapshot, click, type, wait, screenshots, tabs, and human handoff.
+
+Because nanobot uses one persistent Chromium/profile, browser state is shared. Main should not launch parallel browser workers against that same session. Tool-level serialization is a final guard against simultaneous operations, not a replacement for task-level orchestration.
+
+Human takeover keeps priority until control is returned. AI and human must operate the same persistent Chromium/profile rather than creating a parallel browser environment.
+
+## Specialist evolution with Dream
+
+Dream may evolve its own specialists under the agent workspace after repeated evidence shows a stable recurring responsibility.
+
+Lifecycle:
+
+```text
+repeated task pattern
+        ↓
+compare general + existing specialists
+        ↓
+create specialist only when materially useful
+        ↓
+real Main dispatches accumulate usage/history
+        ↓
+Dream reviews repeated evidence
+        ├─ refine prompt / description
+        ├─ add or remove tools
+        ├─ tune model / thinking / context / timeout
+        ├─ reactivate a useful cold specialist
+        └─ mark rarely useful / superseded role cold
+                         ↓
+                    user decides deletion
+```
+
+Dream should not optimize a role from one noisy run. Meaningful changes should keep a version/evolution trail so a specialist can improve incrementally instead of being replaced by another near-duplicate role.
+
+Usage counters are advisory: they show launches and recency, not success quality. Corrections and task semantics should come from conversation/history evidence rather than being inferred from a counter alone.
+
+Dream never auto-deletes a specialist merely because it is cold. Cold is a discoverable governance state; the user decides whether to keep, disable, consolidate operationally, or delete that role.
 
 ## Permissions
 
-Capabilities should be isolated by role.
+Capabilities should be isolated by role. Give each worker the narrowest useful capability set for its responsibility.
 
-Do not make every agent simultaneously hold root shell, browser access, and future host-management access. Sensitive capabilities should belong to the narrowest specialist that needs them.
+Do not make every worker simultaneously hold root shell, browser access, and future host-management access. Sensitive capabilities should be added to the narrowest role that needs them. Conversely, do not confuse capability isolation with a need for a new Agent class: a future server-management responsibility can be a specialist role with controlled tools.
 
 ## Future platform work
 
-After browser delegation is solid, continue with:
+Continue with:
 
-1. Better project-knowledge discovery and delegation guidance.
+1. Better project-knowledge discovery and delegation guidance for Main.
 2. Unified task manager with running / queued / waiting-human / failed / completed states.
-3. Dedicated `server-admin` role and controlled host-management design.
-4. Cross-channel notifications, such as starting work in WebUI and receiving completion alerts in WeChat.
+3. Richer evidence for Dream specialist optimization without turning it into a rigid scoring system.
+4. Controlled server-management capabilities and an appropriate specialist responsibility boundary.
+5. Cross-channel notifications, such as starting work in WebUI and receiving completion alerts in WeChat.
 
 ## Product goal
 
 ```text
-Main Agent stays responsive
+Main Agent stays responsive and orchestrates
 +
-Specialist subagents do background work
+General worker guarantees a fallback
++
+Specialists own focused responsibilities
++
+Tools provide capabilities such as Browser
++
+Dream evolves specialists from repeated evidence
++
+User retains final governance over deletion
 +
 Project knowledge guides decisions
 +
-Shared resources have explicit ownership
-+
-Sensitive capabilities are role-scoped
+Shared resources preserve explicit ownership
 ```

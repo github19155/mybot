@@ -25,6 +25,7 @@ import {
   migrateModelConfigurations,
   updateModelCallOrder,
   updateModelConfiguration,
+  updateSettings,
   updateSystemPromptOverrides,
   updateSubagentRoles,
   updateProviderSettings,
@@ -95,6 +96,7 @@ export function useModelSettingsActions({
     promptOverridesSaving,
     roleBindingsDraft,
     roleBindingsSaving,
+    imageAnalysisSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
     modelPresetEditingName,
@@ -198,6 +200,7 @@ export function useModelSettingsActions({
           contextWindowTokens: form.contextWindowTokens,
           temperature: form.temperature,
           reasoningEffort: form.reasoningEffort || null,
+          supportsVision: form.supportsVision,
         });
         const createdPreset = payload.created_model_preset;
         const nextOrder = createdPreset ? [...modelCallOrder, createdPreset] : null;
@@ -260,6 +263,8 @@ export function useModelSettingsActions({
           form.temperature !== selectedPreset.temperature ? form.temperature : undefined,
         reasoningEffort:
           reasoningEffort !== selectedPreset.reasoning_effort ? reasoningEffort : undefined,
+        supportsVision:
+          form.supportsVision !== selectedPreset.supports_vision ? form.supportsVision : undefined,
       });
       applyPayload(payload);
       setForm(agentDraftFromPayload(payload, nextName));
@@ -299,6 +304,7 @@ export function useModelSettingsActions({
       ),
       temperature: primaryPreset?.temperature ?? settings.agent.temperature,
       reasoningEffort: primaryPreset?.reasoning_effort ?? settings.agent.reasoning_effort ?? "",
+      supportsVision: false,
     }));
     setModelPresetCreating(true);
   };
@@ -311,6 +317,22 @@ export function useModelSettingsActions({
     setForm(agentDraftFromPayload(settings, previousPreset ?? undefined));
     setModelPresetEditingName(previousPreset ?? agentDraftFromPayload(settings).modelPreset);
     modelPresetBeforeCreateRef.current = null;
+  };
+
+  const saveImageAnalysisModel = async (preset: string | null) => {
+    if (!settings || imageAnalysisSaving) return;
+    setImageAnalysisSaving(true);
+    try {
+      const payload = await updateSettings(client, {
+        imageAnalysisModelPreset: preset,
+      });
+      applyPayload(payload, { preserveAgentForm: true });
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setImageAnalysisSaving(false);
+    }
   };
 
   const changeModelCallOrder = async (nextOrder: string[]) => {
@@ -656,6 +678,7 @@ export function useModelSettingsActions({
     handleToggleProvider,
     resetProviderDraft,
     runProviderOAuth,
+    saveImageAnalysisModel,
     saveModelSettings,
     saveProvider,
     toggleProviderKeyEditing,

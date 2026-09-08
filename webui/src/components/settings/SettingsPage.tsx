@@ -164,6 +164,7 @@ export function SettingsPage({
     resetWebSearchDraft,
     restartViaSettingsSurface,
     runProviderOAuth,
+    saveImageAnalysisModel,
     saveImageGenerationSettings,
     saveModelSettings,
     savePromptOverrides,

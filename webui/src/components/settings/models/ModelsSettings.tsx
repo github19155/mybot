@@ -1034,6 +1034,10 @@ export function ModelsSettings({
             </Button>
             <Button
               type="button"
+              aria-label={`${tx("settings.actions.save", "Save")} ${tx(
+                "settings.models.promptOverrides",
+                "System prompt overrides",
+              )}`}
               disabled={
                 promptOverridesSaving
                 || JSON.stringify(promptDraft) === JSON.stringify(promptOverrides)

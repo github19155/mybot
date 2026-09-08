@@ -514,8 +514,12 @@ class AgentLoop:
             )
         provider = extra.pop("provider", None) or make_provider(config)
         resolved = config.resolve_preset()
-        model = extra.pop("model", None) or resolved.model
-        supports_vision = extra.pop("supports_vision", resolved.supports_vision)
+        model_override = extra.pop("model", None)
+        model = model_override or resolved.model
+        supports_vision = extra.pop(
+            "supports_vision",
+            resolved.supports_vision if model_override is None else False,
+        )
         prompt_for_model = extra.pop("prompt_for_model", None) or config.system_prompt_for
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)

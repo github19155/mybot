@@ -25,6 +25,7 @@ class LLMRuntime:
     generation: GenerationSettings
     context_window_tokens: int
     model_preset: str | None = None
+    supports_vision: bool = False
     system_prompt_prefix: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
 
@@ -36,6 +37,7 @@ class LLMRuntime:
         *,
         context_window_tokens: int,
         model_preset: str | None = None,
+        supports_vision: bool = False,
         system_prompt_prefix: str | None = None,
         snapshot_signature: tuple[object, ...] | None = None,
     ) -> LLMRuntime:
@@ -56,6 +58,7 @@ class LLMRuntime:
             ),
             context_window_tokens=context_window_tokens,
             model_preset=model_preset,
+            supports_vision=supports_vision,
             system_prompt_prefix=system_prompt_prefix,
             snapshot_signature=snapshot_signature,
         )
@@ -96,6 +99,7 @@ def runtime_from_provider_snapshot(
             generation=snapshot.generation,
             context_window_tokens=snapshot.context_window_tokens,
             model_preset=snapshot.model_preset,
+            supports_vision=snapshot.supports_vision,
             system_prompt_prefix=snapshot.system_prompt_prefix,
             snapshot_signature=snapshot.signature,
         )
@@ -104,6 +108,7 @@ def runtime_from_provider_snapshot(
         snapshot.model,
         context_window_tokens=snapshot.context_window_tokens,
             model_preset=snapshot.model_preset,
-            system_prompt_prefix=snapshot.system_prompt_prefix,
-            snapshot_signature=snapshot.signature,
+        supports_vision=snapshot.supports_vision,
+        system_prompt_prefix=snapshot.system_prompt_prefix,
+        snapshot_signature=snapshot.signature,
     )

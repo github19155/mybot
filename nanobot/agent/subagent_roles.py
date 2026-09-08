@@ -327,6 +327,9 @@ def _dream_role_config(config: "Config | None", name: str) -> tuple["SubagentRol
     if not (candidate.description or "").strip() or not (candidate.system_prompt or "").strip():
         raise ValueError(f"Dream specialist role '{name}' requires description and system_prompt")
     _validate_role_tools(candidate)
+    status = str(payload.get("status") or "active").strip().lower()
+    if status not in {"active", "cold"}:
+        raise ValueError(f"Dream specialist role '{name}' has invalid status '{status}'")
     return candidate, payload
 
 
@@ -335,7 +338,11 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
     normalized = normalize_role_name(name)
     builtin = SUBAGENT_ROLES.get(normalized)
     config_override = config.subagent_roles.get(normalized) if config is not None else None
-    dream_override, dream_meta = _dream_role_config(config, normalized)
+    # Dream only owns roles it created. A file under skills/.agents must never
+    # shadow the permanent general worker or another builtin role.
+    dream_override, dream_meta = (
+        (None, {}) if builtin is not None else _dream_role_config(config, normalized)
+    )
     if builtin is None and config_override is None and dream_override is None:
         raise ValueError(f"Unknown subagent role '{normalized}'")
 
@@ -473,6 +480,9 @@ class SubagentRoleStore:
         if not (candidate.description or "").strip() or not (candidate.system_prompt or "").strip():
             raise ValueError("Dream specialist role requires non-empty description and system_prompt")
         _validate_role_config(self.config, candidate)
+        status = str(merged.get("status") or "active").strip().lower()
+        if status not in {"active", "cold"}:
+            raise ValueError("Dream specialist status must be active or cold")
         _atomic_write_json(path, merged)
         return self.get(normalized)
 

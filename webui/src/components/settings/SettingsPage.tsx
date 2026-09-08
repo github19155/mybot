@@ -115,6 +115,7 @@ export function SettingsPage({
     handleToggleProvider,
     handleWebSearchProviderChange,
     hasPendingRestart,
+    imageAnalysisSaving,
     hostEngineApplying,
     imageGenerationDirty,
     imageGenerationForm,
@@ -261,6 +262,8 @@ export function SettingsPage({
               promptOverrides={promptOverrides}
               promptOverridesSaving={promptOverridesSaving}
               onSavePromptOverrides={savePromptOverrides}
+              onSaveImageAnalysisModel={saveImageAnalysisModel}
+              imageAnalysisSaving={imageAnalysisSaving}
               roleBindingsDraft={roleBindingsDraft}
               roleBindingsSaving={roleBindingsSaving}
               setRoleBindingsDraft={setRoleBindingsDraft}

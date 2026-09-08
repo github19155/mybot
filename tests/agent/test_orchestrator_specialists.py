@@ -214,8 +214,10 @@ def test_prompts_define_orchestration_and_specialist_evolution() -> None:
     assert "permanent `general` worker" in tool_contract
     assert "Browser is a worker capability" in tool_contract
     assert "status=cold" in tool_contract
+    assert "Specialist deletion is user-governed" in tool_contract
 
     assert "## Specialist discovery & evolution" in dream
+    assert "skills/.agents/_candidates.json" in dream
     assert "skills/.agents/_usage.json" in dream
     assert "Do NOT optimize from one noisy run" in dream
     assert "Never delete a specialist role automatically" in dream

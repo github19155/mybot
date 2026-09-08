@@ -19,6 +19,7 @@ class ProviderSnapshot:
     signature: tuple[object, ...]
     generation: GenerationSettings | None = None
     model_preset: str | None = None
+    supports_vision: bool = False
     system_prompt_prefix: str | None = None
 
 
@@ -258,6 +259,7 @@ def _inline_fallback_preset(
             fallback.temperature if fallback.temperature is not None else primary.temperature
         ),
         reasoning_effort=fallback.reasoning_effort,
+        supports_vision=fallback.supports_vision,
     )
 
 
@@ -315,6 +317,7 @@ def build_unconfigured_provider_snapshot(config: Config, setup_error: str) -> Pr
         context_window_tokens=preset.context_window_tokens,
         signature=("unconfigured", setup_error, preset.model),
         generation=provider.generation,
+        supports_vision=preset.supports_vision,
     )
 
 
@@ -348,6 +351,7 @@ def provider_signature(
             fallback.temperature,
             fallback.reasoning_effort,
             fallback.context_window_tokens,
+            fallback.supports_vision,
             config.system_prompt_for(fallback.model),
             getattr(fp, "proxy", None) if fp else None,
             fp.thinking_style if fp else None,
@@ -370,6 +374,7 @@ def provider_signature(
         resolved.temperature,
         resolved.reasoning_effort,
         resolved.context_window_tokens,
+        resolved.supports_vision,
         config.system_prompt_for(resolved.model),
         getattr(p, "proxy", None) if p else None,
         p.thinking_style if p else None,
@@ -400,6 +405,7 @@ def build_provider_snapshot(
         signature=provider_signature(config, preset=resolved),
         generation=resolved.to_generation_settings(),
         model_preset=selected_preset,
+        supports_vision=resolved.supports_vision,
         system_prompt_prefix=config.system_prompt_for(resolved.model),
     )
 

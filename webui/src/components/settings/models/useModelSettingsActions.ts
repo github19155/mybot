@@ -265,7 +265,7 @@ export function useModelSettingsActions({
         reasoningEffort:
           reasoningEffort !== selectedPreset.reasoning_effort ? reasoningEffort : undefined,
         supportsVision:
-          form.supportsVision !== selectedPreset.supports_vision ? form.supportsVision : undefined,
+          form.supportsVision !== (selectedPreset.supports_vision === true) ? form.supportsVision : undefined,
       });
       applyPayload(payload);
       setForm(agentDraftFromPayload(payload, nextName));

@@ -55,11 +55,17 @@ def test_config_registers_general_as_builtin_role() -> None:
 
 def test_general_is_permanent_capable_fallback() -> None:
     general = resolve_role(None, "general")
+    disabled_override = resolve_role(
+        Config(subagentRoles={"general": {"disabled": True}}),
+        "general",
+    )
     coder = resolve_role(None, "coder")
 
     assert general.category == "general"
     assert general.source == "builtin"
     assert general.permissions == "read-write-exec"
+    assert general.disabled is False
+    assert disabled_override.disabled is False
     assert {"read_file", "write_file", "exec", "browser_status"}.issubset(general.tools)
 
     # Browser is available to workers as a capability, but specialist builtins
@@ -140,6 +146,8 @@ def test_cold_dream_role_is_retained_until_user_deletes_it(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="general.*permanent|permanent.*general"):
         store.delete("general")
+    with pytest.raises(ValueError, match="general.*permanent|permanent.*general"):
+        store.update("general", {"disabled": True})
 
 
 @pytest.mark.asyncio
@@ -191,6 +199,38 @@ async def test_general_worker_can_load_browser_capability(tmp_path, monkeypatch)
         assert "browser_status" not in coder_tools.tool_names
         assert (
             type(general_tools.get("browser_status")).__module__
+            == "nanobot.agent.tools.subagent_browser"
+        )
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_dream_specialist_can_receive_browser_capability(tmp_path, monkeypatch) -> None:
+    from nanobot.agent.model_management import ModelManagement
+    from nanobot.agent.subagent import SubagentManager
+
+    monkeypatch.setenv("NANOBOT_BROWSER_ENABLED", "true")
+    _write_dream_role(
+        tmp_path,
+        "ui-checker",
+        tools=["read_file", "browser_status", "browser_snapshot"],
+    )
+    config = _config(tmp_path)
+    manager = SubagentManager(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        model_management=ModelManagement(config),
+    )
+    try:
+        tools = manager._build_tools(role="ui-checker")
+
+        assert {"read_file", "browser_status", "browser_snapshot"}.issubset(
+            tools.tool_names
+        )
+        assert (
+            type(tools.get("browser_status")).__module__
             == "nanobot.agent.tools.subagent_browser"
         )
     finally:

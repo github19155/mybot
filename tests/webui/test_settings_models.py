@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from nanobot.config.schema import Config
 from nanobot.webui.settings_models import (
     delete_model_configuration,

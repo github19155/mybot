@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.context import ContextBuilder
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.image_analysis import ImageAnalysisTool, ImageAnalysisToolConfig
 from nanobot.agent.tools.registry import ToolRegistry

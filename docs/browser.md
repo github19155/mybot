@@ -119,6 +119,10 @@ Keep `NANOBOT_BROWSER_ALLOW_PRIVATE_NETWORK=false` unless the bot is intentional
 
 ## Agent behavior
 
+Browser is a worker capability, not a separate Browser Agent type. Main should delegate browser work to an appropriate subagent: the permanent `general` worker provides a broad fallback when browser support is enabled, while focused specialists can opt into browser tools when their responsibility requires them.
+
+Because all of those workers refer to the same persistent Chromium/profile, Main should not schedule parallel browser workers against the same session. Runtime serialization is a safety net against simultaneous operations, not permission to interleave independent browser tasks.
+
 The normal policy is:
 
 1. Prefer lightweight search/fetch for simple pages.

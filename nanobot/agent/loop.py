@@ -12,6 +12,7 @@ import time
 import weakref
 from collections.abc import Coroutine, Iterable, Mapping
 from contextlib import AbstractContextManager, ExitStack, nullcontext, suppress
+from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -664,11 +665,13 @@ class AgentLoop:
         """Hide the fallback image tool from models with native vision support."""
         if not runtime.supports_vision or not tools.has("image_analyze"):
             return tools
-        filtered = ToolRegistry()
-        for name in tools.tool_names:
-            tool = tools.get(name)
-            if name != "image_analyze" and tool is not None:
-                filtered.register(tool)
+        filtered = copy(tools)
+        filtered._tools = {
+            name: tool
+            for name, tool in tools._tools.items()
+            if name != "image_analyze"
+        }
+        filtered._cached_definitions = None
         return filtered
 
     def _register_default_tools(
@@ -1143,7 +1146,7 @@ class AgentLoop:
                 request_ctx,
                 workspace=effective_scope.project_path,
             )
-        effective_tools = tools or self.tools
+        effective_tools = self._tools_for_runtime(tools or self.tools, runtime)
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
         workspace_token = bind_workspace_scope(effective_scope)

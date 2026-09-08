@@ -631,8 +631,8 @@ export interface SettingsPayload {
     resolved_provider: string | null;
     has_api_key: boolean;
     model_preset: string | null;
-    supports_vision: boolean;
-    image_analysis_model_preset: string | null;
+    supports_vision?: boolean;
+    image_analysis_model_preset?: string | null;
     max_tokens: number;
     context_window_tokens: number;
     temperature: number;
@@ -653,7 +653,7 @@ export interface SettingsPayload {
     context_window_tokens: number;
     temperature: number;
     reasoning_effort: string | null;
-    supports_vision: boolean;
+    supports_vision?: boolean;
     reasoning_effort_values?: string[];
   }>;
   image_analysis?: {

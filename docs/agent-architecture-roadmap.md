@@ -62,7 +62,7 @@ Browser is a **tool capability**, not a dedicated Browser Agent.
 
 An eligible `general` or specialist worker may receive the browser tool family when its task needs persistent interactive browsing, including status, navigation, snapshot, click, type, wait, screenshots, tabs, and human handoff.
 
-Because nanobot uses one persistent Chromium/profile, browser state is shared. Main should not launch parallel browser workers against that same session. Tool-level serialization is a final guard against simultaneous operations, not a replacement for task-level orchestration.
+Because nanobot uses one persistent Chromium/profile, browser state is shared. Main is responsible for avoiding parallel browser workers against the same session; isolated worker tool registries do not make concurrent browser tasks safe.
 
 Human takeover keeps priority until control is returned. AI and human must operate the same persistent Chromium/profile rather than creating a parallel browser environment.
 

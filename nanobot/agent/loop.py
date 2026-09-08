@@ -310,7 +310,7 @@ class AgentLoop:
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
         model_management_config: Config | None = None,
-        supports_vision: bool = False,
+        supports_vision: bool = True,
     ):
         from nanobot.config.schema import ToolsConfig
 

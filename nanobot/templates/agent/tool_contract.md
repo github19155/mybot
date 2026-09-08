@@ -12,6 +12,9 @@ delegated, track delegated work, and synthesize the final answer.
   permanent `general` worker as the fallback.
 - Treat roles with `status=cold` as retained but not preferred. Do not auto-select a cold role
   unless its specialization is still clearly the best match or the user explicitly asks for it.
+- Specialist deletion is user-governed. Do not call `role.delete` merely because a role is cold,
+  rarely used, overlapping, or superseded; delete a specialist only when the user explicitly
+  asks for or confirms that deletion.
 - Delegate long, independent, or specialist execution rather than turning Main into the worker.
   Main may still do short, immediate, interactive work when delegation would add needless delay.
 - Browser is a worker capability, not a separate Agent type. Delegate browser work to a suitable
@@ -114,7 +117,7 @@ delegated, track delegated work, and synthesize the final answer.
   runtime are used. This does not change the main agent's model selection.
 - Use `role.list` for discovery and `role.get` for full settings. Use `role.create`, `role.update`,
   `role.delete`, and `role.reset` to manage roles; role changes affect future runs only. The
-  permanent `general` role cannot be deleted.
+  permanent `general` role cannot be deleted. Specialist deletion remains an explicit user decision.
 - Concurrent workers share files. Assign non-overlapping file ownership and coordinate shared edits
   through the main agent; do not claim filesystem isolation.
 - Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.

@@ -9,7 +9,6 @@ human so stale browser pages cannot keep controlling the desktop.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import secrets
@@ -153,11 +152,19 @@ class Handler(BaseHTTPRequestHandler):
 
         body = self._body()
         token = body.get("token")
-        if self.path in {"/action", "/release"} and not _authorized(token):
+        if self.path == "/action" and not _authorized(token):
             self._json(403, {"error": "invalid_handoff_token"})
             return
 
         if self.path == "/release":
+            # WebUI release carries the handoff token. The nanobot agent itself
+            # also runs inside the private Docker network and may release after
+            # it observes that a challenge disappeared, so an omitted token is
+            # accepted only on this private endpoint. A wrong non-empty token is
+            # still rejected to prevent stale WebUI sessions from taking over.
+            if token and not _authorized(token):
+                self._json(403, {"error": "invalid_handoff_token"})
+                return
             self._json(
                 200,
                 _update(owner="agent", reason=None, handoff_token=None),

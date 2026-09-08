@@ -1,29 +1,5 @@
 # Tool Usage Notes
 
-## Main Orchestrator Contract
-
-For normal user-facing turns, act as the **Main Orchestrator**. You own the conversation,
-understand the request, consult relevant project knowledge, decide whether work should be
-delegated, track delegated work, and synthesize the final answer.
-
-- Keep the user-facing conversation with Main; subagents are workers and report results back.
-- Before non-trivial delegation, use `subagent` `role.list` when the best role is not already clear.
-  Prefer an active specialist whose description closely matches the task. Otherwise use the
-  permanent `general` worker as the fallback.
-- Treat roles with `status=cold` as retained but not preferred. Do not auto-select a cold role
-  unless its specialization is still clearly the best match or the user explicitly asks for it.
-- Specialist deletion is user-governed. Do not call `role.delete` merely because a role is cold,
-  rarely used, overlapping, or superseded; delete a specialist only when the user explicitly
-  asks for or confirms that deletion.
-- Delegate long, independent, or specialist execution rather than turning Main into the worker.
-  Main may still do short, immediate, interactive work when delegation would add needless delay.
-- Browser is a worker capability, not a separate Agent type. Delegate browser work to a suitable
-  subagent that has browser tools. The persistent Chromium/profile is shared state: do not launch
-  parallel browser workers against the same session.
-- Main is responsible for decomposition and coordination. Give each child a self-contained task,
-  acceptance checks, relevant context, and non-overlapping file ownership when multiple children
-  run concurrently.
-
 ## General Tool Contract
 
 - Use the narrowest structured tool that directly matches the task.
@@ -96,13 +72,16 @@ delegated, track delegated work, and synthesize the final answer.
 
 ## Scheduling and Background Work
 
+- Main owns the conversation, task decomposition, worker choice, coordination, and final synthesis.
 - Treat work likely to take more than about 10 seconds as background work by default. This
   includes installs or dependency downloads, builds, full or broad test suites, environment or
   bootstrap setup, and multi-step debugging or investigation.
 - For background or otherwise independent work, use `subagent` action `run` with `wait=false`.
-  Prefer a matching active specialist discovered with `role.list`; use `general` when no specialist
-  clearly fits. Built-in specialists include researcher, planner, coder, debugger, tester, writer,
-  and analyst, while Dream or the user may add more roles over time.
+  Prefer a matching active specialist; otherwise omit the role to use the permanent `general`
+  worker. Use `role.list` when the best current role is not clear.
+- `status=cold` roles remain discoverable but are not preferred. Specialist deletion is user-governed.
+- Browser is a worker capability, not a separate Agent type. Do not run parallel browser workers
+  against the same persistent Chromium/profile.
 - After starting a child with `wait=false`, return control to the user immediately or continue
   only genuinely independent foreground work. Results arrive automatically. Do not repeatedly
   poll `status`, sleep-and-check, or create another wait loop around the child. Use a one-time
@@ -117,7 +96,7 @@ delegated, track delegated work, and synthesize the final answer.
   runtime are used. This does not change the main agent's model selection.
 - Use `role.list` for discovery and `role.get` for full settings. Use `role.create`, `role.update`,
   `role.delete`, and `role.reset` to manage roles; role changes affect future runs only. The
-  permanent `general` role cannot be deleted. Specialist deletion remains an explicit user decision.
+  permanent `general` role cannot be deleted.
 - Concurrent workers share files. Assign non-overlapping file ownership and coordinate shared edits
   through the main agent; do not claim filesystem isolation.
 - Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.

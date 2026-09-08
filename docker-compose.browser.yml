@@ -11,11 +11,6 @@ services:
     expose:
       - "9222"
       - "6081"
-    ports:
-      # noVNC is loopback-only by default. For phone/remote takeover, put this
-      # behind the same authenticated reverse proxy/Tailscale path as WebUI and
-      # set NANOBOT_BROWSER_TAKEOVER_URL to that protected URL.
-      - "127.0.0.1:${NANOBOT_BROWSER_NOVNC_PORT:-6080}:6080"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9222/json/version"]
       interval: 5s
@@ -31,7 +26,7 @@ services:
       NANOBOT_BROWSER_ENABLED: "true"
       NANOBOT_BROWSER_CDP_ENDPOINT: "http://nanobot-browser:9222"
       NANOBOT_BROWSER_CONTROL_ENDPOINT: "http://nanobot-browser:6081"
-      NANOBOT_BROWSER_TAKEOVER_URL: "${NANOBOT_BROWSER_TAKEOVER_URL:-http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale}"
+      NANOBOT_BROWSER_TAKEOVER_URL: "${NANOBOT_BROWSER_TAKEOVER_URL:-}"
       NANOBOT_BROWSER_HUMAN_TIMEOUT_SEC: "${NANOBOT_BROWSER_HUMAN_TIMEOUT_SEC:-600}"
       NANOBOT_BROWSER_RECOVERY_ATTEMPTS: "${NANOBOT_BROWSER_RECOVERY_ATTEMPTS:-2}"
     depends_on:

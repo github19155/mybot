@@ -776,7 +776,7 @@ class AgentLoop:
             session_summary=ctx.pending_summary,
             runtime_context_blocks=ctx.runtime_context_blocks,
             system_prompt_prefix=ctx.system_prompt_prefix,
-            include_images=runtime.supports_vision,
+            include_images=ctx.require_runtime().supports_vision,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:

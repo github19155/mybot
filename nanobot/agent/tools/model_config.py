@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         "max_tokens": {"type": "integer", "minimum": 1},
         "context_window_tokens": {"type": "integer", "minimum": 1},
         "temperature": {"type": "number"},
+        "supports_vision": {"type": "boolean"},
         "reasoning_effort": {"type": "string"},
         "api_key": {"type": "string"},
         "api_base": {"type": "string"},
@@ -59,7 +60,7 @@ class ModelConfigTool(Tool):
         return (
             "Manage instance model presets, providers and subagent role bindings without changing your selected model. "
             "list shows available names. roles_update uses bindings {role: preset_name_or_null}; null inherits the parent runtime. "
-            "model_create requires name, model, provider; model_update uses name and optional new_name/settings; "
+            "model_create requires name, model, provider; model_update uses name and optional new_name/settings; supports_vision marks native image input. "
             "model_delete requires name (bound presets must be unbound first). provider_create uses name and api_base, "
             "provider_update uses provider and connection settings. Credentials may use ${ENV_VAR} references. "
             "Use the subagent tool for child role/model/thinking selection; use my to select a model for your own direct work."

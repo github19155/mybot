@@ -1,12 +1,13 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.context_management import AgentContextControl
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.bus.queue import MessageBus
+from nanobot.context_management import AgentContextControl
 from nanobot.providers.base import ProviderConversationState
 
 
@@ -87,7 +88,7 @@ async def test_main_self_compaction_waits_for_current_session_lock(tmp_path) -> 
 
     tasks = list(loop._background_tasks)
     if tasks:
-        await __import__("asyncio").gather(*tasks)
+        await asyncio.gather(*tasks)
 
     assert loop.sessions.get_or_create("cli:direct").last_archived == 12
     assert control.context_status("cli:direct")["pending_compaction"] is False

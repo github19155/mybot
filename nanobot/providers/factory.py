@@ -311,13 +311,37 @@ def build_unconfigured_provider_snapshot(config: Config, setup_error: str) -> Pr
     )
 
 
+def _fleet_signature(
+    config: Config,
+    preset: ModelPresetConfig,
+    provider_config: ProviderConfig | None,
+) -> tuple[object, ...]:
+    """Safe non-secret Fleet fields that affect a frozen provider leaf wrapper."""
+    return (
+        bool(config.model_fleet.enabled),
+        preset.offering_id,
+        tuple(preset.fleet_pools),
+        preset.input_cost_per_million,
+        preset.output_cost_per_million,
+        preset.cached_input_cost_per_million,
+        preset.max_concurrent_requests,
+        provider_config.max_concurrent_requests if provider_config else None,
+        provider_config.rate_limit_scope if provider_config else "provider",
+    )
+
+
 def provider_signature(
     config: Config,
     *,
     preset_name: str | None = None,
     preset: ModelPresetConfig | None = None,
 ) -> tuple[object, ...]:
-    """Return the config fields that affect the active provider chain."""
+    """Return config fields that affect the active provider chain.
+
+    The signature is only cache invalidation state. It can contain connection
+    details from the existing provider contract and must never be logged or used
+    as a Model Fleet identity. Fleet itself keys only safe provider/model data.
+    """
     resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)
     p = config.get_provider(resolved.model, preset=resolved)
     fallback_presets = _resolve_fallback_presets(config, resolved)
@@ -345,6 +369,7 @@ def provider_signature(
             config.system_prompt_for(fallback.model),
             getattr(fp, "proxy", None) if fp else None,
             fp.thinking_style if fp else None,
+            _fleet_signature(config, fallback, fp),
         )
 
     provider_name = config.get_provider_name(resolved.model, preset=resolved)
@@ -368,6 +393,7 @@ def provider_signature(
         config.system_prompt_for(resolved.model),
         getattr(p, "proxy", None) if p else None,
         p.thinking_style if p else None,
+        _fleet_signature(config, resolved, p),
         tuple(_fallback_signature(fallback) for fallback in fallback_presets),
     )
 

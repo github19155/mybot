@@ -78,13 +78,7 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _ensure_dream_state_git_visibility(workspace: Path) -> None:
-    """Let pre-role-state memory repos track the new durable role files.
-
-    Older workspaces already have a GitStore whose root .gitignore predates the
-    ``agents`` state directory. Keep runtime usage telemetry ignored while making
-    the two Dream-authored state files visible to that existing repository.
-    New workspaces already receive equivalent rules from GitStore initialization.
-    """
+    """Let pre-role-state memory repos track the new durable role files."""
     root = workspace.expanduser().resolve()
     if not (root / ".git").exists():
         return
@@ -166,7 +160,7 @@ def role_usage(workspace: Path, role: str) -> dict[str, Any]:
 
 
 def record_role_use(workspace: Path, role: str) -> None:
-    """Record an accepted role launch for Dream's hot/cold reasoning."""
+    """Record an accepted persistent-role launch for Dream's hot/cold reasoning."""
     name = normalize_role_name(role)
     path = usage_state_path(workspace)
     with _USAGE_LOCK:
@@ -206,11 +200,18 @@ def observe_candidate(
     *,
     responsibility: str,
     evidence: str,
+    occurrence: str | None = None,
 ) -> dict[str, Any]:
-    """Persist one distinct evidence summary for a possible specialist."""
+    """Persist evidence for one independent candidate occurrence.
+
+    ``occurrence`` is a stable source/task identity supplied by Dream. Rewording
+    evidence for the same occurrence does not increase the independent-evidence
+    count. Legacy callers without an occurrence retain evidence-text deduping.
+    """
     normalized = normalize_role_name(name)
     responsibility = responsibility.strip()
     evidence = evidence.strip()
+    occurrence = occurrence.strip() if isinstance(occurrence, str) else ""
     if not responsibility or not evidence:
         raise ValueError("candidate observation requires responsibility and evidence")
     path = candidate_state_path(workspace)
@@ -220,15 +221,33 @@ def observe_candidate(
         payload = read_json_object(path)
         current = payload.get(normalized)
         row = dict(current) if isinstance(current, dict) else {}
+
         prior_evidence = [
             str(item).strip()
             for item in row.get("evidence", [])
             if isinstance(item, str) and item.strip()
         ]
-        is_new = evidence.casefold() not in {item.casefold() for item in prior_evidence}
+        prior_occurrences = [
+            str(item).strip()
+            for item in row.get("occurrences", [])
+            if isinstance(item, str) and item.strip()
+        ]
+        if occurrence:
+            is_new = occurrence.casefold() not in {
+                item.casefold() for item in prior_occurrences
+            }
+        else:
+            is_new = evidence.casefold() not in {
+                item.casefold() for item in prior_evidence
+            }
+
         if is_new:
             prior_evidence.append(evidence)
-        prior_evidence = prior_evidence[-5:]
+            if occurrence:
+                prior_occurrences.append(occurrence)
+        prior_evidence = prior_evidence[-8:]
+        prior_occurrences = prior_occurrences[-8:]
+
         count = row.get("evidence_count", 0)
         if not isinstance(count, int) or isinstance(count, bool):
             count = 0
@@ -237,6 +256,7 @@ def observe_candidate(
             "responsibility": responsibility,
             "evidence_count": count + (1 if is_new else 0),
             "evidence": prior_evidence,
+            "occurrences": prior_occurrences,
             "first_seen": row.get("first_seen") or now,
             "last_seen": now,
         })

@@ -7,15 +7,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.subagent_role_storage import (
-    atomic_write_json,
     candidate_entries,
     dream_role_entries_for_workspace,
-    dream_role_path,
     normalize_role_name,
     observe_candidate,
-    read_json_object,
     remove_candidate,
     role_usage,
+    write_dream_role,
 )
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
@@ -63,10 +61,10 @@ class DreamRoleTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Manage Dream-owned specialist roles and candidate evidence. Use observe/candidates "
-            "before create; creation requires at least two distinct persisted observations. "
-            "Updates are versioned automatically. Roles may be marked cold or reactivated, "
-            "but this tool can never delete or disable them."
+            "Manage Dream-owned specialist roles and recurring-role evidence. Use observe before "
+            "create; creation requires at least two distinct persisted observations. Updates are "
+            "versioned automatically. Roles may be marked cold or reactivated, but this capability "
+            "can never delete or disable them."
         )
 
     @staticmethod
@@ -74,12 +72,10 @@ class DreamRoleTool(Tool):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
     def _role_rows(self) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
-        for name, payload in sorted(dream_role_entries_for_workspace(self.workspace).items()):
-            row = dict(payload)
-            row["usage"] = role_usage(self.workspace, name)
-            result.append(row)
-        return result
+        return [
+            {**payload, "usage": role_usage(self.workspace, name)}
+            for name, payload in sorted(dream_role_entries_for_workspace(self.workspace).items())
+        ]
 
     def _validate_values(self, name: str, values: dict[str, Any]) -> "SubagentRoleConfig":
         from nanobot.agent.subagent_roles import (
@@ -141,7 +137,7 @@ class DreamRoleTool(Tool):
             payload["evolution"] = evolution[-12:]
         if payload["status"] not in {"active", "cold"}:
             raise ValueError("Dream specialist status must be active or cold")
-        atomic_write_json(dream_role_path(self.workspace, name), payload)
+        write_dream_role(self.workspace, name, payload)
         return {**payload, "usage": role_usage(self.workspace, name)}
 
     async def execute(

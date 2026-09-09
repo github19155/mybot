@@ -1,0 +1,220 @@
+"""Restricted role-management capability for Dream specialist evolution."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from nanobot.agent.subagent_role_storage import (
+    atomic_write_json,
+    candidate_entries,
+    dream_role_entries_for_workspace,
+    dream_role_path,
+    normalize_role_name,
+    observe_candidate,
+    read_json_object,
+    remove_candidate,
+    role_usage,
+)
+from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
+from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
+
+if TYPE_CHECKING:
+    from nanobot.config.schema import Config, SubagentRoleConfig
+
+
+_ACTIONS = (
+    "list",
+    "get",
+    "candidates",
+    "observe",
+    "create",
+    "update",
+    "mark_cold",
+    "activate",
+)
+
+
+@tool_parameters(
+    tool_parameters_schema(
+        action=StringSchema("Role evolution operation", enum=list(_ACTIONS)),
+        role=StringSchema("Normalized role/candidate name", nullable=True),
+        responsibility=StringSchema("Recurring responsibility for candidate evidence", nullable=True),
+        evidence=StringSchema("Short evidence summary for one distinct occurrence", nullable=True),
+        values={"type": "object", "additionalProperties": True},
+        required=["action"],
+        additional_properties=False,
+    )
+)
+class DreamRoleTool(Tool):
+    """Dream-only role manager. It intentionally has no delete operation."""
+
+    _plugin_discoverable = False
+
+    def __init__(self, workspace: Path, config: "Config | None" = None) -> None:
+        self.workspace = workspace.expanduser().resolve()
+        self.config = config
+
+    @property
+    def name(self) -> str:
+        return "dream_roles"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Manage Dream-owned specialist roles and candidate evidence. Use observe/candidates "
+            "before create; creation requires at least two distinct persisted observations. "
+            "Updates are versioned automatically. Roles may be marked cold or reactivated, "
+            "but this tool can never delete or disable them."
+        )
+
+    @staticmethod
+    def _json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def _role_rows(self) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for name, payload in sorted(dream_role_entries_for_workspace(self.workspace).items()):
+            row = dict(payload)
+            row["usage"] = role_usage(self.workspace, name)
+            result.append(row)
+        return result
+
+    def _validate_values(self, name: str, values: dict[str, Any]) -> "SubagentRoleConfig":
+        from nanobot.agent.subagent_roles import (
+            ALL_SUBAGENT_TOOL_NAMES,
+            BUILTIN_SUBAGENT_ROLE_NAMES,
+        )
+        from nanobot.config.schema import SubagentRoleConfig
+
+        if name in BUILTIN_SUBAGENT_ROLE_NAMES:
+            raise ValueError("Dream cannot create or replace builtin roles")
+        if self.config is not None and name in self.config.subagent_roles:
+            raise ValueError("Dream cannot replace a user/config-managed role")
+        protected = {"name", "created_by", "version"} & set(values)
+        if protected:
+            raise ValueError(f"Dream role fields are runtime-managed: {', '.join(sorted(protected))}")
+
+        candidate = SubagentRoleConfig.model_validate(values)
+        if not (candidate.description or "").strip() or not (candidate.system_prompt or "").strip():
+            raise ValueError("Dream specialist requires description and system_prompt")
+        requested = set(candidate.tools or ())
+        unknown = requested - ALL_SUBAGENT_TOOL_NAMES
+        if unknown:
+            raise ValueError(f"Unknown specialist tools: {', '.join(sorted(unknown))}")
+        if candidate.disabled:
+            raise ValueError("Dream cannot disable specialist roles")
+        if (
+            self.config is not None
+            and candidate.model_preset
+            and candidate.model_preset != "default"
+            and candidate.model_preset not in self.config.model_presets
+        ):
+            raise ValueError(f"Unknown model preset '{candidate.model_preset}'")
+        return candidate
+
+    def _write_role(
+        self,
+        name: str,
+        values: dict[str, Any],
+        *,
+        current: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        candidate = self._validate_values(name, values)
+        old_version = current.get("version", 0) if current else 0
+        if not isinstance(old_version, int) or isinstance(old_version, bool):
+            old_version = 0
+        evolution = list(current.get("evolution", [])) if current else []
+        requested_evolution = values.get("evolution")
+        if isinstance(requested_evolution, list):
+            evolution = [str(item) for item in requested_evolution if str(item).strip()][-12:]
+
+        payload = candidate.model_dump(exclude_none=True)
+        payload.update({
+            "name": name,
+            "created_by": "dream",
+            "status": str(values.get("status") or (current or {}).get("status") or "active"),
+            "version": max(1, old_version + 1),
+        })
+        if evolution:
+            payload["evolution"] = evolution[-12:]
+        if payload["status"] not in {"active", "cold"}:
+            raise ValueError("Dream specialist status must be active or cold")
+        atomic_write_json(dream_role_path(self.workspace, name), payload)
+        return {**payload, "usage": role_usage(self.workspace, name)}
+
+    async def execute(
+        self,
+        action: str,
+        role: str | None = None,
+        responsibility: str | None = None,
+        evidence: str | None = None,
+        values: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> str:
+        try:
+            if action == "list":
+                return self._json(self._role_rows())
+            if action == "candidates":
+                return self._json(candidate_entries(self.workspace))
+
+            if not role:
+                return ToolResult.error(f"Error: {action} requires role")
+            name = normalize_role_name(role)
+
+            if action == "get":
+                payload = dream_role_entries_for_workspace(self.workspace).get(name)
+                if payload is None:
+                    return ToolResult.error(f"Error: unknown Dream specialist '{name}'")
+                return self._json({**payload, "usage": role_usage(self.workspace, name)})
+
+            if action == "observe":
+                if not responsibility or not evidence:
+                    return ToolResult.error("Error: observe requires responsibility and evidence")
+                return self._json(observe_candidate(
+                    self.workspace,
+                    name,
+                    responsibility=responsibility,
+                    evidence=evidence,
+                ))
+
+            existing = dream_role_entries_for_workspace(self.workspace).get(name)
+            if action == "create":
+                if existing is not None:
+                    return ToolResult.error(f"Error: Dream specialist '{name}' already exists")
+                candidate = candidate_entries(self.workspace).get(name, {})
+                if candidate.get("evidence_count", 0) < 2:
+                    return ToolResult.error(
+                        "Error: create requires at least two distinct persisted candidate observations"
+                    )
+                created = self._write_role(name, dict(values or {}), current=None)
+                remove_candidate(self.workspace, name)
+                return self._json(created)
+
+            if existing is None or existing.get("created_by") != "dream":
+                return ToolResult.error(f"Error: unknown Dream-managed specialist '{name}'")
+
+            if action == "update":
+                if not values:
+                    return ToolResult.error("Error: update requires values")
+                merged = {
+                    key: value
+                    for key, value in existing.items()
+                    if key not in {"name", "created_by", "version", "usage"}
+                }
+                merged.update(values)
+                return self._json(self._write_role(name, merged, current=existing))
+
+            if action in {"mark_cold", "activate"}:
+                merged = {
+                    key: value
+                    for key, value in existing.items()
+                    if key not in {"name", "created_by", "version", "usage"}
+                }
+                merged["status"] = "cold" if action == "mark_cold" else "active"
+                return self._json(self._write_role(name, merged, current=existing))
+
+            return ToolResult.error(f"Error: unknown Dream role action '{action}'")
+        except (OSError, ValueError) as exc:
+            return ToolResult.error(f"Error: {exc}")

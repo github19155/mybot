@@ -24,6 +24,7 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema,
 )
 from nanobot.agent.tools.subagent_browser import bind_subagent_browser_bus
+from nanobot.agent.work_agent import run_work_agent
 from nanobot.security.workspace_access import current_workspace_scope
 
 if TYPE_CHECKING:
@@ -246,8 +247,8 @@ class SubagentTool(Tool):
                     "Error: description, system_prompt, and tools are task-scoped WorkAgent "
                     "overrides and cannot be combined with role"
                 )
-            role_definition: ResolvedSubagentRole | None = None
-            selected_role = role or "general"
+            request_allowed_tools = set(request.allowed_tools)
+            fork_history = _fork_snapshot(request.conversation_history)
             if work_override:
                 try:
                     role_definition = _work_role_definition(
@@ -258,14 +259,35 @@ class SubagentTool(Tool):
                     )
                 except ValueError as exc:
                     return ToolResult.error(f"Error: {exc}")
-                selected_role = "work"
+                return await run_work_agent(
+                    self._manager,
+                    task=task.strip(),
+                    runtime=runtime,
+                    role_definition=role_definition,
+                    wait=wait,
+                    label=label,
+                    model=model,
+                    model_preset=model_preset,
+                    thinking=thinking,
+                    temperature=temperature,
+                    timeout_seconds=timeout_seconds,
+                    context=context,
+                    origin_channel=request.channel,
+                    origin_chat_id=request.chat_id,
+                    session_key=session_key,
+                    origin_message_id=request.message_id,
+                    workspace_scope=current_workspace_scope(),
+                    allowed_tools=request_allowed_tools,
+                    fork_history=fork_history,
+                )
+
+            selected_role = role or "general"
             method = self._manager.run_inline if wait else self._manager.spawn
             result = await method(
                 task=task.strip(),
                 runtime=runtime,
                 label=label,
                 role=selected_role,
-                role_definition=role_definition,
                 model=model,
                 model_preset=model_preset,
                 thinking=thinking,
@@ -277,10 +299,10 @@ class SubagentTool(Tool):
                 session_key=session_key,
                 origin_message_id=request.message_id,
                 workspace_scope=current_workspace_scope(),
-                allowed_tools=set(request.allowed_tools),
-                fork_history=_fork_snapshot(request.conversation_history),
+                allowed_tools=request_allowed_tools,
+                fork_history=fork_history,
             )
-            if role_definition is None and not is_tool_error_result(result):
+            if not is_tool_error_result(result):
                 workspace = getattr(self._manager, "workspace", None)
                 if workspace is not None:
                     try:

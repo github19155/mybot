@@ -6,13 +6,9 @@ WorkAgent has no independent runtime or persistence. It supplies one ephemeral
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
-from weakref import WeakKeyDictionary
 
 from nanobot.agent.subagent_roles import ALL_SUBAGENT_TOOL_NAMES, ResolvedSubagentRole
-
-_WORK_LAUNCH_LOCKS: WeakKeyDictionary[Any, asyncio.Lock] = WeakKeyDictionary()
 
 
 def _nonempty(value: str | None, field: str) -> str | None:
@@ -111,48 +107,6 @@ async def run_work_agent(
     wait: bool,
     **launch: Any,
 ) -> str:
-    """Run through normal ``SubagentManager.spawn/run_inline`` lifecycle.
-
-    The adapter is active only while the manager resolves the one ephemeral
-    ``work`` role. All persistent roles still delegate to the manager's original
-    resolvers, and the child keeps the captured snapshot after launch.
-    """
-    lock = _WORK_LAUNCH_LOCKS.setdefault(manager, asyncio.Lock())
-    async with lock:
-        original_resolve_role = manager._resolve_role
-        original_resolve_runtime = manager._resolve_task_runtime
-
-        def resolve_role(name: str) -> ResolvedSubagentRole:
-            if name == "work":
-                return role_definition
-            return original_resolve_role(name)
-
-        def resolve_runtime(runtime: Any, *, role: str, model: str | None, model_preset: str | None):
-            if role != "work":
-                return original_resolve_runtime(
-                    runtime,
-                    role=role,
-                    model=model,
-                    model_preset=model_preset,
-                )
-            if model is None and model_preset is None:
-                return runtime
-            if manager.model_management is None:
-                raise ValueError("Per-task model selection requires configured model management")
-            # Explicit task model selection uses the existing provider/preset resolver,
-            # but no unspecified General role model setting is inherited.
-            return manager.model_management.resolve_task_runtime(
-                runtime,
-                role="general",
-                model=model,
-                model_preset=model_preset,
-            )
-
-        manager._resolve_role = resolve_role
-        manager._resolve_task_runtime = resolve_runtime
-        try:
-            method = manager.run_inline if wait else manager.spawn
-            return await method(role="work", **launch)
-        finally:
-            manager._resolve_role = original_resolve_role
-            manager._resolve_task_runtime = original_resolve_runtime
+    """Run one WorkAgent through the manager's native ephemeral lifecycle."""
+    method = manager.run_inline_ephemeral if wait else manager.spawn_ephemeral
+    return await method(role_definition=role_definition, **launch)

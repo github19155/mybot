@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nanobot.agent.context_management import AgentContextControl, ContextSnapshot
 from nanobot.bus.events import OutboundMessage
+from nanobot.context_management import AgentContextControl, ContextSnapshot
 
 if TYPE_CHECKING:
     from nanobot.command.router import CommandContext, CommandRouter

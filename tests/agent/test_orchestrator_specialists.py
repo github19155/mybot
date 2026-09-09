@@ -58,6 +58,10 @@ def test_general_is_permanent_all_capability_fallback() -> None:
         Config(subagentRoles={"general": {"disabled": True}}),
         "general",
     )
+    narrow_override = resolve_role(
+        Config(subagentRoles={"general": {"tools": ["read_file"]}}),
+        "general",
+    )
     coder = resolve_role(None, "coder")
 
     assert general.category == "general"
@@ -65,6 +69,7 @@ def test_general_is_permanent_all_capability_fallback() -> None:
     assert general.permissions == "read-write-exec"
     assert general.disabled is False
     assert disabled_override.disabled is False
+    assert set(narrow_override.tools) == set(general.tools)
     assert {
         "read_file",
         "write_file",

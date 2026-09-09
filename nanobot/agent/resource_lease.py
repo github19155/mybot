@@ -217,4 +217,54 @@ def current_delegated_resource_parent() -> str | None:
     return _DELEGATED_RESOURCE_PARENT.get()
 
 
+def request_resource_owner_key(request: Any | None) -> str | None:
+    """Return a stable logical owner key for one Main/Subagent execution."""
+    if request is None:
+        return None
+    exec_owner = str(getattr(request, "exec_owner_session_key", "") or "").strip()
+    if exec_owner:
+        return f"subagent:{exec_owner}"
+    turn_id = str(getattr(request, "turn_id", "") or "").strip()
+    if turn_id:
+        return f"turn:{turn_id}"
+    session_key = str(getattr(request, "session_key", "") or "").strip()
+    if session_key:
+        return f"session:{session_key}"
+    channel = str(getattr(request, "channel", "") or "").strip()
+    chat_id = str(getattr(request, "chat_id", "") or "").strip()
+    if channel and chat_id:
+        return f"chat:{channel}:{chat_id}"
+    return None
+
+
+def current_task_resource_owner_key(request: Any | None = None) -> str:
+    """Return the current logical owner, falling back to the asyncio task."""
+    owner = request_resource_owner_key(request)
+    if owner:
+        return owner
+    task = asyncio.current_task()
+    return f"task:{id(task)}" if task is not None else "task:unbound"
+
+
+def tool_resource_key(tool: Any) -> str | None:
+    """Return the shared resource key declared or implied by a tool instance.
+
+    Tools may expose ``resource_key`` directly. Browser is integrated through
+    its existing ``config_key`` and runtime configuration so both Main and
+    subagent browser views resolve to the same persistent Chromium endpoint.
+    """
+    declared = getattr(tool, "resource_key", None)
+    if callable(declared):
+        declared = declared()
+    if isinstance(declared, str) and declared.strip():
+        return declared.strip()
+    if getattr(tool, "config_key", "") == "browser":
+        runtime = getattr(tool, "runtime", None)
+        config = getattr(runtime, "config", None)
+        endpoint = str(getattr(config, "cdp_endpoint", "") or "").strip()
+        if endpoint:
+            return f"browser:{endpoint}"
+    return None
+
+
 RESOURCE_LEASES = ResourceLeaseManager()

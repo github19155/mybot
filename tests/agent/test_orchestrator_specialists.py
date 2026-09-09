@@ -8,14 +8,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.subagent_roles import (
-    SubagentRoleStore,
-    list_roles,
+from nanobot.agent.memory import MemoryStore
+from nanobot.agent.subagent_role_storage import (
+    candidate_entries,
+    dream_role_entries,
     record_role_use,
-    resolve_role,
     role_usage,
+    write_dream_role,
 )
+from nanobot.agent.subagent_roles import SubagentRoleStore, list_roles, resolve_role
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
+from nanobot.agent.tools.dream_roles import DreamRoleTool
+from nanobot.agent.tools.registry import is_tool_error_result
 from nanobot.agent.tools.subagent import SubagentTool
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config
@@ -26,8 +30,6 @@ def _config(tmp_path) -> Config:
 
 
 def _write_dream_role(tmp_path, name: str, **overrides) -> None:
-    root = tmp_path / "skills" / ".agents"
-    root.mkdir(parents=True, exist_ok=True)
     payload = {
         "name": name,
         "description": f"Handle recurring {name} work.",
@@ -38,10 +40,7 @@ def _write_dream_role(tmp_path, name: str, **overrides) -> None:
         "created_by": "dream",
     }
     payload.update(overrides)
-    (root / f"{name}.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_dream_role(tmp_path, name, payload)
 
 
 def test_config_registers_general_as_builtin_role() -> None:
@@ -53,7 +52,7 @@ def test_config_registers_general_as_builtin_role() -> None:
     assert partial.subagent_roles["general"].thinking == "high"
 
 
-def test_general_is_permanent_capable_fallback() -> None:
+def test_general_is_permanent_all_capability_fallback() -> None:
     general = resolve_role(None, "general")
     disabled_override = resolve_role(
         Config(subagentRoles={"general": {"disabled": True}}),
@@ -65,11 +64,16 @@ def test_general_is_permanent_capable_fallback() -> None:
     assert general.source == "builtin"
     assert general.permissions == "read-write-exec"
     assert general.disabled is False
-    assert disabled_override.disabled is False
-    assert {"read_file", "write_file", "exec", "browser_status"}.issubset(general.tools)
+    assert {
+        "read_file",
+        "write_file",
+        "exec",
+        "web_search",
+        "browser_open",
+        "browser_status",
+    }.issubset(general.tools)
 
-    # Browser is available to workers as a capability, but specialist builtins
-    # keep it opt-in instead of all receiving it by default.
+    # Focused specialists keep Browser opt-in; General deliberately remains all-capability.
     assert "browser_status" not in coder.tools
 
 
@@ -96,7 +100,7 @@ def test_dream_specialist_is_discovered_with_runtime_metadata(tmp_path) -> None:
     assert {"general", "release-triage"}.issubset(names)
 
 
-def test_dream_role_file_cannot_shadow_builtin_general(tmp_path) -> None:
+def test_dream_state_cannot_shadow_builtin_general(tmp_path) -> None:
     _write_dream_role(
         tmp_path,
         "general",
@@ -135,19 +139,113 @@ def test_cold_dream_role_is_retained_until_user_deletes_it(tmp_path) -> None:
     _write_dream_role(tmp_path, "legacy-helper", status="cold", version=4)
     config = _config(tmp_path)
     store = SubagentRoleStore(config)
-    role_path = tmp_path / "skills" / ".agents" / "legacy-helper.json"
 
     assert store.get("legacy-helper")["status"] == "cold"
-    assert role_path.exists()
+    assert "legacy-helper" in dream_role_entries(config)
 
     deleted = store.delete("legacy-helper")
     assert deleted == {"name": "legacy-helper", "deleted": True}
-    assert not role_path.exists()
+    assert "legacy-helper" not in dream_role_entries(config)
 
     with pytest.raises(ValueError, match="general.*permanent|permanent.*general"):
         store.delete("general")
     with pytest.raises(ValueError, match="general.*permanent|permanent.*general"):
         store.update("general", {"disabled": True})
+
+
+@pytest.mark.asyncio
+async def test_dream_role_manager_requires_repeated_evidence(tmp_path) -> None:
+    tool = DreamRoleTool(tmp_path, config=_config(tmp_path))
+    values = {
+        "description": "Triage recurring release readiness work.",
+        "system_prompt": "Check release readiness and report evidence.",
+        "tools": ["read_file", "exec"],
+        "evolution": ["v1: created from repeated release-readiness work"],
+    }
+
+    first = await tool.execute(
+        action="observe",
+        role="release-triage",
+        responsibility="release readiness triage",
+        evidence="release readiness review for project alpha",
+    )
+    blocked = await tool.execute(action="create", role="release-triage", values=values)
+    second = await tool.execute(
+        action="observe",
+        role="release-triage",
+        responsibility="release readiness triage",
+        evidence="separate release readiness review for project beta",
+    )
+    created = await tool.execute(action="create", role="release-triage", values=values)
+
+    assert json.loads(first)["evidence_count"] == 1
+    assert is_tool_error_result(blocked)
+    assert json.loads(second)["evidence_count"] == 2
+    created_payload = json.loads(created)
+    assert created_payload["version"] == 1
+    assert created_payload["created_by"] == "dream"
+    assert "release-triage" not in candidate_entries(tmp_path)
+    assert resolve_role(_config(tmp_path), "release-triage").source == "dream"
+
+
+@pytest.mark.asyncio
+async def test_dream_role_manager_versions_updates_and_never_exposes_delete(tmp_path) -> None:
+    tool = DreamRoleTool(tmp_path, config=_config(tmp_path))
+    await tool.execute(
+        action="observe",
+        role="release-triage",
+        responsibility="release readiness triage",
+        evidence="release review one",
+    )
+    await tool.execute(
+        action="observe",
+        role="release-triage",
+        responsibility="release readiness triage",
+        evidence="release review two",
+    )
+    await tool.execute(
+        action="create",
+        role="release-triage",
+        values={
+            "description": "Triage recurring releases.",
+            "system_prompt": "Check release readiness.",
+            "tools": ["read_file"],
+        },
+    )
+
+    updated = json.loads(await tool.execute(
+        action="update",
+        role="release-triage",
+        values={
+            "description": "Triage recurring releases with tests.",
+            "system_prompt": "Check release readiness and test evidence.",
+            "tools": ["read_file", "exec"],
+            "evolution": ["v2: add test execution after repeated gaps"],
+        },
+    ))
+    cold = json.loads(await tool.execute(action="mark_cold", role="release-triage"))
+    active = json.loads(await tool.execute(action="activate", role="release-triage"))
+
+    assert updated["version"] == 2
+    assert cold["version"] == 3 and cold["status"] == "cold"
+    assert active["version"] == 4 and active["status"] == "active"
+    assert "delete" not in DreamRoleTool.parameters["properties"]["action"]["enum"]
+    assert "disable" not in DreamRoleTool.parameters["properties"]["action"]["enum"]
+
+
+@pytest.mark.asyncio
+async def test_dream_generic_file_tools_cannot_write_role_state(tmp_path) -> None:
+    store = MemoryStore(tmp_path)
+    tools = store.build_dream_tools(config=_config(tmp_path))
+
+    assert "dream_roles" in tools.tool_names
+    result = await tools.execute(
+        "write_file",
+        {"path": "agents/roles.json", "content": '{"owned": true}\n'},
+    )
+
+    assert "outside allowed directory" in result
+    assert not (tmp_path / "agents" / "roles.json").exists()
 
 
 @pytest.mark.asyncio
@@ -249,10 +347,7 @@ def test_prompts_define_orchestration_and_specialist_evolution() -> None:
     ).read_text(encoding="utf-8")
 
     assert "Main Agent / Orchestrator" in identity
-    assert "permanent `general` worker" in identity
-    role_section = identity.split("## Runtime", 1)[0]
-    assert len(role_section.split()) <= 40
-
+    assert "permanent `general` worker" not in identity
     assert "Main owns the conversation" in tool_contract
     assert "permanent `general`" in tool_contract
     assert "Browser is a worker capability" in tool_contract
@@ -261,8 +356,10 @@ def test_prompts_define_orchestration_and_specialist_evolution() -> None:
     assert "role.list" in tool_contract
 
     assert "## Specialist discovery & evolution" in dream
-    assert "skills/.agents/_candidates.json" in dream
-    assert "skills/.agents/_usage.json" in dream
+    assert "agents/role_candidates.json" in dream
+    assert "agents/role_usage.json" in dream
+    assert "dream_roles" in dream
+    assert "_manifest" not in dream
     assert "Do NOT optimize from one noisy run" in dream
     assert "Never delete a specialist role automatically" in dream
     assert "Browser Agent" in dream and "not a reason" in dream

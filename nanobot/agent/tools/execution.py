@@ -9,6 +9,13 @@ from typing import Any, cast
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.resource_lease import (
+    RESOURCE_LEASES,
+    current_delegated_resource_parent,
+    current_task_resource_owner_key,
+    tool_resource_key,
+)
+from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.providers.base import ToolCallRequest
 from nanobot.utils.runtime import (
@@ -142,6 +149,14 @@ async def _execute_tool_call(
         if handled is not None:
             return handled
         return payload, event
+
+    resource_key = tool_resource_key(tool) if tool is not None else None
+    if resource_key is not None:
+        await RESOURCE_LEASES.acquire(
+            resource_key,
+            current_task_resource_owner_key(current_request_context()),
+            parent_owner_key=current_delegated_resource_parent(),
+        )
 
     await hook.before_execute_tool(context, tool_call, tool, params)
     try:

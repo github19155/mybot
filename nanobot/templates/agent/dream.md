@@ -121,12 +121,13 @@ Use `dream_roles` for all specialist/candidate state. Do not edit `agents/roles.
 - `list` / `get`: inspect Dream specialists and runtime usage evidence.
 - `candidates`: inspect persisted cross-Dream evidence.
 - `observe`: record one genuinely distinct occurrence of a promising recurring responsibility.
+- `drop_candidate`: prune one-off, superseded, or stale candidate evidence; this never deletes a runtime specialist.
 - `create`: promote a candidate after the tool confirms enough persisted evidence.
 - `update`: surgically refine an existing Dream specialist; versioning is automatic.
 - `mark_cold`: retain an obsolete/rarely useful specialist for user review.
 - `activate`: restore a cold specialist when repeated new evidence makes it useful again.
 
-There is deliberately no Dream delete/disable operation. Never delete a specialist role automatically.
+There is deliberately no Dream specialist delete/disable operation. Never delete a specialist role automatically.
 
 ### Candidate evidence
 
@@ -136,7 +137,7 @@ A repeated pattern may span Dream batches. On a first credible occurrence, call 
 - Count genuinely separate occurrences only; repeated mentions of one task are one occurrence.
 - A candidate is evidence memory, not a runtime role; Main must never route to it.
 - Do not fabricate evidence counts. The role manager owns candidate counters.
-- One-off or stale candidate evidence may be ignored; do not create a specialist merely to preserve it.
+- Use `drop_candidate` when evidence was one-off, superseded, or stale enough that the responsibility no longer looks recurring.
 
 ### Before creating a specialist
 

@@ -11,6 +11,7 @@ from typing import Any, cast
 from nanobot.agent.subagent_roles import resolve_role
 from nanobot.config.loader import resolve_config_env_vars
 from nanobot.config.schema import Config, ModelPresetConfig
+from nanobot.model_fleet import get_model_fleet, offering_from_config
 from nanobot.providers.factory import build_provider_snapshot
 from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 from nanobot.webui import settings_models as models
@@ -19,7 +20,7 @@ from nanobot.webui.settings_services import WebUISettingsConfig
 
 
 class ModelManagement:
-    """Reuse the settings domain, retaining its validation and file locking."""
+    """Model/provider administration plus Main-facing fleet discovery."""
 
     def __init__(self, config: Config, *, invalidate: Callable[[], None] | None = None) -> None:
         self.config = config
@@ -110,7 +111,6 @@ class ModelManagement:
         model: str | None = None,
         model_preset: str | None = None,
     ) -> LLMRuntime:
-        """Resolve explicit task runtime overrides without consulting a persistent role."""
         with self._lock:
             return self._runtime_from_selection(
                 parent,
@@ -122,7 +122,6 @@ class ModelManagement:
     @staticmethod
     def _catalog(config: Config) -> dict[str, Any]:
         payload = models.model_settings_payload(config, oauth_status=models.oauth_provider_status)
-        # Provider connection details and custom headers are unnecessary for administration discovery.
         return {
             "status": "ok",
             "model_presets": payload["model_presets"],
@@ -133,6 +132,95 @@ class ModelManagement:
                 {key: row[key] for key in ("name", "display_name", "configured") if key in row}
                 for row in payload["providers"]
             ],
+        }
+
+    @staticmethod
+    def _sync_fleet_catalog(config: Config):
+        """Bind every configured named preset without making network calls."""
+        fleet = get_model_fleet(config)
+        entries: list[tuple[str | None, ModelPresetConfig]] = []
+        # Named presets are the routes Main can explicitly select. The implicit
+        # default is included as a fallback catalog entry.
+        entries.append(("default", config.resolve_default_preset()))
+        entries.extend(config.model_presets.items())
+        for name, preset in entries:
+            provider_name = config.get_provider_name(preset.model, preset=preset)
+            if not provider_name:
+                continue
+            fleet.bind_offering(offering_from_config(
+                config,
+                preset=preset,
+                preset_name=name,
+                provider_name=provider_name,
+            ))
+        return fleet
+
+    async def fleet_status(self) -> dict[str, object]:
+        config = self._load()
+        fleet = self._sync_fleet_catalog(config)
+        return await fleet.status(refresh=True)
+
+    async def fleet_recommend(
+        self,
+        *,
+        pool: str | None = None,
+        task_type: str = "general",
+        requires_vision: bool = False,
+        min_context_tokens: int | None = None,
+    ) -> dict[str, object]:
+        config = self._load()
+        fleet = self._sync_fleet_catalog(config)
+        return await fleet.recommend(
+            pool=pool.strip().lower() if pool else None,
+            task_type=task_type,
+            requires_vision=requires_vision,
+            min_context_tokens=min_context_tokens,
+        )
+
+    async def fleet_feedback(
+        self,
+        *,
+        offering_id: str | None = None,
+        model_preset: str | None = None,
+        dimension: str = "general",
+        outcome: float,
+        weight: float = 1.0,
+        evidence: str | None = None,
+    ) -> dict[str, object]:
+        """Record objective task-result evidence; never ask a model to self-grade."""
+        config = self._load()
+        fleet = self._sync_fleet_catalog(config)
+        resolved_id = (offering_id or "").strip()
+        if not resolved_id:
+            if not model_preset:
+                return {"status": "error", "message": "offering_id or model_preset is required"}
+            if model_preset != "default" and model_preset not in config.model_presets:
+                return {"status": "error", "message": "Unknown model preset"}
+            preset = config.resolve_preset(model_preset)
+            provider_name = config.get_provider_name(preset.model, preset=preset)
+            if not provider_name:
+                return {"status": "error", "message": "Preset provider cannot be resolved"}
+            resolved_id = offering_from_config(
+                config,
+                preset=preset,
+                preset_name=model_preset,
+                provider_name=provider_name,
+            ).offering_id
+        try:
+            fleet.record_quality(
+                resolved_id,
+                dimension=dimension.strip().lower() or "general",
+                outcome=outcome,
+                weight=weight,
+                evidence=evidence,
+            )
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        refreshed = await fleet.refresh_scores()
+        return {
+            "status": "ok",
+            "offering_id": resolved_id,
+            "score": refreshed.get(resolved_id),
         }
 
     def _execute(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -168,7 +256,6 @@ class ModelManagement:
                     operation(config, query)
                 return config
 
-            # A failed domain mutation must not partly mutate an in-memory config.
             updated = self._store.update(mutate) if self._store is not None else mutate(self.config.model_copy(deep=True))
             self.config.model_presets = updated.model_presets
             self.config.providers = updated.providers
@@ -179,10 +266,32 @@ class ModelManagement:
             return self._catalog(updated)
 
     async def execute(self, action: str, **params: Any) -> dict[str, Any]:
+        if action == "fleet_status":
+            return await self.fleet_status()
+        if action == "fleet_recommend":
+            return await self.fleet_recommend(
+                pool=params.get("pool"),
+                task_type=str(params.get("task_type") or "general"),
+                requires_vision=bool(params.get("requires_vision", False)),
+                min_context_tokens=params.get("min_context_tokens"),
+            )
+        if action == "fleet_feedback":
+            try:
+                outcome = float(params.get("outcome"))
+                weight = float(params.get("weight", 1.0))
+            except (TypeError, ValueError):
+                return {"status": "error", "message": "outcome and weight must be numeric"}
+            return await self.fleet_feedback(
+                offering_id=params.get("offering_id"),
+                model_preset=params.get("model_preset"),
+                dimension=str(params.get("dimension") or "general"),
+                outcome=outcome,
+                weight=weight,
+                evidence=params.get("evidence"),
+            )
         try:
             result = await asyncio.to_thread(self._execute, action, params)
         except WebUISettingsError as exc:
-            # Domain errors for bindings/deletion contain only controlled text and role names.
             message = exc.message if action in {"roles_update", "model_delete"} else "Invalid model/provider settings; check the action fields and provider configuration"
             return {"status": "error", "message": message}
         except Exception:

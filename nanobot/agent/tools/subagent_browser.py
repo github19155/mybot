@@ -1,8 +1,8 @@
-"""Subagent-scoped views of the persistent browser tool family.
+"""Subagent-scoped views of the persistent Browser capability.
 
-Browser remains a capability, not a separate Agent type. These thin wrappers
-opt the existing browser tools into ToolLoader's ``subagent`` scope and reuse
-the parent agent's message bus for human handoff notifications.
+The Browser implementation remains in ``browser.py``. This module only exposes
+that same tool family to ToolLoader's ``subagent`` scope and supplies the parent
+message bus so human handoff notifications can reach the originating user.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _workspace_key(workspace: str | Path) -> str:
 
 
 def bind_subagent_browser_bus(workspace: str | Path, bus: MessageBus) -> None:
-    """Bind one agent workspace to the bus used for browser handoff notices."""
+    """Bind the stable agent workspace to the bus used for handoff notices."""
     _BUSES[_workspace_key(workspace)] = bus
 
 
@@ -52,97 +52,59 @@ def _runtime(ctx: ToolContext) -> browser_tools._BrowserRuntime:  # pyright: ign
     )
 
 
-class SubagentBrowserOpenTool(BrowserOpenTool):
+class _SubagentBrowserView:
+    """Scope adapter shared by every Browser tool view."""
+
     _scopes = {"subagent"}
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+        return cls(_runtime(ctx))  # type: ignore[call-arg]
 
 
-class SubagentBrowserSnapshotTool(BrowserSnapshotTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserOpenTool(_SubagentBrowserView, BrowserOpenTool):
+    pass
 
 
-class SubagentBrowserClickTool(BrowserClickTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserSnapshotTool(_SubagentBrowserView, BrowserSnapshotTool):
+    pass
 
 
-class SubagentBrowserTypeTool(BrowserTypeTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserClickTool(_SubagentBrowserView, BrowserClickTool):
+    pass
 
 
-class SubagentBrowserScrollTool(BrowserScrollTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserTypeTool(_SubagentBrowserView, BrowserTypeTool):
+    pass
 
 
-class SubagentBrowserWaitTool(BrowserWaitTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserScrollTool(_SubagentBrowserView, BrowserScrollTool):
+    pass
 
 
-class SubagentBrowserScreenshotTool(BrowserScreenshotTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserWaitTool(_SubagentBrowserView, BrowserWaitTool):
+    pass
 
 
-class SubagentBrowserTabsTool(BrowserTabsTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserScreenshotTool(_SubagentBrowserView, BrowserScreenshotTool):
+    pass
 
 
-class SubagentBrowserBackTool(BrowserBackTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserTabsTool(_SubagentBrowserView, BrowserTabsTool):
+    pass
 
 
-class SubagentBrowserHandoffTool(BrowserHandoffTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserBackTool(_SubagentBrowserView, BrowserBackTool):
+    pass
 
 
-class SubagentBrowserStatusTool(BrowserStatusTool):
-    _scopes = {"subagent"}
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+class SubagentBrowserHandoffTool(_SubagentBrowserView, BrowserHandoffTool):
+    pass
 
 
-class SubagentBrowserCloseTool(BrowserCloseTool):
-    _scopes = {"subagent"}
+class SubagentBrowserStatusTool(_SubagentBrowserView, BrowserStatusTool):
+    pass
 
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(_runtime(ctx))
+
+class SubagentBrowserCloseTool(_SubagentBrowserView, BrowserCloseTool):
+    pass

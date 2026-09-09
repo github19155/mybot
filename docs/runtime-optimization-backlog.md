@@ -18,10 +18,10 @@
 
 | # | Priority | Status | Item | Problem / Goal | Proposed Direction |
 |---|---|---|---|---|---|
-| 1 | P0 | in-progress | Native WorkAgent execution | WorkAgent currently relies on temporary `SubagentManager` method replacement plus a launch lock. Inline WorkAgent runs can therefore be unnecessarily serialized and the shared-manager monkey-patch is fragile under concurrency. | Make ephemeral workers a first-class `SubagentManager` path, e.g. a task-scoped worker/role spec passed directly into spawn/inline execution. Remove the monkey-patch and `_WORK_LAUNCH_LOCKS`. |
+| 1 | P0 | done | Native WorkAgent execution | WorkAgent relied on temporary `SubagentManager` method replacement plus a launch lock. | Ephemeral workers now use first-class `SubagentManager` spawn/inline paths without monkey-patching. |
 | 2 | P0 | pending | Global browser resource lease | `browser` tools are marked exclusive only for one agent's tool-call batching. Multiple Main/Subagent executions can still operate the same persistent Chromium session concurrently. | Add a shared resource-lease mechanism keyed by browser/CDP endpoint so only one agent owns the persistent browser at a time, while preserving human takeover ownership. |
 | 3 | P1 | pending | Strict post-turn context compaction | Main-triggered context compaction is scheduled in the background and then competes for the session lock after the current turn. A following turn can theoretically acquire the lock first. | Move pending compaction to a deterministic post-turn stage before releasing the session lock, so `applies_to: next_turn` is guaranteed. |
-| 4 | P1 | pending | Provider/model-aware admission control | Subagent admission limits task counts, but does not yet coordinate provider/model concurrency, rate-limit pressure, or token-heavy parallel work. | Extend the existing admission layer with provider/model concurrency limits, adaptive 429/backoff signals, and optional token-aware budgeting. Do not introduce a second scheduler. |
+| 4 | P1 | in-progress | Model Fleet + provider/model admission | Main can select child models, but lacks a runtime fleet view of concrete provider/model offerings; provider calls also lack shared concurrency/429 pressure control. Same nominal model can perform very differently across suppliers. | Treat provider+model as an independent Offering. Persist passive real-work telemetry and objective quality evidence, expose status/recommendation/profile management to Main, auto-select when the user did not explicitly choose a model, and gate each physical request attempt with provider/offering concurrency, shared 429 cooldown, adaptive recovery and bounded Main priority. No periodic token-burning benchmark. |
 | 5 | P1 | pending | Browser takeover capture efficiency | Human takeover polls a 1920x1080 screenshot frequently; the sidecar captures PNG by starting ImageMagick for each request. This adds CPU, process, memory-copy, and network overhead. | Add adaptive polling based on recent interaction/page activity, reduce/background polling when idle/hidden, and consider a cheaper preview encoding/capture path while keeping high-quality PNG for AI screenshots where needed. |
 | 6 | P1 | pending | Durable subagent interruption state | Background Subagents are process-local tasks/statuses. Gateway restart can make a running task disappear with no durable record that it was interrupted. | Add a minimal durable job ledger or equivalent restart record so previously-running tasks can be surfaced as `interrupted` and optionally recovered/restarted later. Avoid heavyweight external queue infrastructure unless justified. |
 | 7 | P2 | pending | Subagent initialization caching | Each Subagent rebuilds tool registries, skill summaries, and static prompt sections, which becomes wasteful for many short WorkAgents. | Cache immutable/static generations such as tool schema sets, skills summaries, and role prompt prefixes; keep task/session/runtime-specific data dynamic. |
@@ -33,12 +33,11 @@
 
 ### Items confirmed directly from current implementation
 
-- WorkAgent uses a temporary `SubagentManager` resolver override guarded by a per-manager launch lock.
-- Subagent admission already has global and per-session concurrency controls; future scheduling improvements should extend this layer rather than create a parallel scheduler.
+- Native WorkAgent execution is merged; the remaining scheduler work is provider/model request admission rather than task-count admission.
+- Subagent admission already has global and per-session concurrency controls; Model Fleet complements it at the physical LLM request boundary rather than introducing a second Agent scheduler.
 - Tool `exclusive` currently affects tool-call batching, not cross-agent/global resource ownership.
 - Browser runtime state is shared by CDP endpoint, but browser actions themselves are not protected by a global operation lease.
 - Browser takeover state/screenshot polling is frequent, and the sidecar screenshot endpoint shells out to ImageMagick for each frame.
-- Main-triggered context compaction is scheduled for after the current turn by acquiring the session lock in a background task.
 - Background Subagent runtime state is primarily process-local.
 - Dream Specialist creation already requires at least two distinct persisted observations and Dream cannot delete/replace protected roles.
 
@@ -54,6 +53,6 @@ For each backlog item:
 6. Implement in stages and add focused tests.
 7. Open a PR and run full relevant CI.
 8. Report results; do not merge until the user explicitly says to merge.
-9. After merge, update this document's item status to `done` in a separate follow-up/documentation change or alongside the next approved item, without altering unapproved items.
+9. After merge, update this document's item status to `done` alongside the next approved item when possible.
 
 When all items are `done` (or explicitly resolved by the user as no longer required), delete this document.

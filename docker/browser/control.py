@@ -14,6 +14,8 @@ import os
 import secrets
 import subprocess
 import threading
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -24,8 +26,8 @@ _STATE: dict[str, Any] = {
     "url": None,
     "title": None,
     "handoff_token": None,
-    "width": 1440,
-    "height": 960,
+    "width": 1920,
+    "height": 1080,
 }
 
 
@@ -49,6 +51,45 @@ def _authorized(token: object) -> bool:
     with _LOCK:
         expected = _STATE.get("handoff_token")
         return _STATE.get("owner") == "human" and isinstance(expected, str) and secrets.compare_digest(token, expected)
+
+
+def _chromium_page_state() -> tuple[str, str] | None:
+    """Return the current Chromium page title/url from the local CDP target list."""
+    port = os.environ.get("NANOBOT_BROWSER_CDP_PORT", "9222").strip() or "9222"
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.6) as response:
+            targets = json.loads(response.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, urllib.error.URLError):
+        return None
+    if not isinstance(targets, list):
+        return None
+
+    pages = [target for target in targets if isinstance(target, dict) and target.get("type") == "page"]
+    if not pages:
+        return None
+    page = next(
+        (
+            target
+            for target in pages
+            if isinstance(target.get("url"), str)
+            and target.get("url") not in {"", "about:blank"}
+            and not str(target.get("url")).startswith("devtools://")
+        ),
+        pages[0],
+    )
+    url = page.get("url")
+    title = page.get("title")
+    if not isinstance(url, str):
+        return None
+    return (title if isinstance(title, str) else "", url)
+
+
+def _refresh_page_metadata() -> None:
+    page = _chromium_page_state()
+    if page is None:
+        return
+    title, url = page
+    _update(title=title, url=url)
 
 
 def _run_xdotool(*args: str, text: str | None = None) -> None:
@@ -79,7 +120,7 @@ def _screenshot_png() -> bytes:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "nanobot-browser-control/2"
+    server_version = "nanobot-browser-control/3"
 
     def log_message(self, _format: str, *_args: Any) -> None:
         return
@@ -120,6 +161,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"status": "ok"})
             return
         if self.path == "/state":
+            _refresh_page_metadata()
             self._json(200, _snapshot())
             return
         if self.path == "/screenshot":
@@ -219,14 +261,15 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError, OSError, subprocess.SubprocessError):
             self._json(400, {"error": "invalid_action"})
             return
+        _refresh_page_metadata()
         self._json(200, {"ok": True, "state": _snapshot(include_token=False)})
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=6081)
-    parser.add_argument("--width", type=int, default=1440)
-    parser.add_argument("--height", type=int, default=960)
+    parser.add_argument("--width", type=int, default=1920)
+    parser.add_argument("--height", type=int, default=1080)
     args = parser.parse_args()
     _update(width=args.width, height=args.height)
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)

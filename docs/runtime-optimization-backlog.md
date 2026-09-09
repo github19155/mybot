@@ -4,7 +4,7 @@
 >
 > Governance rule: every item below must be discussed with the user individually and must not be implemented until the user explicitly approves that item. Each implementation must use its own feature/fix branch and PR; nothing should be merged without explicit user confirmation.
 >
-> Lifecycle rule: keep this document until every item is completed and merged. After the final item is completed, delete this document in a dedicated cleanup change.
+> Lifecycle rule: keep this document until every item is completed and merged. The final implementation PR may delete this document once all remaining items are resolved.
 
 ## Status legend
 
@@ -18,8 +18,8 @@
 
 | # | Priority | Status | Item | Problem / Goal | Proposed Direction |
 |---|---|---|---|---|---|
-| 1 | P0 | in-progress | Native WorkAgent execution | WorkAgent currently relies on temporary `SubagentManager` method replacement plus a launch lock. Inline WorkAgent runs can therefore be unnecessarily serialized and the shared-manager monkey-patch is fragile under concurrency. | Make ephemeral workers a first-class `SubagentManager` path, e.g. a task-scoped worker/role spec passed directly into spawn/inline execution. Remove the monkey-patch and `_WORK_LAUNCH_LOCKS`. |
-| 2 | P0 | pending | Global browser resource lease | `browser` tools are marked exclusive only for one agent's tool-call batching. Multiple Main/Subagent executions can still operate the same persistent Chromium session concurrently. | Add a shared resource-lease mechanism keyed by browser/CDP endpoint so only one agent owns the persistent browser at a time, while preserving human takeover ownership. |
+| 1 | P0 | done | Native WorkAgent execution | WorkAgent currently relies on temporary `SubagentManager` method replacement plus a launch lock. Inline WorkAgent runs can therefore be unnecessarily serialized and the shared-manager monkey-patch is fragile under concurrency. | Make ephemeral workers a first-class `SubagentManager` path, e.g. a task-scoped worker/role spec passed directly into spawn/inline execution. Remove the monkey-patch and `_WORK_LAUNCH_LOCKS`. |
+| 2 | P0 | done | Global browser resource lease | `browser` tools are marked exclusive only for one agent's tool-call batching. Multiple Main/Subagent executions can still operate the same persistent Chromium session concurrently. | Add a shared resource-lease mechanism keyed by browser/CDP endpoint so only one agent owns the persistent browser at a time, while preserving human takeover ownership. |
 | 3 | P1 | pending | Strict post-turn context compaction | Main-triggered context compaction is scheduled in the background and then competes for the session lock after the current turn. A following turn can theoretically acquire the lock first. | Move pending compaction to a deterministic post-turn stage before releasing the session lock, so `applies_to: next_turn` is guaranteed. |
 | 4 | P1 | pending | Provider/model-aware admission control | Subagent admission limits task counts, but does not yet coordinate provider/model concurrency, rate-limit pressure, or token-heavy parallel work. | Extend the existing admission layer with provider/model concurrency limits, adaptive 429/backoff signals, and optional token-aware budgeting. Do not introduce a second scheduler. |
 | 5 | P1 | pending | Browser takeover capture efficiency | Human takeover polls a 1920x1080 screenshot frequently; the sidecar captures PNG by starting ImageMagick for each request. This adds CPU, process, memory-copy, and network overhead. | Add adaptive polling based on recent interaction/page activity, reduce/background polling when idle/hidden, and consider a cheaper preview encoding/capture path while keeping high-quality PNG for AI screenshots where needed. |
@@ -33,10 +33,9 @@
 
 ### Items confirmed directly from current implementation
 
-- WorkAgent uses a temporary `SubagentManager` resolver override guarded by a per-manager launch lock.
+- Item 1 is resolved: WorkAgent now uses native ephemeral `SubagentManager` launch paths rather than temporary resolver replacement and a launch lock.
+- Item 2 is resolved by the PR carrying this status update: shared stateful browser workflows use a process-wide lease keyed by CDP endpoint, with inline-child delegation to avoid parent/child deadlock.
 - Subagent admission already has global and per-session concurrency controls; future scheduling improvements should extend this layer rather than create a parallel scheduler.
-- Tool `exclusive` currently affects tool-call batching, not cross-agent/global resource ownership.
-- Browser runtime state is shared by CDP endpoint, but browser actions themselves are not protected by a global operation lease.
 - Browser takeover state/screenshot polling is frequent, and the sidecar screenshot endpoint shells out to ImageMagick for each frame.
 - Main-triggered context compaction is scheduled for after the current turn by acquiring the session lock in a background task.
 - Background Subagent runtime state is primarily process-local.
@@ -52,8 +51,8 @@ For each backlog item:
 4. Wait for explicit user approval before writing code.
 5. Create a fresh branch from the then-current `main`.
 6. Implement in stages and add focused tests.
-7. Open a PR and run full relevant CI.
-8. Report results; do not merge until the user explicitly says to merge.
-9. After merge, update this document's item status to `done` in a separate follow-up/documentation change or alongside the next approved item, without altering unapproved items.
+7. Update the completed item status in the same implementation PR.
+8. Open the PR and run full relevant CI.
+9. Report results; do not merge until the user explicitly says to merge.
 
-When all items are `done` (or explicitly resolved by the user as no longer required), delete this document.
+When all items are `done` (or explicitly resolved by the user as no longer required), delete this document in the final implementation PR.

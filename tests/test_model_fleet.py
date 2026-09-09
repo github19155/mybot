@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,6 @@ async def test_same_model_different_providers_have_independent_capacity() -> Non
     admission = ModelAdmissionController()
     openai = _offering("openai", provider_limit=1)
     router = _offering("openrouter", provider_limit=1)
-
     await admission.acquire(openai, priority="worker")
     router_acquired = asyncio.Event()
 
@@ -61,7 +61,6 @@ async def test_provider_limit_blocks_sibling_model_until_release() -> None:
     one = _offering("openai", "model-a", provider_limit=1)
     two = _offering("openai", "model-b", provider_limit=1)
     await admission.acquire(one, priority="worker")
-
     task = asyncio.create_task(admission.acquire(two, priority="worker"))
     await asyncio.sleep(0)
     assert not task.done()
@@ -76,7 +75,6 @@ async def test_retryable_429_creates_shared_provider_cooldown() -> None:
     one = _offering("openai", "model-a", scope="provider")
     two = _offering("openai", "model-b", scope="provider")
     await admission.note_rate_limit(one, retry_after_s=0.05)
-    # Controller deliberately has a 1s minimum protection window.
     snapshot = await admission.snapshot(two)
     assert snapshot["cooldown_seconds"] > 0
     assert snapshot["recent_429"] == 1
@@ -121,10 +119,14 @@ async def test_controlled_provider_records_real_traffic_and_shared_429(tmp_path:
         )
     ])
     provider = FleetControlledProvider(inner, fleet=fleet, offering=offering)
-    response = await provider.chat_with_retry(
+    response = await provider._safe_chat(
         messages=[{"role": "user", "content": "x"}],
         model="probe-model",
-        retry_mode="standard",
+        max_tokens=32,
+        temperature=0.1,
+        reasoning_effort=None,
+        tool_choice=None,
+        tools=None,
     )
     assert response.error_status_code == 429
     snapshot = await fleet.admission.snapshot(offering)
@@ -161,8 +163,8 @@ async def test_passive_score_uses_real_calls_and_objective_quality(tmp_path: Pat
         output_cost_per_million=2.0,
     )
     fleet.bind_offering(offering)
-    now = 1_000_000
-    usage = LLMUsage(input_tokens=1000, output_tokens=500, total_tokens=1500)
+    now = time.time_ns() // 1_000_000
+    usage = LLMUsage.reported(input_tokens=1000, output_tokens=500)
     for idx in range(10):
         store.record_call(
             offering,
@@ -200,7 +202,9 @@ async def test_recommendation_filters_pool_and_capability(tmp_path: Path) -> Non
     fleet.bind_offering(vision)
     result = await fleet.recommend(pool="coding", requires_vision=True)
     assert result["status"] == "ok"
-    assert result["recommended"]["preset"] == "vision-good"  # type: ignore[index]
+    recommended = result["recommended"]
+    assert isinstance(recommended, dict)
+    assert recommended["preset"] == "vision-good"
 
 
 def test_offering_identity_is_provider_plus_model_not_model_name() -> None:

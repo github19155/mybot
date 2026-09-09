@@ -11,7 +11,7 @@ from nanobot.agent.subagent_role_storage import (
     delete_role_usage,
     dream_role_entries,
     normalize_role_name,
-    record_role_use,
+    record_role_use as record_role_use,
     role_usage,
     workspace_from_config,
     write_dream_role,

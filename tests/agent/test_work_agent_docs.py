@@ -12,7 +12,6 @@ def test_tool_contract_defines_three_lane_worker_routing() -> None:
     assert "Specialist" in contract
     assert "WorkAgent" in contract
     assert "permanent `general`" in contract
-    assert "role omitted" in contract
-    assert "any explicit run override means WorkAgent" in contract
+    assert "any explicit per-run override means ephemeral WorkAgent" in contract
     assert "does not inherit General's persistent" in contract
     assert "Children cannot create further Subagents" in contract

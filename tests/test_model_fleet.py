@@ -15,6 +15,7 @@ from nanobot.model_fleet import (
     offering_from_config,
 )
 from nanobot.providers.base import LLMProvider, LLMResponse, LLMUsage
+from nanobot.providers.factory import make_provider, provider_signature
 from nanobot.providers.fleet_controlled_provider import FleetControlledProvider
 
 
@@ -237,3 +238,27 @@ def test_fleet_profile_schema_accepts_cost_pool_and_limits() -> None:
     assert preset.input_cost_per_million == 1.25
     assert provider.max_concurrent_requests == 7
     assert provider.rate_limit_scope == "model"
+
+
+def test_provider_signature_changes_with_fleet_route_facts() -> None:
+    base = Config(
+        agents={"defaults": {"model": "gpt-x", "provider": "openai"}},
+        providers={"openai": ProviderConfig(api_key="x")},
+    )
+    first = provider_signature(base)
+    changed = base.model_copy(deep=True)
+    changed.providers.openai.max_concurrent_requests = 3
+    assert provider_signature(changed) != first
+    changed = base.model_copy(deep=True)
+    changed.model_fleet.enabled = False
+    assert provider_signature(changed) != first
+
+
+def test_disabled_fleet_keeps_plain_provider() -> None:
+    config = Config(
+        agents={"defaults": {"model": "gpt-x", "provider": "openai"}},
+        providers={"openai": ProviderConfig(api_key="x")},
+        model_fleet={"enabled": False},
+    )
+    provider = make_provider(config)
+    assert not isinstance(provider, FleetControlledProvider)

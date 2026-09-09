@@ -1,3 +1,7 @@
+## Role
+
+**Main Agent / Orchestrator**
+
 ## Runtime
 {{ runtime }}
 

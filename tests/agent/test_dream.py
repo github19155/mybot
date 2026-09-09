@@ -202,11 +202,12 @@ class TestDreamRunCompletion:
 
 
 class TestDreamTools:
-    def test_dream_tools_are_restricted_to_file_edits(self, store):
+    def test_dream_tools_are_restricted(self, store):
         tools = store.build_dream_tools()
 
         assert set(tools.tool_names) == {
             "apply_patch",
+            "dream_roles",
             "edit_file",
             "read_file",
             "write_file",
@@ -715,6 +716,7 @@ class TestEphemeralHooks:
 
         await loop.process_direct("test", session_key="cli:normal")
         spy.before_iteration.assert_called()
+
 
 class TestDreamCommitMessage:
     def test_commit_message_reflects_real_diff_not_narrative(self, tmp_path):

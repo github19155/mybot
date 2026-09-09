@@ -131,7 +131,7 @@ SubagentThinking = Literal[
 SubagentContext = Literal["fresh", "fork"]
 
 _BUILTIN_SUBAGENT_ROLE_NAMES = (
-    "researcher", "planner", "coder", "debugger", "tester", "writer", "analyst",
+    "general", "researcher", "planner", "coder", "debugger", "tester", "writer", "analyst",
 )
 
 

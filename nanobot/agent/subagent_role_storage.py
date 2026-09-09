@@ -1,4 +1,4 @@
-"""Persistence helpers for Dream-managed subagent roles and usage metadata."""
+"""Persistence helpers for Dream-managed specialist roles and telemetry."""
 
 from __future__ import annotations
 
@@ -14,14 +14,13 @@ if TYPE_CHECKING:
     from nanobot.config.schema import Config
 
 
-# Role runtime state is intentionally outside skills/. Dream's generic file
-# tools may edit reusable skills, while specialist lifecycle changes go through
-# the restricted dream_roles capability.
-DREAM_ROLE_DIR = Path("agents") / "roles"
-DREAM_USAGE_FILE = "_usage.json"
-DREAM_CANDIDATES_FILE = "_candidates.json"
-_RESERVED_FILES = frozenset({DREAM_USAGE_FILE, DREAM_CANDIDATES_FILE})
+# Dream role state is separate from reusable skills. Generic Dream file tools
+# cannot write these paths; the restricted dream_roles capability owns them.
+DREAM_ROLE_STATE_FILE = Path("agents") / "roles.json"
+DREAM_CANDIDATES_FILE = Path("agents") / "role_candidates.json"
+DREAM_USAGE_FILE = Path("agents") / "role_usage.json"
 ROLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_ROLE_LOCK = threading.Lock()
 _USAGE_LOCK = threading.Lock()
 _CANDIDATE_LOCK = threading.Lock()
 
@@ -42,12 +41,16 @@ def workspace_from_config(config: "Config | None") -> Path | None:
     return Path(config.workspace_path).expanduser().resolve()
 
 
-def dream_role_dir(workspace: Path) -> Path:
-    return workspace.expanduser().resolve() / DREAM_ROLE_DIR
+def role_state_path(workspace: Path) -> Path:
+    return workspace.expanduser().resolve() / DREAM_ROLE_STATE_FILE
 
 
-def dream_role_path(workspace: Path, name: str) -> Path:
-    return dream_role_dir(workspace) / f"{normalize_role_name(name)}.json"
+def candidate_state_path(workspace: Path) -> Path:
+    return workspace.expanduser().resolve() / DREAM_CANDIDATES_FILE
+
+
+def usage_state_path(workspace: Path) -> Path:
+    return workspace.expanduser().resolve() / DREAM_USAGE_FILE
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
@@ -69,20 +72,16 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def dream_role_entries_for_workspace(workspace: Path) -> dict[str, dict[str, Any]]:
-    root = dream_role_dir(workspace)
-    if not root.is_dir():
-        return {}
+    raw = read_json_object(role_state_path(workspace))
     result: dict[str, dict[str, Any]] = {}
-    for path in sorted(root.glob("*.json")):
-        if path.name in _RESERVED_FILES:
+    for raw_name, value in raw.items():
+        if not isinstance(raw_name, str) or not isinstance(value, dict):
             continue
         try:
-            name = normalize_role_name(path.stem)
+            name = normalize_role_name(raw_name)
         except ValueError:
             continue
-        payload = read_json_object(path)
-        if not payload:
-            continue
+        payload = dict(value)
         declared_name = payload.get("name")
         if declared_name is not None:
             try:
@@ -99,14 +98,31 @@ def dream_role_entries(config: "Config | None") -> dict[str, dict[str, Any]]:
     return dream_role_entries_for_workspace(workspace) if workspace is not None else {}
 
 
-def _usage_path(workspace: Path) -> Path:
-    return dream_role_dir(workspace) / DREAM_USAGE_FILE
+def write_dream_role(workspace: Path, name: str, payload: dict[str, Any]) -> None:
+    normalized = normalize_role_name(name)
+    path = role_state_path(workspace)
+    with _ROLE_LOCK:
+        roles = read_json_object(path)
+        roles[normalized] = dict(payload)
+        atomic_write_json(path, roles)
+
+
+def delete_dream_role(workspace: Path, name: str) -> bool:
+    normalized = normalize_role_name(name)
+    path = role_state_path(workspace)
+    with _ROLE_LOCK:
+        roles = read_json_object(path)
+        if normalized not in roles:
+            return False
+        roles.pop(normalized, None)
+        atomic_write_json(path, roles)
+        return True
 
 
 def role_usage(workspace: Path, role: str) -> dict[str, Any]:
     """Return persisted lightweight usage metadata for one role."""
     name = normalize_role_name(role)
-    payload = read_json_object(_usage_path(workspace))
+    payload = read_json_object(usage_state_path(workspace))
     value = payload.get(name)
     return dict(value) if isinstance(value, dict) else {}
 
@@ -114,7 +130,7 @@ def role_usage(workspace: Path, role: str) -> dict[str, Any]:
 def record_role_use(workspace: Path, role: str) -> None:
     """Record an accepted role launch for Dream's hot/cold reasoning."""
     name = normalize_role_name(role)
-    path = _usage_path(workspace)
+    path = usage_state_path(workspace)
     with _USAGE_LOCK:
         payload = read_json_object(path)
         current = payload.get(name)
@@ -128,7 +144,7 @@ def record_role_use(workspace: Path, role: str) -> None:
 
 def delete_role_usage(workspace: Path, role: str) -> None:
     name = normalize_role_name(role)
-    path = _usage_path(workspace)
+    path = usage_state_path(workspace)
     with _USAGE_LOCK:
         payload = read_json_object(path)
         if name not in payload:
@@ -137,12 +153,8 @@ def delete_role_usage(workspace: Path, role: str) -> None:
         atomic_write_json(path, payload)
 
 
-def _candidates_path(workspace: Path) -> Path:
-    return dream_role_dir(workspace) / DREAM_CANDIDATES_FILE
-
-
 def candidate_entries(workspace: Path) -> dict[str, dict[str, Any]]:
-    raw = read_json_object(_candidates_path(workspace))
+    raw = read_json_object(candidate_state_path(workspace))
     return {
         name: dict(value)
         for name, value in raw.items()
@@ -163,7 +175,7 @@ def observe_candidate(
     evidence = evidence.strip()
     if not responsibility or not evidence:
         raise ValueError("candidate observation requires responsibility and evidence")
-    path = _candidates_path(workspace)
+    path = candidate_state_path(workspace)
     now = datetime.now(UTC).isoformat()
     with _CANDIDATE_LOCK:
         payload = read_json_object(path)
@@ -196,7 +208,7 @@ def observe_candidate(
 
 def remove_candidate(workspace: Path, name: str) -> None:
     normalized = normalize_role_name(name)
-    path = _candidates_path(workspace)
+    path = candidate_state_path(workspace)
     with _CANDIDATE_LOCK:
         payload = read_json_object(path)
         if normalized not in payload:

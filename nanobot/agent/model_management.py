@@ -82,14 +82,20 @@ class ModelManagement:
             role_config = resolve_role(config, role)
             if role_config.disabled:
                 raise ValueError("Subagent role is disabled")
-            selected_model = model if model is not None else role_config.model
-            selected_preset = model_preset if model_preset is not None else role_config.model_preset
             if model is not None and model_preset is not None:
                 raise ValueError("Choose either model or model_preset, not both")
             if model is not None:
+                selected_model = model
                 selected_preset = None
             elif model_preset is not None:
                 selected_model = None
+                selected_preset = model_preset
+            elif role_config.model is not None:
+                selected_model = role_config.model
+                selected_preset = None
+            else:
+                selected_model = None
+                selected_preset = role_config.model_preset
             return self._runtime_from_selection(
                 parent,
                 config,

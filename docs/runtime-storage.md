@@ -21,6 +21,16 @@ Good locations are explicit persistent paths, for example:
 
 Choose the agent data volume for agent-owned runtime cache. Choose a project workspace only when the dependency is genuinely project-scoped.
 
+Dream-managed specialist state is agent-owned durable state and lives under the agent workspace:
+
+```text
+agents/roles.json             # Dream-managed specialist definitions
+agents/role_candidates.json   # recurring-responsibility evidence
+agents/role_usage.json        # runtime launch/recency telemetry
+```
+
+The role and candidate files participate in Dream's durable audit/versioning path. Usage telemetry is deliberately runtime-generated rather than Dream-authored, so it is advisory state rather than a source of role instructions.
+
 ## What belongs in the image
 
 Stable system libraries and dependencies required for normal operation belong in the Dockerfile or another build layer after they have been validated interactively.

@@ -265,11 +265,16 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
     base_permissions = builtin["permissions"] if builtin else "read-only"
     description = (override.description or (builtin or {}).get("description") or "").strip()
     system_prompt = (override.system_prompt or description).strip()
-    tools = tuple(
-        override.tools
-        if override.tools is not None
-        else _default_tools_for_role(normalized, base_permissions)
-    )
+    if normalized == "general":
+        # General is a structural fallback invariant: role overrides may tune its
+        # model/prompt, but they cannot silently remove normal worker capabilities.
+        tools = _default_tools_for_role(normalized, base_permissions)
+    else:
+        tools = tuple(
+            override.tools
+            if override.tools is not None
+            else _default_tools_for_role(normalized, base_permissions)
+        )
     permissions = base_permissions if builtin else _permissions_for_custom_tools(tools)
     status = str(metadata.get("status") or "active").strip().lower() or "active"
     raw_version = metadata.get("version", 1)
@@ -397,13 +402,6 @@ class SubagentRoleStore:
             return self._update_dream_role(normalized, values)
 
         merged = current.model_dump() if current is not None else {}
-        if normalized == "general" and current is None:
-            base = SUBAGENT_ROLES["general"]
-            merged.update({
-                "description": base["description"],
-                "system_prompt": base["description"],
-                "tools": list(_default_tools_for_role("general", base["permissions"])),
-            })
         merged |= values
 
         from nanobot.config.schema import SubagentRoleConfig

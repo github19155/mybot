@@ -40,7 +40,11 @@ _ACTIONS = (
         action=StringSchema("Role evolution operation", enum=list(_ACTIONS)),
         role=StringSchema("Normalized role/candidate name", nullable=True),
         responsibility=StringSchema("Recurring responsibility for candidate evidence", nullable=True),
-        evidence=StringSchema("Short evidence summary for one distinct occurrence", nullable=True),
+        evidence=StringSchema("Short evidence summary for one occurrence", nullable=True),
+        occurrence=StringSchema(
+            "Stable task/source identity for the underlying occurrence; repeated wording from the same occurrence must reuse this value",
+            nullable=True,
+        ),
         values={"type": "object", "additionalProperties": True},
         required=["action"],
         additional_properties=False,
@@ -63,9 +67,10 @@ class DreamRoleTool(Tool):
     def description(self) -> str:
         return (
             "Manage Dream-owned specialist roles and recurring-role evidence. Use observe before "
-            "create; creation requires at least two distinct persisted observations. Stale candidate "
-            "evidence may be dropped. Role updates are versioned automatically; specialists may be "
-            "marked cold or reactivated, but this capability can never delete or disable them."
+            "create; pass a stable occurrence identity so repeated wording from one task is counted "
+            "once. Creation requires at least two distinct persisted observations. Role updates are "
+            "versioned and retain a bounded evolution history; specialists may be marked cold or "
+            "reactivated, but this capability can never delete or disable them."
         )
 
     @staticmethod
@@ -111,6 +116,23 @@ class DreamRoleTool(Tool):
             raise ValueError(f"Unknown model preset '{candidate.model_preset}'")
         return candidate
 
+    @staticmethod
+    def _evolution_history(
+        current: dict[str, Any] | None,
+        requested: Any,
+    ) -> list[str]:
+        history = [
+            str(item).strip()
+            for item in (current or {}).get("evolution", [])
+            if str(item).strip()
+        ]
+        if isinstance(requested, list):
+            additions = [str(item).strip() for item in requested if str(item).strip()]
+            for item in additions:
+                if item not in history:
+                    history.append(item)
+        return history[-12:]
+
     def _write_role(
         self,
         name: str,
@@ -122,12 +144,10 @@ class DreamRoleTool(Tool):
         old_version = current.get("version", 0) if current else 0
         if not isinstance(old_version, int) or isinstance(old_version, bool):
             old_version = 0
-        evolution = list(current.get("evolution", [])) if current else []
-        requested_evolution = values.get("evolution")
-        if isinstance(requested_evolution, list):
-            evolution = [str(item) for item in requested_evolution if str(item).strip()][-12:]
+        evolution = self._evolution_history(current, values.get("evolution"))
 
         payload = candidate.model_dump(exclude_none=True)
+        payload.pop("evolution", None)
         payload.update({
             "name": name,
             "created_by": "dream",
@@ -135,7 +155,7 @@ class DreamRoleTool(Tool):
             "version": max(1, old_version + 1),
         })
         if evolution:
-            payload["evolution"] = evolution[-12:]
+            payload["evolution"] = evolution
         if payload["status"] not in {"active", "cold"}:
             raise ValueError("Dream specialist status must be active or cold")
         write_dream_role(self.workspace, name, payload)
@@ -147,6 +167,7 @@ class DreamRoleTool(Tool):
         role: str | None = None,
         responsibility: str | None = None,
         evidence: str | None = None,
+        occurrence: str | None = None,
         values: dict[str, Any] | None = None,
         **_: Any,
     ) -> str:
@@ -174,6 +195,7 @@ class DreamRoleTool(Tool):
                     name,
                     responsibility=responsibility,
                     evidence=evidence,
+                    occurrence=occurrence,
                 ))
 
             if action == "drop_candidate":
@@ -203,7 +225,7 @@ class DreamRoleTool(Tool):
                 merged = {
                     key: value
                     for key, value in existing.items()
-                    if key not in {"name", "created_by", "version", "usage"}
+                    if key not in {"name", "created_by", "version", "usage", "evolution"}
                 }
                 merged.update(values)
                 return self._json(self._write_role(name, merged, current=existing))
@@ -212,7 +234,7 @@ class DreamRoleTool(Tool):
                 merged = {
                     key: value
                     for key, value in existing.items()
-                    if key not in {"name", "created_by", "version", "usage"}
+                    if key not in {"name", "created_by", "version", "usage", "evolution"}
                 }
                 merged["status"] = "cold" if action == "mark_cold" else "active"
                 return self._json(self._write_role(name, merged, current=existing))

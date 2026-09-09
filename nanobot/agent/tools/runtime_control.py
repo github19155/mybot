@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from loguru import logger
 
@@ -127,18 +127,8 @@ class AgentRuntimeControl:
         self.__pending_context_compactions: dict[str, LLMRuntime | None] = {}
         self.__scratchpad: dict[str, JsonValue] = {}
         self.__workspace_display: str | None = None
-        # Runtime events are awaited inline by AgentLoop.  Persisted fires after
-        # the current turn is saved but before its session lock is released;
-        # started is the recovery guard for a pending request left by a failed or
-        # cancelled turn.  Together they make "applies_to: next_turn" strict.
-        target.runtime_events.subscribe(
-            self.__on_session_turn_persisted,
-            SessionTurnPersisted,
-        )
-        target.runtime_events.subscribe(
-            self.__on_session_turn_started,
-            SessionTurnStarted,
-        )
+        target.runtime_events.subscribe(self.__on_session_turn_persisted, SessionTurnPersisted)
+        target.runtime_events.subscribe(self.__on_session_turn_started, SessionTurnStarted)
 
     def snapshot(self) -> RuntimeSnapshot:
         target = self.__target
@@ -199,12 +189,7 @@ class AgentRuntimeControl:
         try:
             result = await self.__context.compact(session_key, runtime=runtime)
         except Exception:
-            # Post-turn maintenance must never turn an already-completed user
-            # response into a failed turn.  The persisted history remains intact.
-            logger.exception(
-                "Post-turn context compaction failed for session {}",
-                session_key,
-            )
+            logger.exception("Post-turn context compaction failed for session {}", session_key)
             return
         if result.get("status") == "error":
             logger.warning(
@@ -214,31 +199,21 @@ class AgentRuntimeControl:
             )
 
     async def __on_session_turn_persisted(self, event: SessionTurnPersisted) -> None:
-        """Compact after save while the current dispatch still owns the session lock."""
         await self.__drain_context_compaction(event.context.session_key)
 
     async def __on_session_turn_started(self, event: SessionTurnStarted) -> None:
-        """Drain leftovers before a later turn builds any model-facing context."""
         await self.__drain_context_compaction(event.context.session_key)
 
     async def context_compact(self, session_key: str, *, runtime: LLMRuntime | None = None) -> dict[str, object]:
         snapshot = self.__context.status(session_key, runtime=runtime)
         if not snapshot.can_compact:
-            return {
-                "status": "noop",
-                "reason": "not_enough_replayable_history",
-                "context": snapshot.as_dict(),
-            }
+            return {"status": "noop", "reason": "not_enough_replayable_history", "context": snapshot.as_dict()}
         if session_key in self.__pending_context_compactions:
             return {
                 "status": "scheduled",
                 "reason": "already_pending",
                 "context": self.context_status(session_key, runtime=runtime),
             }
-
-        # Do not mutate the in-flight AgentRunner transcript.  The persisted
-        # SessionTurnPersisted event is awaited after SAVE and before dispatch
-        # releases the same session lock, so the next turn cannot overtake this.
         self.__pending_context_compactions[session_key] = runtime
         return {
             "status": "scheduled",

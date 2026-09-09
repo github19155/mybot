@@ -23,29 +23,23 @@ if TYPE_CHECKING:
 
 
 class ChannelsConfig(Base):
-    """Configuration for chat channels.
-
-    Built-in and plugin channel configs are stored as extra fields (dicts).
-    Each channel parses its own config in __init__.
-    Per-channel "streaming": true enables streaming output (requires send_delta impl).
-    """
+    """Configuration for chat channels."""
 
     model_config = ConfigDict(extra="allow")
-
-    send_progress: bool = True  # stream agent's text progress to the channel
-    send_tool_hints: bool = True  # stream tool-call hints (e.g. read_file("…"))
-    show_reasoning: bool = True  # surface model reasoning when channel implements it
-    extract_document_text: bool = True  # Deprecated and ignored; documents are read on demand
-    send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
-    transcription_provider: str = "groq"  # Deprecated: use top-level transcription.provider
-    transcription_language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")  # Deprecated: use top-level transcription.language
+    send_progress: bool = True
+    send_tool_hints: bool = True
+    show_reasoning: bool = True
+    extract_document_text: bool = True
+    send_max_retries: int = Field(default=3, ge=0, le=10)
+    transcription_provider: str = "groq"
+    transcription_language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
 
 
 class TranscriptionConfig(Base):
     """Cross-channel audio transcription configuration."""
 
     enabled: bool = True
-    provider: str | None = None  # Validated by nanobot.audio.transcription_registry.
+    provider: str | None = None
     model: str | None = None
     language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
     max_duration_sec: int = Field(default=120, ge=1, le=600)
@@ -56,30 +50,23 @@ class DreamConfig(Base):
     """Dream memory consolidation configuration."""
 
     _HOUR_MS = 3_600_000
-
-    enabled: bool = True  # Register the periodic Dream consolidation job on startup
-    interval_h: int = Field(default=2, ge=1)  # Every 2 hours by default
-    cron: str | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )  # Legacy cron expression override
+    enabled: bool = True
+    interval_h: int = Field(default=2, ge=1)
+    cron: str | None = Field(default=None, exclude_if=lambda value: value is None)
     model_override: str | None = Field(
         default=None,
         validation_alias=AliasChoices("modelOverride", "model", "model_override"),
-    )  # Model preset name for Dream sessions
+    )
 
     def build_schedule(self, timezone: str) -> CronSchedule:
-        """Build the runtime schedule, preferring the legacy cron override if present."""
         if self.cron:
             return CronSchedule(kind="cron", expr=self.cron, tz=timezone)
         return CronSchedule(kind="every", every_ms=self.interval_h * self._HOUR_MS)
 
     def describe_schedule(self) -> str:
-        """Return a human-readable summary for logs and startup output."""
         if self.cron:
             return f"cron {self.cron} (legacy)"
-        hours = self.interval_h
-        return f"every {hours}h"
+        return f"every {self.interval_h}h"
 
 
 class InlineFallbackConfig(Base):
@@ -97,8 +84,24 @@ class InlineFallbackConfig(Base):
 FallbackCandidate = str | InlineFallbackConfig
 
 
+class FleetRetentionConfig(Base):
+    """Retention for passive model-fleet telemetry."""
+
+    raw_calls_days: int = Field(default=30, ge=1)
+    hourly_days: int = Field(default=180, ge=1)
+    score_full_days: int = Field(default=30, ge=1)
+
+
+class ModelFleetConfig(Base):
+    """Runtime model-fleet observation and scoring policy."""
+
+    enabled: bool = True
+    score_refresh_minutes: int = Field(default=60, ge=1)
+    retention: FleetRetentionConfig = Field(default_factory=FleetRetentionConfig)
+
+
 class ModelPresetConfig(Base):
-    """A named set of model + generation parameters for quick switching."""
+    """A named model route plus generation and fleet-facing facts."""
 
     model: str
     provider: str = "auto"
@@ -107,6 +110,32 @@ class ModelPresetConfig(Base):
     supports_vision: bool = False
     temperature: float = 0.1
     reasoning_effort: str | None = None
+    # Fleet facts belong to the concrete provider/model route. They describe
+    # price/capability only; performance scores come from observed traffic.
+    offering_id: str | None = None
+    fleet_pools: list[str] = Field(default_factory=list)
+    input_cost_per_million: float | None = Field(default=None, ge=0.0)
+    output_cost_per_million: float | None = Field(default=None, ge=0.0)
+    cached_input_cost_per_million: float | None = Field(default=None, ge=0.0)
+    max_concurrent_requests: int | None = Field(default=None, ge=1)
+
+    @field_validator("offering_id")
+    @classmethod
+    def _validate_offering_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,160}", normalized):
+            raise ValueError("offering_id contains unsupported characters")
+        return normalized
+
+    @field_validator("fleet_pools")
+    @classmethod
+    def _normalize_fleet_pools(cls, value: list[str]) -> list[str]:
+        pools = [item.strip().lower() for item in value if item.strip()]
+        return list(dict.fromkeys(pools))
 
     def to_generation_settings(self) -> Any:
         from nanobot.providers.base import GenerationSettings
@@ -160,12 +189,10 @@ class AgentDefaults(Base):
     """Default agent configuration."""
 
     workspace: str = "~/.nanobot/workspace"
-    model_preset: str | None = None  # Active preset name — takes precedence over fields below
-    supports_vision: bool = False  # Whether the active default model accepts native image inputs
+    model_preset: str | None = None
+    supports_vision: bool = False
     model: str = "anthropic/claude-opus-4-5"
-    provider: str = (
-        "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
-    )
+    provider: str = "auto"
     max_tokens: int = 8192
     context_window_tokens: int = 200_000
     context_block_limit: int | None = None
@@ -181,33 +208,28 @@ class AgentDefaults(Base):
         le=500,
         validation_alias=AliasChoices("toolHintMaxLength"),
         serialization_alias="toolHintMaxLength",
-    )  # Max characters for tool hint display (e.g. "$ cd …/project && npm test")
-    reasoning_effort: str | None = None  # low / medium / high / xhigh / max / adaptive / none — LLM thinking effort; None preserves the provider default
-    timezone: str = "UTC"  # Effective IANA timezone, e.g. "Asia/Shanghai"
+    )
+    reasoning_effort: str | None = None
+    timezone: str = "UTC"
     timezone_mode: Literal["auto", "manual"] = "auto"
-    bot_name: str = "nanobot"  # Display name shown in CLI prompts (e.g. "{name} is thinking...")
-    bot_icon: str = "🐈"  # Short icon (emoji or text) shown next to the bot name in CLI; "" to omit
-    unified_session: bool = False  # Share one session across all channels (single-user multi-device)
-    disabled_skills: list[str] = Field(default_factory=list)  # Skill names to exclude from loading (e.g. ["summarize", "skill-creator"])
+    bot_name: str = "nanobot"
+    bot_icon: str = "🐈"
+    unified_session: bool = False
+    disabled_skills: list[str] = Field(default_factory=list)
     session_ttl_minutes: int = Field(
         default=15,
         ge=0,
         validation_alias=AliasChoices("idleCompactAfterMinutes", "sessionTtlMinutes"),
         serialization_alias="idleCompactAfterMinutes",
-    )  # Auto-compact idle threshold in minutes (0 = disabled)
-    idle_compact_check_interval_seconds: int = Field(
-        default=60,
-        ge=0,
-    )  # Minimum interval in seconds between scans for idle sessions
+    )
+    idle_compact_check_interval_seconds: int = Field(default=60, ge=0)
     dream: DreamConfig = Field(default_factory=DreamConfig)
 
     @model_validator(mode="before")
     @classmethod
     def resolve_timezone(cls, value: object) -> object:
-        """Detect new defaults server-side while preserving configured timezones."""
         if not isinstance(value, dict):
             return value
-
         data = dict(cast(dict[str, object], value))
         timezone_mode = data.get("timezoneMode", data.get("timezone_mode"))
         if timezone_mode is None:
@@ -221,7 +243,6 @@ class AgentDefaults(Base):
     @classmethod
     def validate_timezone(cls, value: str) -> str:
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
         try:
             ZoneInfo(value)
         except ZoneInfoNotFoundError:
@@ -231,30 +252,26 @@ class AgentDefaults(Base):
 
 class AgentsConfig(Base):
     """Agent configuration."""
-
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
 
 
 class ProviderConfig(Base):
     """LLM provider configuration."""
 
-    # User-facing name for dynamic custom providers.
-    display_name: str | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
+    display_name: str | None = Field(default=None, exclude_if=lambda value: value is None)
     api_key: str | None = Field(default=None, repr=False)
     api_base: str | None = None
-    api_type: Literal["auto", "chat_completions", "responses"] = "auto"  # Request API surface
-    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
-    extra_body: dict[str, Any] | None = None  # Extra provider request fields; shape depends on provider/API surface
-    extra_query: dict[str, str] | None = None  # Extra query params (e.g. api-version for Azure-style gateways)
-    proxy: str | None = None  # Explicit HTTP proxy; image downloads trust its DNS and egress
-    thinking_style: str | None = None  # Thinking/reasoning style for custom providers
+    api_type: Literal["auto", "chat_completions", "responses"] = "auto"
+    extra_headers: dict[str, str] | None = None
+    extra_body: dict[str, Any] | None = None
+    extra_query: dict[str, str] | None = None
+    proxy: str | None = None
+    thinking_style: str | None = None
+    # Admission settings are provider-account scoped. Distinct provider aliases
+    # therefore remain independent even when they route the same model.
+    max_concurrent_requests: int | None = Field(default=None, ge=1)
+    rate_limit_scope: Literal["provider", "model"] = "provider"
 
-    # Valid values mirror the keys of _THINKING_STYLE_MAP in
-    # nanobot/providers/openai_compat_provider.py. Kept duplicated here to
-    # avoid an import cycle (schema.py must not import from providers/).
     _VALID_THINKING_STYLES: ClassVar[tuple[str, ...]] = (
         "thinking_type",
         "enable_thinking",
@@ -264,7 +281,7 @@ class ProviderConfig(Base):
     @field_validator("thinking_style")
     @classmethod
     def _validate_thinking_style(cls, v: str | None) -> str | None:
-        if not v:  # None or "" -> no injection, valid (backwards compatible)
+        if not v:
             return v
         if v not in cls._VALID_THINKING_STYLES:
             raise ValueError(
@@ -277,73 +294,65 @@ class ProviderConfig(Base):
 
 class BedrockProviderConfig(ProviderConfig):
     """AWS Bedrock Runtime provider configuration."""
-
-    region: str | None = None  # AWS region, falls back to AWS_REGION/AWS_DEFAULT_REGION/profile
-    profile: str | None = None  # Optional AWS shared config profile
+    region: str | None = None
+    profile: str | None = None
 
 
 class ProvidersConfig(Base):
-    """Configuration for LLM providers.
-
-    Supports custom providers via extra fields — any additional field
-    becomes an OpenAI-compatible custom provider.
-    """
+    """Configuration for LLM providers, including dynamic custom providers."""
 
     model_config = ConfigDict(extra="allow")
-
-    custom: ProviderConfig = Field(default_factory=ProviderConfig)  # Any OpenAI-compatible endpoint
-    azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)  # Azure OpenAI (model = deployment name)
-    bedrock: BedrockProviderConfig = Field(default_factory=BedrockProviderConfig)  # AWS Bedrock Converse
+    custom: ProviderConfig = Field(default_factory=ProviderConfig)
+    azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)
+    bedrock: BedrockProviderConfig = Field(default_factory=BedrockProviderConfig)
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
-    orcarouter: ProviderConfig = Field(default_factory=ProviderConfig)  # OrcaRouter API gateway
-    assemblyai: ProviderConfig = Field(default_factory=ProviderConfig)  # AssemblyAI voice transcription
+    orcarouter: ProviderConfig = Field(default_factory=ProviderConfig)
+    assemblyai: ProviderConfig = Field(default_factory=ProviderConfig)
     huggingface: ProviderConfig = Field(default_factory=ProviderConfig)
-    skywork: ProviderConfig = Field(default_factory=ProviderConfig)  # Skywork / APIFree API gateway
+    skywork: ProviderConfig = Field(default_factory=ProviderConfig)
     deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
     groq: ProviderConfig = Field(default_factory=ProviderConfig)
     zhipu: ProviderConfig = Field(default_factory=ProviderConfig)
     dashscope: ProviderConfig = Field(default_factory=ProviderConfig)
     modelscope: ProviderConfig = Field(default_factory=ProviderConfig)
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
-    ollama: ProviderConfig = Field(default_factory=ProviderConfig)  # Ollama local models
-    lm_studio: ProviderConfig = Field(default_factory=ProviderConfig)  # LM Studio local models
-    atomic_chat: ProviderConfig = Field(default_factory=ProviderConfig)  # Atomic Chat local models
-    ovms: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenVINO Model Server (OVMS)
+    ollama: ProviderConfig = Field(default_factory=ProviderConfig)
+    lm_studio: ProviderConfig = Field(default_factory=ProviderConfig)
+    atomic_chat: ProviderConfig = Field(default_factory=ProviderConfig)
+    ovms: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
-    kimi_coding: ProviderConfig = Field(default_factory=ProviderConfig)  # Kimi Coding Plan (Anthropic Messages API)
+    kimi_coding: ProviderConfig = Field(default_factory=ProviderConfig)
     minimax: ProviderConfig = Field(default_factory=ProviderConfig)
-    minimax_anthropic: ProviderConfig = Field(default_factory=ProviderConfig)  # MiniMax Anthropic endpoint (thinking)
+    minimax_anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     mistral: ProviderConfig = Field(default_factory=ProviderConfig)
-    stepfun: ProviderConfig = Field(default_factory=ProviderConfig)  # Step Fun (阶跃星辰) — LLM + ASR (set apiBase to Plan URL for ASR)
-    xiaomi_mimo: ProviderConfig = Field(default_factory=ProviderConfig)  # Xiaomi MIMO (小米)
-    longcat: ProviderConfig = Field(default_factory=ProviderConfig)  # LongCat
-    ant_ling: ProviderConfig = Field(default_factory=ProviderConfig)  # Ant Ling
-    aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
-    siliconflow: ProviderConfig = Field(default_factory=ProviderConfig)  # SiliconFlow (硅基流动)
-    edenai: ProviderConfig = Field(default_factory=ProviderConfig)  # Eden AI API gateway
-    novita: ProviderConfig = Field(default_factory=ProviderConfig)  # Novita AI
-    volcengine: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine (火山引擎)
-    volcengine_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine Coding Plan
-    byteplus: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus (VolcEngine international)
-    byteplus_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus Coding Plan
-    openai_codex: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # OpenAI Codex (OAuth)
-    xai_grok: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # xAI Grok (OAuth)
-    github_copilot: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # Github Copilot (OAuth)
-    qianfan: ProviderConfig = Field(default_factory=ProviderConfig)  # Qianfan (百度千帆)
-    nvidia: ProviderConfig = Field(default_factory=ProviderConfig)  # NVIDIA NIM (nvapi- keys)
-    opencode: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Zen (canonical provider id)
-    opencode_zen: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Zen (curated coding models)
-    opencode_go: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Go (low-cost coding models)
+    stepfun: ProviderConfig = Field(default_factory=ProviderConfig)
+    xiaomi_mimo: ProviderConfig = Field(default_factory=ProviderConfig)
+    longcat: ProviderConfig = Field(default_factory=ProviderConfig)
+    ant_ling: ProviderConfig = Field(default_factory=ProviderConfig)
+    aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)
+    siliconflow: ProviderConfig = Field(default_factory=ProviderConfig)
+    edenai: ProviderConfig = Field(default_factory=ProviderConfig)
+    novita: ProviderConfig = Field(default_factory=ProviderConfig)
+    volcengine: ProviderConfig = Field(default_factory=ProviderConfig)
+    volcengine_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)
+    byteplus: ProviderConfig = Field(default_factory=ProviderConfig)
+    byteplus_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)
+    openai_codex: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)
+    xai_grok: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)
+    github_copilot: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)
+    qianfan: ProviderConfig = Field(default_factory=ProviderConfig)
+    nvidia: ProviderConfig = Field(default_factory=ProviderConfig)
+    opencode: ProviderConfig = Field(default_factory=ProviderConfig)
+    opencode_zen: ProviderConfig = Field(default_factory=ProviderConfig)
+    opencode_go: ProviderConfig = Field(default_factory=ProviderConfig)
 
     @model_validator(mode="after")
     def convert_extra_providers(self):
-        """Convert extra fields (custom providers) to ProviderConfig objects."""
         if self.model_extra:
             from nanobot.providers.registry import find_by_name
-
             for key, value in self.model_extra.items():
                 if spec := find_by_name(key):
                     raise ValueError(
@@ -370,17 +379,15 @@ class ProvidersConfig(Base):
 
 class HeartbeatConfig(Base):
     """Heartbeat service configuration (now backed by cron)."""
-
     enabled: bool = True
-    interval_s: int = 30 * 60  # 30 minutes
+    interval_s: int = 30 * 60
 
 
 class ApiConfig(Base):
     """OpenAI-compatible API server configuration."""
-
-    host: str = "127.0.0.1"  # Safer default: local-only bind.
+    host: str = "127.0.0.1"
     port: int = 8900
-    timeout: float = 120.0  # Per-request timeout in seconds.
+    timeout: float = 120.0
     api_key: str = Field(default="", repr=False)
 
     @model_validator(mode="after")
@@ -397,43 +404,34 @@ class ApiConfig(Base):
 
 class GatewayConfig(Base):
     """Gateway/server configuration."""
-
-    host: str = "127.0.0.1"  # Safer default: local-only bind.
+    host: str = "127.0.0.1"
     port: int = 18790
     restart_mode: Literal["auto", "exec", "spawn", "exit"] = "auto"
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
 
 
 class MCPServerConfig(Base):
-    """MCP server connection configuration (stdio or HTTP)."""
-
-    type: Literal["stdio", "sse", "streamableHttp"] | None = None  # auto-detected if omitted
-    auth: Literal["oauth"] | None = None  # Remote MCP OAuth; tokens are stored outside config
-    command: str = ""  # Stdio: command to run (e.g. "npx")
-    args: list[str] = Field(default_factory=list)  # Stdio: command arguments
-    env: dict[str, str] = Field(default_factory=dict)  # Stdio: extra env vars
-    cwd: str = ""  # Stdio: working directory for MCP server runtime artifacts
-    url: str = ""  # HTTP/SSE: endpoint URL
-    headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
-    tool_timeout: int = 30  # seconds before a tool call is cancelled
-    enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all capabilities (tools, resources, prompts); any restriction = only listed tools, no resources/prompts
+    """MCP server connection configuration."""
+    type: Literal["stdio", "sse", "streamableHttp"] | None = None
+    auth: Literal["oauth"] | None = None
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    tool_timeout: int = 30
+    enabled_tools: list[str] = Field(default_factory=lambda: ["*"])
 
 
 def _lazy_default(module_path: str, class_name: str) -> Any:
-    """Deferred import helper for ToolsConfig default factories."""
     import importlib
     module = importlib.import_module(module_path)
     return getattr(module, class_name)()
 
 
 class ToolsConfig(Base):
-    """Tools configuration.
-
-    Field types for tool-specific sub-configs are resolved via model_rebuild()
-    at the bottom of this file so tool config classes can stay next to their
-    tool implementations.
-    """
-
+    """Tool configuration."""
     web: WebToolsConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.web", "WebToolsConfig"))
     exec: ExecToolConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.shell", "ExecToolConfig"))
     file: FileToolsConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.filesystem", "FileToolsConfig"))
@@ -446,7 +444,7 @@ class ToolsConfig(Base):
         default_factory=lambda: _lazy_default("nanobot.agent.tools.image_analysis", "ImageAnalysisToolConfig"),
     )
     max_session_messages_per_minute: int = Field(default=6, ge=1)
-    restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
+    restrict_to_workspace: bool = False
     webui_allow_local_service_access: bool = Field(
         default=True,
         validation_alias=AliasChoices(
@@ -455,23 +453,22 @@ class ToolsConfig(Base):
             "allowLocalPreviewAccess",
             "allow_local_preview_access",
         ),
-    )  # allow WebUI Full Access shell checks against localhost services; legacy allowLocalPreviewAccess still reads
+    )
     webui_allow_remote_package_install: bool = Field(
         default=False,
         validation_alias=AliasChoices(
             "webuiAllowRemotePackageInstall",
             "webui_allow_remote_package_install",
         ),
-    )  # allow non-local WebUI clients to install optional packages and agent skills
+    )
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
-    ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
+    ssrf_whitelist: list[str] = Field(default_factory=list)
 
 
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
     _source_path: Path | None = PrivateAttr(default=None)
-
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
@@ -479,6 +476,11 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    model_fleet: ModelFleetConfig = Field(
+        default_factory=ModelFleetConfig,
+        validation_alias=AliasChoices("modelFleet", "model_fleet"),
+        serialization_alias="modelFleet",
+    )
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),
@@ -490,9 +492,7 @@ class Config(BaseSettings):
         serialization_alias="systemPromptOverrides",
     )
     subagent_roles: dict[SubagentRoleName, SubagentRoleConfig] = Field(
-        default_factory=lambda: {
-            name: SubagentRoleConfig() for name in _BUILTIN_SUBAGENT_ROLE_NAMES
-        },
+        default_factory=lambda: {name: SubagentRoleConfig() for name in _BUILTIN_SUBAGENT_ROLE_NAMES},
         validation_alias=AliasChoices("subagentRoles", "subagent_roles"),
         serialization_alias="subagentRoles",
     )
@@ -503,24 +503,18 @@ class Config(BaseSettings):
         super().__init__(**values)
 
     def bind_source_path(self, path: Path) -> None:
-        """Record the config file that owns instance-level runtime data."""
         self._source_path = path.expanduser().resolve(strict=False)
 
     @property
     def source_path(self) -> Path | None:
-        """Return the exact configuration path that owns this instance."""
         return self._source_path
 
     @property
     def runtime_data_dir(self) -> Path | None:
-        """Return the active instance data directory when loaded from a config path."""
         return self._source_path.parent if self._source_path is not None else None
 
     @model_validator(mode="after")
     def _validate_model_preset(self) -> "Config":
-        # Keep persisted names accepted by previous releases loadable. New
-        # names are normalized and checked case-insensitively at mutation
-        # boundaries, where conflicts can be reported without breaking startup.
         if "default" in self.model_presets:
             raise ValueError("model_preset name 'default' is reserved for agents.defaults")
         name = self.agents.defaults.model_preset
@@ -536,31 +530,21 @@ class Config(BaseSettings):
         if image_preset:
             if image_preset == "default":
                 if not self.resolve_default_preset().supports_vision:
-                    raise ValueError(
-                        "image_analysis model preset 'default' must be marked supports_vision"
-                    )
+                    raise ValueError("image_analysis model preset 'default' must be marked supports_vision")
             elif image_preset not in self.model_presets:
-                raise ValueError(
-                    f"image_analysis model preset {image_preset!r} not found in model_presets"
-                )
+                raise ValueError(f"image_analysis model preset {image_preset!r} not found in model_presets")
             elif not self.model_presets[image_preset].supports_vision:
-                raise ValueError(
-                    f"image_analysis model preset {image_preset!r} must be marked supports_vision"
-                )
+                raise ValueError(f"image_analysis model preset {image_preset!r} must be marked supports_vision")
         for role in _BUILTIN_SUBAGENT_ROLE_NAMES:
             self.subagent_roles.setdefault(role, SubagentRoleConfig())
         for role, role_config in self.subagent_roles.items():
             if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", role):
-                raise ValueError(
-                    f"Subagent role name {role!r} must match [a-z][a-z0-9_-]{{0,63}}"
-                )
+                raise ValueError(f"Subagent role name {role!r} must match [a-z][a-z0-9_-]{{0,63}}")
             if role not in _BUILTIN_SUBAGENT_ROLE_NAMES and (
                 not (role_config.description or "").strip()
                 or not (role_config.system_prompt or "").strip()
             ):
-                raise ValueError(
-                    f"Custom subagent role {role!r} requires description and system_prompt"
-                )
+                raise ValueError(f"Custom subagent role {role!r} requires description and system_prompt")
             binding = role_config.model_preset
             if binding and binding != "default" and binding not in self.model_presets:
                 raise ValueError(f"Subagent role {role!r} refers to unknown model preset {binding!r}")
@@ -568,7 +552,6 @@ class Config(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_system_prompt_overrides(self) -> "Config":
-        """Normalize blanks and reject a model bound by more than one rule."""
         bound: set[str] = set()
         for override in self.system_prompt_overrides:
             override.prompt = override.prompt.strip()
@@ -579,14 +562,11 @@ class Config(BaseSettings):
                 raise ValueError(f"system prompt override {override.prompt!r} binds no model")
             duplicate = next((model for model in override.models if model in bound), None)
             if duplicate:
-                raise ValueError(
-                    f"model {duplicate!r} is already bound by another system prompt override"
-                )
+                raise ValueError(f"model {duplicate!r} is already bound by another system prompt override")
             bound.update(override.models)
         return self
 
     def resolve_default_preset(self) -> ModelPresetConfig:
-        """Return the implicit `default` preset from agents.defaults fields."""
         d = self.agents.defaults
         return ModelPresetConfig(
             model=d.model, provider=d.provider, max_tokens=d.max_tokens,
@@ -596,7 +576,6 @@ class Config(BaseSettings):
         )
 
     def resolve_preset(self, name: str | None = None) -> ModelPresetConfig:
-        """Return effective model params from a named preset or the implicit default."""
         name = self.agents.defaults.model_preset if name is None else name
         if not name or name == "default":
             return self.resolve_default_preset()
@@ -605,7 +584,6 @@ class Config(BaseSettings):
         return self.model_presets[name]
 
     def system_prompt_for(self, model: str | None) -> str | None:
-        """Return the custom system prompt bound to an exact model ID, if any."""
         if not model:
             return None
         for override in self.system_prompt_overrides:
@@ -615,19 +593,12 @@ class Config(BaseSettings):
 
     @property
     def workspace_path(self) -> Path:
-        """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
 
     def _match_provider(
-        self, model: str | None = None,
-        *,
-        preset: ModelPresetConfig | None = None,
+        self, model: str | None = None, *, preset: ModelPresetConfig | None = None,
     ) -> tuple["ProviderConfig | None", str | None]:
-        """Match provider config and its registry name. Returns (config, spec_name)."""
-        from nanobot.providers.registry import (
-            PROVIDERS,
-            find_by_name,
-        )
+        from nanobot.providers.registry import PROVIDERS, find_by_name
 
         resolved = preset or self.resolve_preset()
         forced = resolved.provider
@@ -661,7 +632,6 @@ class Config(BaseSettings):
             kw = kw.lower()
             return kw in model_lower or kw.replace("-", "_") in model_normalized
 
-        # Explicit provider prefix wins — prevents `github-copilot/...codex` matching openai_codex.
         for spec in PROVIDERS:
             if spec.is_transcription_only:
                 continue
@@ -670,44 +640,23 @@ class Config(BaseSettings):
                 if spec.is_oauth or spec.is_local or spec.is_direct or p.api_key:
                     return p, spec.name
 
-        # Check for custom provider by prefix (e.g., "companyProxy/gpt-4").
-        # Return the matching provider even when apiBase is missing, so a
-        # malformed explicit prefix fails instead of falling through to a
-        # different custom provider.
         if model_prefix:
             custom = _custom_provider_by_name(normalized_prefix)
             if custom is not None:
                 return custom
 
-        # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
             if spec.is_transcription_only:
                 continue
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
-                # Local providers (Ollama, vLLM, …) keep model-family keywords
-                # like "nemotron" or "llama" to enable bare-model auto-routing,
-                # but those keywords collide with cloud-hosted variants of the
-                # same family (e.g. `nvidia/nemotron-...` via OpenRouter). Only
-                # honor a local keyword match when the user has actually
-                # configured that local endpoint via `api_base` — mirrors the
-                # gate already used by the local-fallback loop below.
                 if spec.is_local:
-                    # A qualified model belongs to its explicit provider or a
-                    # gateway fallback, never to a different local provider
-                    # whose model-family keyword happens to match.
-                    foreign_prefix = bool(
-                        prefixed_provider is not None and prefixed_provider.name != spec.name
-                    )
+                    foreign_prefix = bool(prefixed_provider is not None and prefixed_provider.name != spec.name)
                     if not p.api_base or foreign_prefix:
                         continue
                 if spec.is_oauth or spec.is_local or spec.is_direct or p.api_key:
                     return p, spec.name
 
-        # Fallback: configured local providers can route models without
-        # provider-specific keywords (for example plain "llama3.2" on Ollama).
-        # Prefer providers whose detect_by_base_keyword matches the configured api_base
-        # (e.g. Ollama's "11434" in "http://localhost:11434") over plain registry order.
         local_fallback: tuple[ProviderConfig, str] | None = None
         if prefixed_provider is None:
             for spec in PROVIDERS:
@@ -723,8 +672,6 @@ class Config(BaseSettings):
         if local_fallback:
             return local_fallback
 
-        # Fallback: gateways first, then others (follows registry order)
-        # OAuth providers are NOT valid fallbacks — they require explicit model selection
         for spec in PROVIDERS:
             if spec.is_oauth or spec.is_transcription_only:
                 continue
@@ -732,52 +679,25 @@ class Config(BaseSettings):
             if p and p.api_key:
                 return p, spec.name
 
-        # Final fallback: check for any configured custom provider
         for attr_name, p in (self.providers.model_extra or {}).items():
             if isinstance(p, ProviderConfig) and p.api_base:
                 return p, attr_name
-
         return None, None
 
-    def get_provider(
-        self,
-        model: str | None = None,
-        *,
-        preset: ModelPresetConfig | None = None,
-    ) -> ProviderConfig | None:
-        """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
+    def get_provider(self, model: str | None = None, *, preset: ModelPresetConfig | None = None) -> ProviderConfig | None:
         p, _ = self._match_provider(model, preset=preset)
         return p
 
-    def get_provider_name(
-        self,
-        model: str | None = None,
-        *,
-        preset: ModelPresetConfig | None = None,
-    ) -> str | None:
-        """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
+    def get_provider_name(self, model: str | None = None, *, preset: ModelPresetConfig | None = None) -> str | None:
         _, name = self._match_provider(model, preset=preset)
         return name
 
-    def get_api_key(
-        self,
-        model: str | None = None,
-        *,
-        preset: ModelPresetConfig | None = None,
-    ) -> str | None:
-        """Get API key for the given model. Falls back to first available key."""
+    def get_api_key(self, model: str | None = None, *, preset: ModelPresetConfig | None = None) -> str | None:
         p = self.get_provider(model, preset=preset)
         return p.api_key if p else None
 
-    def get_api_base(
-        self,
-        model: str | None = None,
-        *,
-        preset: ModelPresetConfig | None = None,
-    ) -> str | None:
-        """Get API base URL for the given model, falling back to the provider default when present."""
+    def get_api_base(self, model: str | None = None, *, preset: ModelPresetConfig | None = None) -> str | None:
         from nanobot.providers.registry import find_by_name
-
         p, name = self._match_provider(model, preset=preset)
         if p and p.api_base:
             return p.api_base
@@ -787,21 +707,11 @@ class Config(BaseSettings):
                 return spec.default_api_base
         return None
 
-    model_config = SettingsConfigDict(
-        env_prefix="NANOBOT_",
-        env_nested_delimiter="__",
-    )
+    model_config = SettingsConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
 
 
 def _resolve_tool_config_refs() -> None:
-    """Resolve forward references in ToolsConfig by importing tool config classes.
-
-    Must be called after all modules are loaded (breaks circular imports).
-    Re-exports the classes into this module's namespace so existing imports
-    like ``from nanobot.config.schema import ExecToolConfig`` continue to work.
-    """
     import sys
-
     from nanobot.agent.tools.cli_apps import CliAppsToolConfig
     from nanobot.agent.tools.filesystem import FileToolsConfig
     from nanobot.agent.tools.image_analysis import ImageAnalysisToolConfig
@@ -810,7 +720,6 @@ def _resolve_tool_config_refs() -> None:
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.agent.tools.web import WebFetchConfig, WebSearchConfig, WebToolsConfig
 
-    # Re-export into this module's namespace
     mod = sys.modules[__name__]
     mod.ExecToolConfig = ExecToolConfig  # type: ignore[attr-defined]
     mod.FileToolsConfig = FileToolsConfig  # type: ignore[attr-defined]
@@ -821,14 +730,10 @@ def _resolve_tool_config_refs() -> None:
     mod.MyToolConfig = MyToolConfig  # type: ignore[attr-defined]
     mod.ImageAnalysisToolConfig = ImageAnalysisToolConfig  # type: ignore[attr-defined]
     mod.ImageGenerationToolConfig = ImageGenerationToolConfig  # type: ignore[attr-defined]
-
     ToolsConfig.model_rebuild()
     Config.model_rebuild()
 
 
-# Eagerly resolve when the import chain allows it (no circular deps at this
-# point).  If it fails (first import triggers a cycle), the rebuild will
-# happen lazily when Config/ToolsConfig is first used at runtime.
 try:
     _resolve_tool_config_refs()
 except ImportError:

@@ -231,12 +231,13 @@ async def test_dream_role_manager_versions_updates_and_never_exposes_delete(tmp_
     ))
     cold = json.loads(await tool.execute(action="mark_cold", role="release-triage"))
     active = json.loads(await tool.execute(action="activate", role="release-triage"))
+    actions = tool.parameters["properties"]["action"]["enum"]
 
     assert updated["version"] == 2
     assert cold["version"] == 3 and cold["status"] == "cold"
     assert active["version"] == 4 and active["status"] == "active"
-    assert "delete" not in DreamRoleTool.parameters["properties"]["action"]["enum"]
-    assert "disable" not in DreamRoleTool.parameters["properties"]["action"]["enum"]
+    assert "delete" not in actions
+    assert "disable" not in actions
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, cast
 
-from nanobot.agent.subagent_roles import resolve_role
+from nanobot.agent.subagent_roles import ResolvedSubagentRole, resolve_role
 from nanobot.config.loader import resolve_config_env_vars
 from nanobot.config.schema import Config, ModelPresetConfig
 from nanobot.providers.factory import build_provider_snapshot
@@ -37,17 +37,19 @@ class ModelManagement:
         role: str,
         model: str | None = None,
         model_preset: str | None = None,
+        role_definition: ResolvedSubagentRole | None = None,
     ) -> LLMRuntime:
-        with self._lock:
-            config = self._load()
-            role_config = resolve_role(config, role)
-        if role_config.disabled:
-            raise ValueError("Subagent role is disabled")
         if model is not None and model_preset is not None:
             raise ValueError("Choose either model or model_preset, not both")
         with self._lock:
             config = self._load()
-            role_config = resolve_role(config, role)
+            role_config = role_definition or resolve_role(config, role)
+        if role_config.disabled:
+            raise ValueError("Subagent role is disabled")
+        with self._lock:
+            config = self._load()
+            if role_definition is None:
+                role_config = resolve_role(config, role)
             if model is not None:
                 selected_model = model
                 selected = None

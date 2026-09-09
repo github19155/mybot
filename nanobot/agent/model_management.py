@@ -30,6 +30,45 @@ class ModelManagement:
     def _load(self) -> Config:
         return self._store.load() if self._store is not None else self.config
 
+    def _runtime_from_selection(
+        self,
+        parent: LLMRuntime,
+        config: Config,
+        *,
+        model: str | None,
+        model_preset: str | None,
+    ) -> LLMRuntime:
+        if model is not None and model_preset is not None:
+            raise ValueError("Choose either model or model_preset, not both")
+        if model is None and model_preset is None:
+            return parent
+        if model is not None:
+            if not model.strip():
+                raise ValueError("model must be a non-empty string")
+            preset = ModelPresetConfig(
+                model=model.strip(), provider="auto",
+                max_tokens=parent.generation.max_tokens,
+                temperature=parent.generation.temperature,
+                reasoning_effort=parent.generation.reasoning_effort,
+                context_window_tokens=parent.context_window_tokens,
+            )
+            preset_name = None
+        else:
+            if model_preset != "default" and model_preset not in config.model_presets:
+                raise ValueError("Unknown model preset")
+            preset = config.resolve_preset(model_preset)
+            preset_name = model_preset
+        try:
+            resolved = resolve_config_env_vars(config.model_copy(deep=True), config_path=config.source_path)
+            snapshot = build_provider_snapshot(
+                resolved,
+                preset=preset,
+                preset_name=preset_name,
+            )
+        except Exception:
+            raise ValueError("Cannot resolve task model; check the configured provider and credentials") from None
+        return runtime_from_provider_snapshot(snapshot)
+
     def resolve_task_runtime(
         self,
         parent: LLMRuntime,
@@ -41,48 +80,44 @@ class ModelManagement:
         with self._lock:
             config = self._load()
             role_config = resolve_role(config, role)
-        if role_config.disabled:
-            raise ValueError("Subagent role is disabled")
-        if model is not None and model_preset is not None:
-            raise ValueError("Choose either model or model_preset, not both")
-        with self._lock:
-            config = self._load()
-            role_config = resolve_role(config, role)
+            if role_config.disabled:
+                raise ValueError("Subagent role is disabled")
+            if model is not None and model_preset is not None:
+                raise ValueError("Choose either model or model_preset, not both")
             if model is not None:
                 selected_model = model
-                selected = None
+                selected_preset = None
             elif model_preset is not None:
                 selected_model = None
-                selected = model_preset
-            else:
+                selected_preset = model_preset
+            elif role_config.model is not None:
                 selected_model = role_config.model
-                selected = role_config.model_preset
-            if selected_model is None and selected is None:
-                return parent
-            if selected_model is not None:
-                if not selected_model.strip():
-                    raise ValueError("model must be a non-empty string")
-                preset = ModelPresetConfig(
-                    model=selected_model.strip(), provider="auto",
-                    max_tokens=parent.generation.max_tokens,
-                    temperature=parent.generation.temperature,
-                    reasoning_effort=parent.generation.reasoning_effort,
-                    context_window_tokens=parent.context_window_tokens,
-                )
+                selected_preset = None
             else:
-                if selected != "default" and selected not in config.model_presets:
-                    raise ValueError("Unknown model preset")
-                preset = config.resolve_preset(selected)
-            try:
-                resolved = resolve_config_env_vars(config.model_copy(deep=True), config_path=config.source_path)
-                snapshot = build_provider_snapshot(
-                    resolved,
-                    preset=preset,
-                    preset_name=selected if selected_model is None else None,
-                )
-            except Exception:
-                raise ValueError("Cannot resolve task model; check the configured provider and credentials") from None
-            return runtime_from_provider_snapshot(snapshot)
+                selected_model = None
+                selected_preset = role_config.model_preset
+            return self._runtime_from_selection(
+                parent,
+                config,
+                model=selected_model,
+                model_preset=selected_preset,
+            )
+
+    def resolve_ephemeral_runtime(
+        self,
+        parent: LLMRuntime,
+        *,
+        model: str | None = None,
+        model_preset: str | None = None,
+    ) -> LLMRuntime:
+        """Resolve explicit task runtime overrides without consulting a persistent role."""
+        with self._lock:
+            return self._runtime_from_selection(
+                parent,
+                self._load(),
+                model=model,
+                model_preset=model_preset,
+            )
 
     @staticmethod
     def _catalog(config: Config) -> dict[str, Any]:

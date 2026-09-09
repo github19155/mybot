@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -263,6 +264,7 @@ async def test_run_work_agent_reuses_manager_inline_lifecycle_and_keeps_prefix(
     assert status.model == "test/model"
     assert child_runtime is runtime
     assert child_runtime.system_prompt_prefix == "MODEL PREFIX"
+    assert run.await_args.kwargs["role_definition"] is role_definition
 
 
 @pytest.mark.asyncio
@@ -287,7 +289,7 @@ async def test_work_agent_background_uses_manager_spawn_lifecycle(tmp_path, monk
             session_key="test:chat-1",
             allowed_tools={"read_file", "subagent"},
         )
-        await __import__("asyncio").sleep(0)
+        await asyncio.sleep(0)
     finally:
         await manager.close()
 
@@ -296,3 +298,53 @@ async def test_work_agent_background_uses_manager_spawn_lifecycle(tmp_path, monk
     status = run.await_args.args[4]
     assert status.role == "work"
     assert status.role_snapshot is role_definition
+    assert run.await_args.kwargs["role_definition"] is role_definition
+
+
+@pytest.mark.asyncio
+async def test_inline_work_agents_can_launch_concurrently(tmp_path, monkeypatch) -> None:
+    manager = SubagentManager(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        max_concurrent_subagents=2,
+    )
+    role_definition = build_work_role_definition(_general_payload(manager), tools=["read_file"])
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    started = 0
+
+    async def run(*_args, **_kwargs) -> str:
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_started.set()
+        await release.wait()
+        return "done"
+
+    monkeypatch.setattr(manager, "_run_subagent", run)
+
+    async def launch(task: str) -> str:
+        return await run_work_agent(
+            manager,
+            task=task,
+            runtime=_runtime(),
+            role_definition=role_definition,
+            wait=True,
+            origin_channel="test",
+            origin_chat_id="chat-1",
+            session_key="test:chat-1",
+            allowed_tools={"read_file"},
+        )
+
+    first = asyncio.create_task(launch("first"))
+    second = asyncio.create_task(launch("second"))
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1.0)
+        assert started == 2
+        release.set()
+        assert await asyncio.gather(first, second) == ["done", "done"]
+    finally:
+        release.set()
+        await asyncio.gather(first, second, return_exceptions=True)
+        await manager.close()

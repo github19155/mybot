@@ -14,7 +14,7 @@ Read [`design-principles.md`](./design-principles.md) first for the project-leve
 
 - **Subagents = workers**
   - Run long or specialized work asynchronously by default.
-  - Use a permanent general worker as the fallback and focused specialists when they materially improve execution.
+  - Use a permanent fully capable general worker as the fallback and focused specialists when they materially improve execution.
   - Keep responsibilities in roles and capabilities in tools.
 
 - **Docs = project knowledge**
@@ -22,7 +22,7 @@ Read [`design-principles.md`](./design-principles.md) first for the project-leve
   - Prefer informed agent decisions over broad hard-coded restrictions.
 
 - **Dream = specialist evolution**
-  - Learn recurring task patterns from durable evidence, including a compact candidate ledger across Dream cycles.
+  - Learn recurring task patterns from durable evidence across Dream cycles.
   - Create or refine focused specialists when repetition justifies them.
   - Mark rarely useful Dream specialists cold instead of deleting them; deletion remains a user decision.
 
@@ -30,7 +30,7 @@ Read [`design-principles.md`](./design-principles.md) first for the project-leve
 
 Subagents are divided conceptually into two groups:
 
-- `general` — permanent general-purpose worker for mixed, cross-domain, or otherwise uncategorized execution. It is the fallback when no specialist clearly fits.
+- `general` — permanent, fully capable worker for mixed, cross-domain, or otherwise uncategorized execution. It is the reliable fallback when no specialist clearly fits and may use files, shell, web, Browser, and other normal worker capabilities.
 - specialists — workers with a narrower responsibility, prompt, capability set, or runtime profile.
 
 Built-in specialists include `researcher`, `planner`, `coder`, `debugger`, `tester`, `writer`, and `analyst`. Users may define additional roles, and Dream may create focused specialists from repeated task patterns.
@@ -60,7 +60,7 @@ Hard runtime routing should be reserved for real safety, security, or shared-res
 
 Browser is a **tool capability**, not a dedicated Browser Agent.
 
-An eligible `general` or specialist worker may receive the browser tool family when its task needs persistent interactive browsing, including status, navigation, snapshot, click, type, wait, screenshots, tabs, and human handoff.
+The permanent `general` worker has Browser available as part of its broad fallback capability set. A focused specialist receives Browser when that capability belongs to its responsibility.
 
 Because nanobot uses one persistent Chromium/profile, browser state is shared. Main is responsible for avoiding parallel browser workers against the same session; isolated worker tool registries do not make concurrent browser tasks safe.
 
@@ -68,7 +68,15 @@ Human takeover keeps priority until control is returned. AI and human must opera
 
 ## Specialist evolution with Dream
 
-Dream may evolve its own specialists under the agent workspace after repeated evidence shows a stable recurring responsibility. Because repetitions may land in different Dream batches, a compact `_candidates.json` ledger carries promising responsibility evidence across cycles without making candidates routable agents.
+Dream evolves only Dream-owned specialists. Specialist runtime state is separated from reusable skills and kept in three canonical workspace files:
+
+- `agents/roles.json` — Dream-managed role definitions.
+- `agents/role_candidates.json` — compact cross-Dream evidence for responsibilities that may deserve a specialist.
+- `agents/role_usage.json` — runtime-generated launch/recency telemetry.
+
+Dream does **not** edit these files through generic file tools. A restricted `dream_roles` capability owns candidate and role mutations. It supports discovery, evidence observation, create/update, and active/cold transitions, but deliberately exposes no delete or disable operation. User-facing role management remains the place where deletion can occur.
+
+There is no separately maintained role manifest: the current role state is the source of truth, so the system does not create a second derived index that can drift.
 
 Lifecycle:
 
@@ -95,9 +103,9 @@ Dream reviews repeated evidence
                     user decides deletion
 ```
 
-Candidates are evidence memory only. Main never routes to them, and Dream should merge semantic duplicates, avoid counting repeated mentions of one task as independent occurrences, and prune stale one-off candidates.
+Candidates are evidence memory only. Main never routes to them, and Dream should merge semantic duplicates, avoid counting repeated mentions of one task as independent occurrences, and avoid promoting one-off patterns.
 
-Dream should not optimize a role from one noisy run. Meaningful changes should keep a version/evolution trail so a specialist can improve incrementally instead of being replaced by another near-duplicate role.
+Dream should not optimize a role from one noisy run. Meaningful changes keep a version/evolution trail so a specialist can improve incrementally instead of being replaced by another near-duplicate role.
 
 Usage counters are advisory: they show launches and recency, not success quality. Corrections and task semantics should come from conversation/history evidence rather than being inferred from a counter alone.
 
@@ -105,9 +113,9 @@ Dream never auto-deletes a specialist merely because it is cold. Cold is a disco
 
 ## Permissions
 
-Capabilities should be isolated by role. Give each worker the narrowest useful capability set for its responsibility.
+`general` is intentionally broad because it is the permanent fallback: when no specialist matches, it should still be able to complete ordinary worker tasks without another architecture change.
 
-Do not make every worker simultaneously hold root shell, browser access, and future host-management access. Sensitive capabilities should be added to the narrowest role that needs them. Conversely, do not confuse capability isolation with a need for a new Agent class: a future server-management responsibility can be a specialist role with controlled tools.
+Focused specialists should receive only the capabilities useful to their responsibility. Do not turn every specialist into another full `general`, and do not create a new Agent class merely because a specialist needs a new capability. Future sensitive host-management tools can remain explicitly scoped even while `general` keeps the normal worker capability set.
 
 ## Future platform work
 
@@ -124,7 +132,7 @@ Continue with:
 ```text
 Main Agent stays responsive and orchestrates
 +
-General worker guarantees a fallback
+General worker guarantees a fully capable fallback
 +
 Specialists own focused responsibilities
 +

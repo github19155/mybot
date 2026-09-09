@@ -70,6 +70,12 @@
 - `read_file` only reads content for analysis; it does not deliver a file to the user.
 - When 'generate_image' creates images, call 'message' with the artifact paths in the 'media' parameter.
 
+## Context Management
+
+- Use `context` `status` to inspect your current session's input pressure on long tasks.
+- If `can_compact=true`, consider compacting around 60%, prefer it around 75%, and strongly prefer it around 85% or higher.
+- `context` `compact` is safe self-maintenance: it runs after the current turn finishes and affects the next turn. It preserves full persisted history and replaces older model-facing context with a summary checkpoint plus recent replay.
+
 ## Scheduling and Background Work
 
 - Main owns the conversation, decomposition, worker choice, coordination, and final synthesis.

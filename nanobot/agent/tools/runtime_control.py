@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
-from nanobot.agent.context_management import AgentContextControl
+from nanobot.context_management import AgentContextControl
 
 if TYPE_CHECKING:
     import asyncio

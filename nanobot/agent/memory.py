@@ -48,6 +48,7 @@ from nanobot.utils.workspace_prompts import (
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
+    from nanobot.config.schema import Config
     from nanobot.utils.llm_runtime import LLMRuntime
 
 # ---------------------------------------------------------------------------
@@ -60,9 +61,15 @@ class MemoryStore:
 
     _DEFAULT_MAX_HISTORY = 1000
     # Durable files whose real working-tree delta grounds Dream commit messages.
-    # Deliberately excludes memory/.dream_cursor so progress bookkeeping never
-    # appears as a durable-memory edit in the audit record.
-    _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md")
+    # Usage telemetry is deliberately excluded: it is runtime evidence, not a
+    # Dream-authored state change.
+    _DREAM_CONTENT_PATHS = (
+        "SOUL.md",
+        "USER.md",
+        "memory/MEMORY.md",
+        "agents/roles.json",
+        "agents/role_candidates.json",
+    )
     _LEGACY_ENTRY_START_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*")
     _LEGACY_TIMESTAMP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\s*")
     _LEGACY_RAW_MESSAGE_RE = re.compile(
@@ -86,7 +93,12 @@ class MemoryStore:
         self._dream_prompt_oversize_logged = False
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
         self._git = GitStore(workspace, tracked_files=[
-            "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+            "SOUL.md",
+            "USER.md",
+            "memory/MEMORY.md",
+            "memory/.dream_cursor",
+            "agents/roles.json",
+            "agents/role_candidates.json",
         ])
         self._maybe_migrate_legacy_history()
 
@@ -563,19 +575,16 @@ class MemoryStore:
         return (prompt, batch[-1]["cursor"])
 
     def dream_content_diff(self) -> str:
-        """Structured summary of uncommitted changes to the durable memory files.
-
-        Returns "" when git is unavailable or no content file changed. This is
-        the ground-truth input for diff-grounded Dream commit messages.
-        """
+        """Structured summary of uncommitted Dream-authored durable state."""
         if not self._git.is_initialized():
             return ""
         return self._git.summarize_working_tree(list(self._DREAM_CONTENT_PATHS))
 
-    def build_dream_tools(self) -> ToolRegistry:
+    def build_dream_tools(self, config: Config | None = None) -> ToolRegistry:
         """Build the restricted tool registry used by Dream runs."""
         from nanobot.agent.skills import BUILTIN_SKILLS_DIR
         from nanobot.agent.tools.apply_patch import ApplyPatchTool
+        from nanobot.agent.tools.dream_roles import DreamRoleTool
         from nanobot.agent.tools.file_state import FileStates
         from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
         from nanobot.agent.tools.registry import ToolRegistry
@@ -613,6 +622,10 @@ class MemoryStore:
             extra_write_allowed_files=editable_files,
             file_states=file_states,
         ))
+        # Role lifecycle is a governance boundary: Dream can create/evolve/cold
+        # its own specialists, but cannot delete or disable them and cannot
+        # directly write the canonical role state files.
+        tools.register(DreamRoleTool(workspace, config=config))
         return tools
 
     @staticmethod

@@ -329,11 +329,18 @@ class SubagentManager:
         role: str,
         model: str | None,
         model_preset: str | None,
+        role_definition: ResolvedSubagentRole | None = None,
     ) -> LLMRuntime:
-        resolved_role = self._resolve_role(role)
+        resolved_role = role_definition or self._resolve_role(role)
         if resolved_role.disabled:
             raise ValueError(f"Subagent role '{role}' is disabled")
         if self.model_management is not None:
+            if role_definition is not None and role_definition.source == "ephemeral":
+                return self.model_management.resolve_ephemeral_runtime(
+                    runtime,
+                    model=model,
+                    model_preset=model_preset,
+                )
             return self.model_management.resolve_task_runtime(
                 runtime, role=role, model=model, model_preset=model_preset,
             )
@@ -393,6 +400,36 @@ class SubagentManager:
                 registry.unregister(name)
         return registry
 
+    async def spawn_ephemeral(
+        self,
+        *,
+        role_definition: ResolvedSubagentRole,
+        **launch: Any,
+    ) -> str:
+        """Spawn one non-persistent worker through the normal manager lifecycle."""
+        if role_definition.source != "ephemeral":
+            raise ValueError("spawn_ephemeral requires an ephemeral role definition")
+        return await self.spawn(
+            role=role_definition.name,
+            role_definition=role_definition,
+            **launch,
+        )
+
+    async def run_inline_ephemeral(
+        self,
+        *,
+        role_definition: ResolvedSubagentRole,
+        **launch: Any,
+    ) -> str:
+        """Run one non-persistent worker inline through the normal manager lifecycle."""
+        if role_definition.source != "ephemeral":
+            raise ValueError("run_inline_ephemeral requires an ephemeral role definition")
+        return await self.run_inline(
+            role=role_definition.name,
+            role_definition=role_definition,
+            **launch,
+        )
+
     async def spawn(
         self,
         task: str,
@@ -413,13 +450,14 @@ class SubagentManager:
         context: str | None = None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         fork_history: list[dict[str, Any]] | None = None,
+        role_definition: ResolvedSubagentRole | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         fork_history = _portable_fork_history(fork_history)
         if runtime is None:
             runtime = self._compat_spawn_runtime()
         try:
-            role_config = self._resolve_role(role)
+            role_config = role_definition or self._resolve_role(role)
             if thinking is not None and thinking not in _THINKING_VALUES:
                 raise ValueError(f"Unknown thinking value '{thinking}'")
             effective_thinking = thinking if thinking is not None else role_config.thinking
@@ -432,7 +470,11 @@ class SubagentManager:
             if effective_timeout is not None and effective_timeout <= 0:
                 raise ValueError("timeout_seconds must be greater than zero")
             runtime = self._resolve_task_runtime(
-                runtime, role=role, model=model, model_preset=model_preset,
+                runtime,
+                role=role,
+                model=model,
+                model_preset=model_preset,
+                role_definition=role_definition,
             )
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")
@@ -489,6 +531,7 @@ class SubagentManager:
                 workspace_scope,
                 allowed_tools=allowed_tools,
                 fork_history=fork_history,
+                role_definition=role_config,
             )
         )
         self._running_tasks[task_id] = bg_task
@@ -540,13 +583,14 @@ class SubagentManager:
         context: str | None = None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         fork_history: list[dict[str, Any]] | None = None,
+        role_definition: ResolvedSubagentRole | None = None,
     ) -> str:
         """Run a subagent synchronously and return its result to the caller."""
         fork_history = _portable_fork_history(fork_history)
         if runtime is None:
             runtime = self._compat_spawn_runtime()
         try:
-            role_config = self._resolve_role(role)
+            role_config = role_definition or self._resolve_role(role)
             if thinking is not None and thinking not in _THINKING_VALUES:
                 raise ValueError(f"Unknown thinking value '{thinking}'")
             effective_thinking = thinking if thinking is not None else role_config.thinking
@@ -559,7 +603,11 @@ class SubagentManager:
             if effective_timeout is not None and effective_timeout <= 0:
                 raise ValueError("timeout_seconds must be greater than zero")
             runtime = self._resolve_task_runtime(
-                runtime, role=role, model=model, model_preset=model_preset,
+                runtime,
+                role=role,
+                model=model,
+                model_preset=model_preset,
+                role_definition=role_definition,
             )
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")
@@ -615,6 +663,7 @@ class SubagentManager:
                 announce=False,
                 allowed_tools=allowed_tools,
                 fork_history=fork_history,
+                role_definition=role_config,
             )
         )
         self._running_tasks[task_id] = inline_task

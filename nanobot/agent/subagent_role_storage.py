@@ -23,6 +23,12 @@ ROLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _ROLE_LOCK = threading.Lock()
 _USAGE_LOCK = threading.Lock()
 _CANDIDATE_LOCK = threading.Lock()
+_ROLE_GITIGNORE_RULES = (
+    "!agents/",
+    "agents/*",
+    "!agents/roles.json",
+    "!agents/role_candidates.json",
+)
 
 
 def normalize_role_name(name: object) -> str:
@@ -71,6 +77,36 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _ensure_dream_state_git_visibility(workspace: Path) -> None:
+    """Let pre-role-state memory repos track the new durable role files.
+
+    Older workspaces already have a GitStore whose root .gitignore predates the
+    ``agents`` state directory. Keep runtime usage telemetry ignored while making
+    the two Dream-authored state files visible to that existing repository.
+    New workspaces already receive equivalent rules from GitStore initialization.
+    """
+    root = workspace.expanduser().resolve()
+    if not (root / ".git").exists():
+        return
+
+    gitignore = root / ".gitignore"
+    try:
+        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    except OSError:
+        return
+    existing_lines = set(existing.splitlines())
+    missing = [rule for rule in _ROLE_GITIGNORE_RULES if rule not in existing_lines]
+    if not missing:
+        return
+
+    prefix = existing.rstrip("\n")
+    updated = (prefix + "\n" if prefix else "") + "\n".join(missing) + "\n"
+    try:
+        gitignore.write_text(updated, encoding="utf-8")
+    except OSError:
+        return
+
+
 def dream_role_entries_for_workspace(workspace: Path) -> dict[str, dict[str, Any]]:
     raw = read_json_object(role_state_path(workspace))
     result: dict[str, dict[str, Any]] = {}
@@ -102,6 +138,7 @@ def write_dream_role(workspace: Path, name: str, payload: dict[str, Any]) -> Non
     normalized = normalize_role_name(name)
     path = role_state_path(workspace)
     with _ROLE_LOCK:
+        _ensure_dream_state_git_visibility(workspace)
         roles = read_json_object(path)
         roles[normalized] = dict(payload)
         atomic_write_json(path, roles)
@@ -111,6 +148,7 @@ def delete_dream_role(workspace: Path, name: str) -> bool:
     normalized = normalize_role_name(name)
     path = role_state_path(workspace)
     with _ROLE_LOCK:
+        _ensure_dream_state_git_visibility(workspace)
         roles = read_json_object(path)
         if normalized not in roles:
             return False
@@ -178,6 +216,7 @@ def observe_candidate(
     path = candidate_state_path(workspace)
     now = datetime.now(UTC).isoformat()
     with _CANDIDATE_LOCK:
+        _ensure_dream_state_git_visibility(workspace)
         payload = read_json_object(path)
         current = payload.get(normalized)
         row = dict(current) if isinstance(current, dict) else {}
@@ -210,6 +249,7 @@ def remove_candidate(workspace: Path, name: str) -> None:
     normalized = normalize_role_name(name)
     path = candidate_state_path(workspace)
     with _CANDIDATE_LOCK:
+        _ensure_dream_state_git_visibility(workspace)
         payload = read_json_object(path)
         if normalized not in payload:
             return

@@ -25,9 +25,9 @@ _USAGE_LOCK = threading.Lock()
 _CANDIDATE_LOCK = threading.Lock()
 _ROLE_GITIGNORE_RULES = (
     "!agents/",
-    "agents/*",
     "!agents/roles.json",
     "!agents/role_candidates.json",
+    "agents/role_usage.json",
 )
 
 

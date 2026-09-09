@@ -250,11 +250,15 @@ def test_prompts_define_orchestration_and_specialist_evolution() -> None:
 
     assert "Main Agent / Orchestrator" in identity
     assert "permanent `general` worker" in identity
-    assert "## Main Orchestrator Contract" in tool_contract
-    assert "permanent `general` worker" in tool_contract
+    role_section = identity.split("## Runtime", 1)[0]
+    assert len(role_section.split()) <= 40
+
+    assert "Main owns the conversation" in tool_contract
+    assert "permanent `general`" in tool_contract
     assert "Browser is a worker capability" in tool_contract
     assert "status=cold" in tool_contract
     assert "Specialist deletion is user-governed" in tool_contract
+    assert "role.list" in tool_contract
 
     assert "## Specialist discovery & evolution" in dream
     assert "skills/.agents/_candidates.json" in dream

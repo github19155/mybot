@@ -27,6 +27,7 @@ _ACTIONS = (
     "get",
     "candidates",
     "observe",
+    "drop_candidate",
     "create",
     "update",
     "mark_cold",
@@ -46,7 +47,7 @@ _ACTIONS = (
     )
 )
 class DreamRoleTool(Tool):
-    """Dream-only role manager. It intentionally has no delete operation."""
+    """Dream-only role manager. It intentionally has no specialist delete operation."""
 
     _plugin_discoverable = False
 
@@ -62,9 +63,9 @@ class DreamRoleTool(Tool):
     def description(self) -> str:
         return (
             "Manage Dream-owned specialist roles and recurring-role evidence. Use observe before "
-            "create; creation requires at least two distinct persisted observations. Updates are "
-            "versioned automatically. Roles may be marked cold or reactivated, but this capability "
-            "can never delete or disable them."
+            "create; creation requires at least two distinct persisted observations. Stale candidate "
+            "evidence may be dropped. Role updates are versioned automatically; specialists may be "
+            "marked cold or reactivated, but this capability can never delete or disable them."
         )
 
     @staticmethod
@@ -174,6 +175,11 @@ class DreamRoleTool(Tool):
                     responsibility=responsibility,
                     evidence=evidence,
                 ))
+
+            if action == "drop_candidate":
+                existed = name in candidate_entries(self.workspace)
+                remove_candidate(self.workspace, name)
+                return self._json({"name": name, "candidate_removed": existed})
 
             existing = dream_role_entries_for_workspace(self.workspace).get(name)
             if action == "create":

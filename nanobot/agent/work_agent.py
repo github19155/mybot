@@ -1,14 +1,18 @@
-"""Task-scoped WorkAgent role snapshots.
+"""Task-scoped WorkAgent snapshots and launch adapter.
 
-WorkAgent has no independent runtime or persistence. It only builds an ephemeral
-``ResolvedSubagentRole`` consumed by the normal ``SubagentManager`` launch path.
+WorkAgent has no independent runtime or persistence. It supplies one ephemeral
+``ResolvedSubagentRole`` to the existing ``SubagentManager`` launch path.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from nanobot.agent.subagent_roles import ALL_SUBAGENT_TOOL_NAMES, ResolvedSubagentRole
+
+_WORK_LAUNCH_LOCKS: WeakKeyDictionary[Any, asyncio.Lock] = WeakKeyDictionary()
 
 
 def _nonempty(value: str | None, field: str) -> str | None:
@@ -29,9 +33,9 @@ def build_work_role_definition(
 ) -> ResolvedSubagentRole:
     """Build one non-persistent WorkAgent snapshot.
 
-    The permanent General role supplies only the default normal-worker tool set.
-    WorkAgent does not inherit General's prompt or runtime tuning; unspecified
-    model/generation settings continue from the current Main runtime.
+    General contributes only its normal-worker tool set. WorkAgent does not
+    inherit General's prompt, model, thinking, temperature, timeout, or context
+    tuning; unspecified runtime settings continue from the current Main runtime.
     """
     description = _nonempty(description, "description")
     system_prompt = _nonempty(system_prompt, "system_prompt")
@@ -72,3 +76,83 @@ def build_work_role_definition(
         created_by=None,
         usage={},
     )
+
+
+def has_work_override(
+    *,
+    description: str | None,
+    system_prompt: str | None,
+    tools: list[str] | None,
+    model: str | None,
+    model_preset: str | None,
+    thinking: str | None,
+    temperature: float | None,
+    timeout_seconds: float | None,
+    context: str | None,
+) -> bool:
+    """Return whether an omitted-role run is a task-scoped WorkAgent launch."""
+    return any(value is not None for value in (
+        description,
+        system_prompt,
+        tools,
+        model,
+        model_preset,
+        thinking,
+        temperature,
+        timeout_seconds,
+        context,
+    ))
+
+
+async def run_work_agent(
+    manager: Any,
+    *,
+    role_definition: ResolvedSubagentRole,
+    wait: bool,
+    **launch: Any,
+) -> str:
+    """Run through normal ``SubagentManager.spawn/run_inline`` lifecycle.
+
+    The adapter is active only while the manager resolves the one ephemeral
+    ``work`` role. All persistent roles still delegate to the manager's original
+    resolvers, and the child keeps the captured snapshot after launch.
+    """
+    lock = _WORK_LAUNCH_LOCKS.setdefault(manager, asyncio.Lock())
+    async with lock:
+        original_resolve_role = manager._resolve_role
+        original_resolve_runtime = manager._resolve_task_runtime
+
+        def resolve_role(name: str) -> ResolvedSubagentRole:
+            if name == "work":
+                return role_definition
+            return original_resolve_role(name)
+
+        def resolve_runtime(runtime: Any, *, role: str, model: str | None, model_preset: str | None):
+            if role != "work":
+                return original_resolve_runtime(
+                    runtime,
+                    role=role,
+                    model=model,
+                    model_preset=model_preset,
+                )
+            if model is None and model_preset is None:
+                return runtime
+            if manager.model_management is None:
+                raise ValueError("Per-task model selection requires configured model management")
+            # Explicit task model selection uses the existing provider/preset resolver,
+            # but no unspecified General role model setting is inherited.
+            return manager.model_management.resolve_task_runtime(
+                runtime,
+                role="general",
+                model=model,
+                model_preset=model_preset,
+            )
+
+        manager._resolve_role = resolve_role
+        manager._resolve_task_runtime = resolve_runtime
+        try:
+            method = manager.run_inline if wait else manager.spawn
+            return await method(role="work", **launch)
+        finally:
+            manager._resolve_role = original_resolve_role
+            manager._resolve_task_runtime = original_resolve_runtime

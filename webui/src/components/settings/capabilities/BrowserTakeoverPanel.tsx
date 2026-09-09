@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Keyboard, MousePointer2, RefreshCw, Send, Unlock } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Keyboard,
+  Maximize2,
+  Minimize2,
+  MousePointer2,
+  RefreshCw,
+  Send,
+  Unlock,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -10,6 +20,7 @@ import {
 } from "@/components/settings/shared/SettingsControls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { mapBrowserPointer } from "@/lib/browser-takeover";
 import { useClient } from "@/providers/ClientProvider";
 
 interface BrowserTakeoverState {
@@ -21,6 +32,8 @@ interface BrowserTakeoverState {
   width?: number;
   height?: number;
 }
+
+type BrowserViewMode = "fit" | "native";
 
 function browserHeaders(token: string, extra?: Record<string, string>): HeadersInit {
   return {
@@ -41,15 +54,20 @@ export function BrowserTakeoverPanel() {
   const { t } = useTranslation();
   const { getToken } = useClient();
   const imageRef = useRef<HTMLImageElement>(null);
+  const screenFrameRef = useRef<HTMLDivElement>(null);
   const screenshotUrlRef = useRef<string | null>(null);
   const [state, setState] = useState<BrowserTakeoverState | null>(null);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [viewMode, setViewMode] = useState<BrowserViewMode>("fit");
+  const [fullscreen, setFullscreen] = useState(false);
 
   const handoffToken = state?.handoff_token ?? "";
   const takeoverActive = state?.owner === "human" && Boolean(handoffToken);
+  const remoteWidth = state?.width ?? 1920;
+  const remoteHeight = state?.height ?? 1080;
   const takeoverRequested = useMemo(() => {
     if (typeof window === "undefined") return false;
     const hash = window.location.hash;
@@ -123,8 +141,8 @@ export function BrowserTakeoverPanel() {
         setText("");
         await refreshState();
       } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 120));
-        await refreshScreenshot();
+        await new Promise((resolve) => window.setTimeout(resolve, 180));
+        await Promise.all([refreshScreenshot(), refreshState()]);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -151,6 +169,12 @@ export function BrowserTakeoverPanel() {
   }, []);
 
   useEffect(() => {
+    const syncFullscreen = () => setFullscreen(document.fullscreenElement === screenFrameRef.current);
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+
+  useEffect(() => {
     if (!takeoverRequested || !takeoverActive) return;
     document.getElementById("browser-takeover-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [takeoverActive, takeoverRequested]);
@@ -160,12 +184,37 @@ export function BrowserTakeoverPanel() {
     const image = imageRef.current;
     if (!image) return;
     const rect = image.getBoundingClientRect();
-    const width = image.naturalWidth || state?.width || 1440;
-    const height = image.naturalHeight || state?.height || 960;
-    const x = Math.max(0, Math.min(width - 1, Math.round((event.clientX - rect.left) * width / rect.width)));
-    const y = Math.max(0, Math.min(height - 1, Math.round((event.clientY - rect.top) * height / rect.height)));
-    void sendAction("click", { x: String(x), y: String(y) });
-  }, [busy, sendAction, state?.height, state?.width, takeoverActive]);
+    const point = mapBrowserPointer({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      elementLeft: rect.left,
+      elementTop: rect.top,
+      elementWidth: rect.width,
+      elementHeight: rect.height,
+      sourceWidth: remoteWidth,
+      sourceHeight: remoteHeight,
+    });
+    if (!point) return;
+    void sendAction("click", { x: String(point.x), y: String(point.y) });
+  }, [busy, remoteHeight, remoteWidth, sendAction, takeoverActive]);
+
+  const toggleFullscreen = useCallback(async () => {
+    const frame = screenFrameRef.current;
+    if (!frame) return;
+    try {
+      if (document.fullscreenElement === frame) {
+        await document.exitFullscreen();
+      } else {
+        await frame.requestFullscreen();
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, []);
+
+  const nativeImageStyle = viewMode === "native"
+    ? { width: `${remoteWidth}px`, height: `${remoteHeight}px`, maxWidth: "none" }
+    : undefined;
 
   return (
     <section id="browser-takeover-panel" className="scroll-mt-5">
@@ -205,7 +254,42 @@ export function BrowserTakeoverPanel() {
 
         {takeoverActive ? (
           <div className="border-t border-border/60 p-3 sm:p-4">
-            <div className="overflow-hidden rounded-xl border border-border bg-black/90">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-muted-foreground">
+                {remoteWidth} × {remoteHeight}
+              </span>
+              <Button
+                type="button"
+                variant={viewMode === "fit" ? "default" : "outline"}
+                size="sm"
+                disabled={busy}
+                onClick={() => setViewMode("fit")}
+              >
+                {t("settings.browserTakeover.fit", { defaultValue: "Fit" })}
+              </Button>
+              <Button
+                type="button"
+                variant={viewMode === "native" ? "default" : "outline"}
+                size="sm"
+                disabled={busy}
+                onClick={() => setViewMode("native")}
+              >
+                {t("settings.browserTakeover.native", { defaultValue: "1:1" })}
+              </Button>
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void toggleFullscreen()}>
+                {fullscreen ? <Minimize2 className="mr-1 h-3.5 w-3.5" /> : <Maximize2 className="mr-1 h-3.5 w-3.5" />}
+                {fullscreen
+                  ? t("settings.browserTakeover.exitFullscreen", { defaultValue: "Exit fullscreen" })
+                  : t("settings.browserTakeover.fullscreen", { defaultValue: "Fullscreen" })}
+              </Button>
+            </div>
+
+            <div
+              ref={screenFrameRef}
+              className={`overflow-auto rounded-xl border border-border bg-black/90 ${
+                fullscreen ? "flex h-screen w-screen items-center justify-center rounded-none border-0" : "max-h-[72vh]"
+              } ${viewMode === "fit" ? "flex items-center justify-center" : "block"}`}
+            >
               {screenshotUrl ? (
                 <img
                   ref={imageRef}
@@ -213,10 +297,17 @@ export function BrowserTakeoverPanel() {
                   alt={t("settings.browserTakeover.screen", { defaultValue: "Remote browser screen" })}
                   draggable={false}
                   onClick={handleScreenClick}
-                  className="block h-auto max-h-[62vh] w-full cursor-crosshair object-contain touch-manipulation select-none"
+                  style={nativeImageStyle}
+                  className={
+                    viewMode === "native"
+                      ? "block shrink-0 cursor-crosshair select-none touch-manipulation"
+                      : `block h-auto w-auto max-w-full cursor-crosshair object-contain touch-manipulation select-none ${
+                          fullscreen ? "max-h-screen" : "max-h-[72vh]"
+                        }`
+                  }
                 />
               ) : (
-                <div className="grid aspect-[3/2] place-items-center text-sm text-white/60">
+                <div className="grid aspect-video w-full place-items-center text-sm text-white/60">
                   {t("settings.browserTakeover.loadingScreen", { defaultValue: "Loading browser screen…" })}
                 </div>
               )}

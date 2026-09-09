@@ -21,9 +21,9 @@ class FleetControlledProvider(LLMProvider):
     """Gate a concrete provider/model route without holding slots across retries.
 
     The inherited retry loop invokes this wrapper's ``_safe_chat`` once per
-    attempt.  That method calls ``chat``/``chat_stream`` here, so the admission
+    attempt. That method calls ``chat``/``chat_stream`` here, so the admission
     slot surrounds only the underlying physical API call and is released before
-    the base retry policy sleeps.  FallbackProvider can therefore wrap these
+    the base retry policy sleeps. FallbackProvider can therefore wrap these
     leaves and each fallback route keeps its own fleet identity.
     """
 
@@ -67,7 +67,14 @@ class FleetControlledProvider(LLMProvider):
         call: Callable[[], Awaitable[LLMResponse]],
     ) -> LLMResponse:
         async with self.fleet.slot(self.offering, priority=current_fleet_priority()):
-            response = await call()
+            try:
+                response = await call()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Convert here, while the physical offering is still known, so
+                # structured 429 metadata can update shared fleet pressure.
+                response = self._error_response_from_exception(exc)
             await self.fleet.note_response(self.offering, response)
             return response
 
@@ -148,7 +155,10 @@ class FleetControlledProvider(LLMProvider):
         started_at_ns: int,
         stream: bool,
     ) -> LLMResponse:
-        """Reuse base usage estimation, then persist the same physical attempt."""
+        """Estimate usage for Fleet even when no external usage observer is attached."""
+        usage = self._usage_for_call(response, kwargs)
+        if usage is not None:
+            response.usage = usage
         observed = super()._observe_llm_call(
             response,
             kwargs,

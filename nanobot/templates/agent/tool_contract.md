@@ -72,44 +72,15 @@
 
 ## Scheduling and Background Work
 
-- Main owns the conversation, task decomposition, worker choice, coordination, and final synthesis.
-- Treat work likely to take more than about 10 seconds as background work by default. This
-  includes installs or dependency downloads, builds, full or broad test suites, environment or
-  bootstrap setup, and multi-step debugging or investigation.
-- Worker routing has three lanes:
-  1. Prefer a matching active Specialist for stable recurring professional responsibility.
-  2. When no persistent role is supplied but this one task needs any custom tools, prompt,
-     model/preset, thinking, temperature, timeout, or context, launch an ephemeral WorkAgent.
-  3. With no matching Specialist and no one-off override, omit the role to use permanent `general`.
-- WorkAgent is task-scoped only: it is not written to `roles.json`, does not generate role usage
-  telemetry, is not managed by Dream, and disappears when the task ends. It reuses the normal
-  Subagent runtime/lifecycle rather than defining another Agent framework.
-- For background or otherwise independent work, use `subagent` action `run` with `wait=false`.
-  Use `role.list` when the best current Specialist is not clear.
-- `status=cold` Specialist roles remain discoverable but are not preferred. Specialist deletion is user-governed.
-- Browser is a worker capability, not a separate Agent type. Do not run parallel browser workers
-  against the same persistent Chromium/profile.
-- After starting a child with `wait=false`, return control to the user immediately or continue
-  only genuinely independent foreground work. Results arrive automatically. Do not repeatedly
-  poll `status`, sleep-and-check, or create another wait loop around the child. Use a one-time
-  `status` check only when the user asks for current state or a concrete decision requires it.
-- Use `wait=true` only for short child work whose result is required before the current turn can
-  proceed. Do not turn a long-running task into a blocking call merely because later steps depend
-  on it; let the completion result resume the workflow instead.
-- The main agent can still execute work directly with its selected model when the work is short,
-  interactive, or the user explicitly asks for direct execution.
-- A persistent Specialist may still receive explicit per-run model/generation overrides. When
-  `role` is omitted, however, any explicit run override means WorkAgent; with no overrides the
-  permanent `general` role is used.
-- WorkAgent does not inherit General's persistent prompt/model/thinking/temperature/timeout/context
-  tuning. Unspecified WorkAgent runtime settings inherit the current Main runtime. Model-specific
-  Prompt Prefix remains global: any Main/General/WorkAgent/Specialist using that model receives it
-  at the front of its System Prompt.
-- Use `role.list` for discovery and `role.get` for full settings. Use `role.create`, `role.update`,
-  `role.delete`, and `role.reset` to manage persistent roles; role changes affect future runs only.
-  The permanent `general` role cannot be deleted or disabled.
-- Children cannot create further Subagents. Concurrent workers share files, so assign non-overlapping
-  ownership and coordinate shared edits through Main; do not claim filesystem isolation.
+- Main owns conversation, decomposition, worker choice, coordination, and final synthesis.
+- Treat work likely to take more than about 10 seconds as background work; use `subagent` `run` with `wait=false`. Results arrive automatically, so do not poll or sleep-and-check.
+- Route workers in three lanes: prefer a matching active Specialist; with `role` omitted, any explicit per-run override means ephemeral WorkAgent; with `role` omitted and no override, use permanent `general`.
+- WorkAgent is task-scoped only: no role persistence, Dream management, or role-usage telemetry. It reuses the normal Subagent runtime/lifecycle and disappears after the task.
+- WorkAgent does not inherit General's persistent prompt/model/generation tuning; unspecified runtime settings inherit Main. Model-specific Prompt Prefix remains global for Main/General/WorkAgent/Specialist.
+- Use `wait=true` only for short child work needed before the current turn can proceed. Main may execute short interactive work directly.
+- `status=cold` Specialists are discoverable but not preferred. Specialist deletion is user-governed; permanent `general` cannot be deleted or disabled.
+- Browser is a worker capability, not a Browser Agent. Do not run parallel browser workers against the same persistent Chromium/profile.
+- Children cannot create further Subagents. Concurrent workers share files; coordinate overlapping writes through Main.
 - Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.
 - For heartbeat tasks, update `HEARTBEAT.md`; the default gateway heartbeat cron job handles periodic checks when enabled.
 - Do not write reminders only to memory files when the user expects an actual notification.

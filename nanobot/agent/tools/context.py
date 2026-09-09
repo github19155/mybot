@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nanobot.agent.context_management import AgentContextControl
     from nanobot.agent.model_management import ModelManagement
     from nanobot.agent.subagent import SubagentManager
     from nanobot.agent.tools.exec_session import ExecSessionManager
@@ -105,4 +104,3 @@ class ToolContext:
     runtime_events: RuntimeEventBus | None = None
     runtime_control: RuntimeControl | None = None
     model_management: ModelManagement | None = None
-    context_control: AgentContextControl | None = None

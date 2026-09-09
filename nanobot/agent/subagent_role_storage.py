@@ -14,7 +14,10 @@ if TYPE_CHECKING:
     from nanobot.config.schema import Config
 
 
-DREAM_ROLE_DIR = Path("skills") / ".agents"
+# Role runtime state is intentionally outside skills/. Dream's generic file
+# tools may edit reusable skills, while specialist lifecycle changes go through
+# the restricted dream_roles capability.
+DREAM_ROLE_DIR = Path("agents") / "roles"
 DREAM_USAGE_FILE = "_usage.json"
 DREAM_CANDIDATES_FILE = "_candidates.json"
 _RESERVED_FILES = frozenset({DREAM_USAGE_FILE, DREAM_CANDIDATES_FILE})

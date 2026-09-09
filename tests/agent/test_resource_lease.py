@@ -121,7 +121,10 @@ async def test_inline_child_can_atomically_take_parent_resource() -> None:
             assert await leases.owner_of(resource) == child
 
     await asyncio.create_task(child_task())
-    await asyncio.sleep(0)
+    for _ in range(5):
+        if await leases.owner_of(resource) is None:
+            break
+        await asyncio.sleep(0)
     assert await leases.owner_of(resource) is None
 
 

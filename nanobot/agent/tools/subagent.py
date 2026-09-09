@@ -8,11 +8,7 @@ import copy
 import json
 from typing import TYPE_CHECKING, Any
 
-from nanobot.agent.subagent_roles import (
-    ALL_SUBAGENT_TOOL_NAMES,
-    ResolvedSubagentRole,
-    record_role_use,
-)
+from nanobot.agent.subagent_roles import record_role_use
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.registry import is_tool_error_result
@@ -24,7 +20,11 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema,
 )
 from nanobot.agent.tools.subagent_browser import bind_subagent_browser_bus
-from nanobot.agent.work_agent import run_work_agent
+from nanobot.agent.work_agent import (
+    build_work_role_definition,
+    has_work_override,
+    run_work_agent,
+)
 from nanobot.security.workspace_access import current_workspace_scope
 
 if TYPE_CHECKING:
@@ -52,66 +52,11 @@ def _fork_snapshot(history: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
             for key, value in message.items()
             if key not in private_keys
         }
-        if clean.get("role") in {"system", "tool"} and clean.get("role") == "tool":
+        if clean.get("role") == "tool":
             # Tool results are portable, but an orphaned provider tool call is not.
             clean.pop("tool_call_id", None)
         snapshot.append(clean)
     return snapshot
-
-
-def _nonempty_override(value: str | None, field: str) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field} must be a non-empty string")
-    return normalized
-
-
-def _work_role_definition(
-    general: dict[str, Any],
-    *,
-    description: str | None,
-    system_prompt: str | None,
-    tools: list[str] | None,
-) -> ResolvedSubagentRole:
-    """Create one non-persistent worker snapshot from the permanent general baseline."""
-    description = _nonempty_override(description, "description")
-    system_prompt = _nonempty_override(system_prompt, "system_prompt")
-    requested_tools = tuple(tools if tools is not None else general.get("tools", ()))
-    unknown = set(requested_tools) - ALL_SUBAGENT_TOOL_NAMES
-    if "subagent" in requested_tools:
-        unknown.add("subagent")
-    if unknown:
-        raise ValueError(
-            f"Unknown or forbidden WorkAgent tools: {', '.join(sorted(unknown))}"
-        )
-    base_description = str(general.get("description") or "General-purpose worker.").strip()
-    effective_description = description or "Task-scoped worker for the assigned responsibility."
-    effective_prompt = system_prompt or description or str(
-        general.get("system_prompt") or base_description
-    ).strip()
-    return ResolvedSubagentRole(
-        name="work",
-        description=effective_description,
-        system_prompt=effective_prompt,
-        tools=requested_tools,
-        model=None,
-        model_preset=None,
-        thinking=None,
-        temperature=None,
-        timeout_seconds=None,
-        context="fresh",
-        disabled=False,
-        builtin=False,
-        permissions="read-write-exec",
-        category="work",
-        source="ephemeral",
-        status="active",
-        version=1,
-        created_by=None,
-        usage={},
-    )
 
 
 _SUBAGENT_PARAMETERS = tool_parameters_schema(
@@ -185,19 +130,19 @@ class SubagentTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run and control child agents. Prefer a matching persistent specialist role when one "
-            "clearly fits; otherwise omit role to use the permanent general worker. For one-off "
-            "work that needs a task-specific identity or capability set, omit role and provide "
-            "description, system_prompt, and/or tools to create a non-persistent WorkAgent snapshot. "
-            "Do not combine those WorkAgent identity/tool overrides with a persistent role. Use "
-            "role.list to discover current built-in, user, and Dream-managed roles. Default long or "
+            "Run and control child agents. Prefer a matching active persistent specialist when one "
+            "clearly fits. Omit role with no per-task overrides to use the permanent general worker. "
+            "Omit role and provide any per-task override (description, system_prompt, tools, model, "
+            "model_preset, thinking, temperature, timeout_seconds, or context) to create a temporary "
+            "WorkAgent snapshot that is destroyed after the task and never persisted or Dream-managed. "
+            "Do not combine WorkAgent identity/tool overrides with a persistent role. Use role.list "
+            "to discover current built-in, user, and Dream-managed specialists. Default long or "
             "independent work to run with wait=false, especially installs/downloads, builds, broad "
             "test suites, environment setup, multi-step debugging, or work likely to take more than "
-            "about 10 seconds. Browser automation is a tool capability of eligible workers, not a "
-            "separate Agent type. Background results are delivered automatically: do not repeatedly "
-            "poll status or sleep-and-check. Use wait=true only for short child work whose result is "
-            "required before the current turn can proceed. Use status/steer/stop by task ID when "
-            "needed. Role and model settings apply only to the child; children cannot create children."
+            "about 10 seconds. Browser automation is a worker capability, not a separate Agent type. "
+            "Background results are delivered automatically: do not repeatedly poll status or "
+            "sleep-and-check. Use wait=true only for short child work whose result is required before "
+            "the current turn can proceed. Children cannot create children."
         )
 
     @property
@@ -241,53 +186,31 @@ class SubagentTool(Tool):
             runtime = request.runtime
             if runtime is None:
                 return ToolResult.error("Error: subagent run requires an active model runtime")
-            work_override = description is not None or system_prompt is not None or tools is not None
-            if role is not None and work_override:
+
+            identity_override = description is not None or system_prompt is not None or tools is not None
+            if role is not None and identity_override:
                 return ToolResult.error(
                     "Error: description, system_prompt, and tools are task-scoped WorkAgent "
                     "overrides and cannot be combined with role"
                 )
+
             request_allowed_tools = set(request.allowed_tools)
             fork_history = _fork_snapshot(request.conversation_history)
-            if work_override:
-                try:
-                    role_definition = _work_role_definition(
-                        self._manager.role_get("general"),
-                        description=description,
-                        system_prompt=system_prompt,
-                        tools=tools,
-                    )
-                except ValueError as exc:
-                    return ToolResult.error(f"Error: {exc}")
-                return await run_work_agent(
-                    self._manager,
-                    task=task.strip(),
-                    runtime=runtime,
-                    role_definition=role_definition,
-                    wait=wait,
-                    label=label,
-                    model=model,
-                    model_preset=model_preset,
-                    thinking=thinking,
-                    temperature=temperature,
-                    timeout_seconds=timeout_seconds,
-                    context=context,
-                    origin_channel=request.channel,
-                    origin_chat_id=request.chat_id,
-                    session_key=session_key,
-                    origin_message_id=request.message_id,
-                    workspace_scope=current_workspace_scope(),
-                    allowed_tools=request_allowed_tools,
-                    fork_history=fork_history,
-                )
-
-            selected_role = role or "general"
-            method = self._manager.run_inline if wait else self._manager.spawn
-            result = await method(
+            work_override = role is None and has_work_override(
+                description=description,
+                system_prompt=system_prompt,
+                tools=tools,
+                model=model,
+                model_preset=model_preset,
+                thinking=thinking,
+                temperature=temperature,
+                timeout_seconds=timeout_seconds,
+                context=context,
+            )
+            launch = dict(
                 task=task.strip(),
                 runtime=runtime,
                 label=label,
-                role=selected_role,
                 model=model,
                 model_preset=model_preset,
                 thinking=thinking,
@@ -302,6 +225,27 @@ class SubagentTool(Tool):
                 allowed_tools=request_allowed_tools,
                 fork_history=fork_history,
             )
+
+            if work_override:
+                try:
+                    role_definition = build_work_role_definition(
+                        self._manager.role_get("general"),
+                        description=description,
+                        system_prompt=system_prompt,
+                        tools=tools,
+                    )
+                except ValueError as exc:
+                    return ToolResult.error(f"Error: {exc}")
+                return await run_work_agent(
+                    self._manager,
+                    role_definition=role_definition,
+                    wait=wait,
+                    **launch,
+                )
+
+            selected_role = role or "general"
+            method = self._manager.run_inline if wait else self._manager.spawn
+            result = await method(role=selected_role, **launch)
             if not is_tool_error_result(result):
                 workspace = getattr(self._manager, "workspace", None)
                 if workspace is not None:

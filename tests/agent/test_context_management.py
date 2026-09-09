@@ -44,8 +44,8 @@ def test_context_status_reports_machine_readable_pressure(tmp_path) -> None:
     snapshot = AgentContextControl(loop).status("cli:direct")
 
     assert snapshot.estimated_tokens == 6000
-    assert snapshot.input_budget_tokens == 8000
-    assert snapshot.usage_ratio == 0.75
+    assert snapshot.input_budget_tokens == 10_000 - 1000 - 1024
+    assert snapshot.usage_ratio == round(6000 / snapshot.input_budget_tokens, 6)
     assert snapshot.recommendation == "recommended"
     assert snapshot.should_compact is True
     assert snapshot.can_compact is True
@@ -55,7 +55,13 @@ def test_context_status_reports_machine_readable_pressure(tmp_path) -> None:
 async def test_manual_compaction_advances_checkpoint_and_clears_provider_state(tmp_path) -> None:
     loop = _loop(tmp_path)
     session = _fill_session(loop)
-    session.provider_state = MagicMock(spec=ProviderConversationState)
+    session.provider_state = ProviderConversationState(
+        kind="test",
+        provider="test-provider",
+        model="test-model",
+        version=1,
+        payload={"cursor": "opaque-test-state"},
+    )
     loop.sessions.save(session)
     loop.consolidator.archive_session = AsyncMock(return_value="checkpoint summary")
 

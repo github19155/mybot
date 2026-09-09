@@ -1,16 +1,22 @@
-"""Builtin, user-managed, and Dream-managed subagent role definitions."""
+"""Subagent role definitions, resolution, and user-facing role management."""
 
 from __future__ import annotations
 
-import json
-import os
-import re
-import threading
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
+
+from nanobot.agent.subagent_role_storage import (
+    atomic_write_json,
+    delete_role_usage,
+    dream_role_entries,
+    dream_role_path,
+    normalize_role_name,
+    read_json_object,
+    record_role_use,
+    role_usage,
+    workspace_from_config,
+)
 
 if TYPE_CHECKING:
     from nanobot.config.schema import Config, SubagentRoleConfig
@@ -31,8 +37,8 @@ BUILTIN_SUBAGENT_ROLE_NAMES = (
 SUBAGENT_ROLES: dict[str, dict[str, str]] = {
     "general": {
         "description": (
-            "General-purpose worker for mixed, cross-domain, or otherwise uncategorized tasks. "
-            "Prefer a specialist when one clearly matches; use this role as the durable fallback."
+            "General-purpose worker for mixed, cross-domain, or uncategorized tasks. "
+            "It is the permanent capable fallback when no specialist clearly fits."
         ),
         "permissions": "read-write-exec",
     },
@@ -102,119 +108,20 @@ _BROWSER_TOOLS = {
     "browser_close": "subagent_browser",
 }
 _EXEC_TOOLS = {**_EXEC_BASE_TOOLS, **_BROWSER_TOOLS}
+
+# Permission ceilings. A role may request any subset inside its tier.
 ROLE_TOOL_MODULES = {
     "read-only": _READ_TOOLS,
     "read-write": _WRITE_TOOLS,
-    # Permission ceiling: exec-capable roles may be configured with browser tools.
     "read-write-exec": _EXEC_TOOLS,
 }
 _DEFAULT_TOOL_MODULES = {
     "read-only": _READ_TOOLS,
     "read-write": _WRITE_TOOLS,
-    # Specialist builtins keep their historical defaults; browser stays opt-in.
+    # Focused specialists do not receive Browser merely because they can execute.
     "read-write-exec": _EXEC_BASE_TOOLS,
 }
 ALL_SUBAGENT_TOOL_NAMES = frozenset(_EXEC_TOOLS)
-ROLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-
-# Dream-managed specialists deliberately live under the existing Dream-writable
-# skills tree. They are runtime role definitions, not a separate Agent class.
-_DREAM_ROLE_DIR = Path("skills") / ".agents"
-_DREAM_USAGE_FILE = "_usage.json"
-_USAGE_LOCK = threading.Lock()
-
-
-def _workspace_from_config(config: "Config | None") -> Path | None:
-    if config is None:
-        return None
-    return Path(config.workspace_path).expanduser().resolve()
-
-
-def _dream_role_dir(config: "Config | None") -> Path | None:
-    workspace = _workspace_from_config(config)
-    return workspace / _DREAM_ROLE_DIR if workspace is not None else None
-
-
-def _read_json_object(path: Path) -> dict[str, Any]:
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
-
-
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(tmp, path)
-
-
-def _dream_role_entries(config: "Config | None") -> dict[str, dict[str, Any]]:
-    root = _dream_role_dir(config)
-    if root is None or not root.is_dir():
-        return {}
-    result: dict[str, dict[str, Any]] = {}
-    for path in sorted(root.glob("*.json")):
-        if path.name == _DREAM_USAGE_FILE:
-            continue
-        try:
-            name = normalize_role_name(path.stem)
-        except ValueError:
-            continue
-        payload = _read_json_object(path)
-        if not payload:
-            continue
-        declared_name = payload.get("name")
-        if declared_name is not None:
-            try:
-                if normalize_role_name(declared_name) != name:
-                    continue
-            except ValueError:
-                continue
-        result[name] = payload
-    return result
-
-
-def _usage_path(workspace: Path) -> Path:
-    return workspace.expanduser().resolve() / _DREAM_ROLE_DIR / _DREAM_USAGE_FILE
-
-
-def role_usage(workspace: Path, role: str) -> dict[str, Any]:
-    """Return persisted lightweight usage metadata for one role."""
-    name = normalize_role_name(role)
-    payload = _read_json_object(_usage_path(workspace))
-    value = payload.get(name)
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def record_role_use(workspace: Path, role: str) -> None:
-    """Record an accepted role launch so Dream can reason about hot/cold specialists."""
-    name = normalize_role_name(role)
-    path = _usage_path(workspace)
-    with _USAGE_LOCK:
-        payload = _read_json_object(path)
-        current = payload.get(name)
-        row = dict(current) if isinstance(current, dict) else {}
-        runs = row.get("runs", 0)
-        row["runs"] = (runs if isinstance(runs, int) and not isinstance(runs, bool) else 0) + 1
-        row["last_used"] = datetime.now(UTC).isoformat()
-        payload[name] = row
-        _atomic_write_json(path, payload)
-
-
-def delete_role_usage(workspace: Path, role: str) -> None:
-    name = normalize_role_name(role)
-    path = _usage_path(workspace)
-    with _USAGE_LOCK:
-        payload = _read_json_object(path)
-        if name not in payload:
-            return
-        payload.pop(name, None)
-        _atomic_write_json(path, payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,16 +172,6 @@ class ResolvedSubagentRole:
         }
 
 
-def normalize_role_name(name: object) -> str:
-    """Normalize and validate a role identifier."""
-    if not isinstance(name, str):
-        raise ValueError("role name must be a string")
-    normalized = name.strip().lower()
-    if not ROLE_NAME_PATTERN.fullmatch(normalized):
-        raise ValueError("role name must match [a-z][a-z0-9_-]{0,63}")
-    return normalized
-
-
 def _default_tools(permissions: str) -> tuple[str, ...]:
     return tuple(_DEFAULT_TOOL_MODULES[permissions])
 
@@ -282,12 +179,12 @@ def _default_tools(permissions: str) -> tuple[str, ...]:
 def _default_tools_for_role(name: str, permissions: str) -> tuple[str, ...]:
     tools = _default_tools(permissions)
     if name == "general" and permissions == "read-write-exec":
+        # General is intentionally the all-capability fallback, including Browser.
         return (*tools, *_BROWSER_TOOLS)
     return tools
 
 
 def _permissions_for_custom_tools(tools: tuple[str, ...]) -> str:
-    """Describe a custom role's effective capability tier from its explicit tools."""
     names = set(tools)
     if names & (set(_EXEC_TOOLS) - set(_WRITE_TOOLS)):
         return "read-write-exec"
@@ -317,10 +214,16 @@ def _validate_role_config(config: "Config", role: "SubagentRoleConfig") -> None:
         raise ValueError(f"Unknown model preset '{role.model_preset}'")
 
 
-def _dream_role_config(config: "Config | None", name: str) -> tuple["SubagentRoleConfig | None", dict[str, Any]]:
-    payload = _dream_role_entries(config).get(name)
+def _dream_role_config(
+    config: "Config | None",
+    name: str,
+) -> tuple["SubagentRoleConfig | None", dict[str, Any]]:
+    payload = dream_role_entries(config).get(name)
     if payload is None:
         return None, {}
+    if payload.get("created_by") != "dream":
+        raise ValueError(f"Dream specialist role '{name}' must declare created_by='dream'")
+
     from nanobot.config.schema import SubagentRoleConfig
 
     candidate = SubagentRoleConfig.model_validate(payload)
@@ -338,8 +241,7 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
     normalized = normalize_role_name(name)
     builtin = SUBAGENT_ROLES.get(normalized)
     config_override = config.subagent_roles.get(normalized) if config is not None else None
-    # Dream only owns roles it created. A file under skills/.agents must never
-    # shadow the permanent general worker or another builtin role.
+    # Dream may add specialists, but never shadow the permanent general or builtins.
     dream_override, dream_meta = (
         (None, {}) if builtin is not None else _dream_role_config(config, normalized)
     )
@@ -373,8 +275,9 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
     status = str(metadata.get("status") or "active").strip().lower() or "active"
     raw_version = metadata.get("version", 1)
     version = raw_version if isinstance(raw_version, int) and not isinstance(raw_version, bool) else 1
-    workspace = _workspace_from_config(config)
+    workspace = workspace_from_config(config)
     usage = role_usage(workspace, normalized) if workspace is not None else {}
+
     return ResolvedSubagentRole(
         name=normalized,
         description=description,
@@ -402,12 +305,12 @@ def list_roles(config: "Config | None") -> list[ResolvedSubagentRole]:
     names: set[str] = set(BUILTIN_SUBAGENT_ROLE_NAMES)
     if config is not None:
         names.update(str(name) for name in config.subagent_roles)
-        names.update(_dream_role_entries(config))
+        names.update(dream_role_entries(config))
     return [resolve_role(config, name) for name in sorted(names)]
 
 
 class SubagentRoleStore:
-    """Runtime role CRUD backed by config plus Dream specialist files."""
+    """User-facing role CRUD; filesystem mechanics live in role storage helpers."""
 
     def __init__(self, config: "Config") -> None:
         self.config = config
@@ -418,15 +321,10 @@ class SubagentRoleStore:
             self._store = WebUISettingsConfig(config.source_path)
 
     @property
-    def workspace(self) -> Path:
-        return Path(self.config.workspace_path).expanduser().resolve()
-
-    @property
-    def dream_role_dir(self) -> Path:
-        return self.workspace / _DREAM_ROLE_DIR
-
-    def _dream_role_path(self, name: str) -> Path:
-        return self.dream_role_dir / f"{normalize_role_name(name)}.json"
+    def workspace(self):
+        workspace = workspace_from_config(self.config)
+        assert workspace is not None
+        return workspace
 
     def _commit(self, mutation: Callable[["Config"], None]) -> None:
         def apply(config: "Config") -> "Config":
@@ -451,9 +349,10 @@ class SubagentRoleStore:
         if (
             normalized in SUBAGENT_ROLES
             or normalized in self.config.subagent_roles
-            or normalized in _dream_role_entries(self.config)
+            or normalized in dream_role_entries(self.config)
         ):
             raise ValueError(f"Role '{normalized}' already exists")
+
         from nanobot.config.schema import SubagentRoleConfig
 
         candidate = SubagentRoleConfig.model_validate(values)
@@ -469,11 +368,12 @@ class SubagentRoleStore:
 
     def _update_dream_role(self, name: str, values: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_role_name(name)
-        path = self._dream_role_path(normalized)
-        current = _read_json_object(path)
-        if not current:
-            raise ValueError(f"Unknown subagent role '{normalized}'")
-        merged = current | values | {"name": normalized}
+        path = dream_role_path(self.workspace, normalized)
+        current = read_json_object(path)
+        if not current or current.get("created_by") != "dream":
+            raise ValueError(f"Unknown Dream-managed subagent role '{normalized}'")
+        merged = current | values | {"name": normalized, "created_by": "dream"}
+
         from nanobot.config.schema import SubagentRoleConfig
 
         candidate = SubagentRoleConfig.model_validate(merged)
@@ -483,15 +383,16 @@ class SubagentRoleStore:
         status = str(merged.get("status") or "active").strip().lower()
         if status not in {"active", "cold"}:
             raise ValueError("Dream specialist status must be active or cold")
-        _atomic_write_json(path, merged)
+        atomic_write_json(path, merged)
         return self.get(normalized)
 
     def update(self, name: str, values: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_role_name(name)
         if normalized == "general" and values.get("disabled") is True:
             raise ValueError("The general subagent role is permanent and cannot be disabled")
+
         current = self.config.subagent_roles.get(normalized)
-        dream_exists = normalized in _dream_role_entries(self.config)
+        dream_exists = normalized in dream_role_entries(self.config)
         if normalized not in SUBAGENT_ROLES and current is None and not dream_exists:
             raise ValueError(f"Unknown subagent role '{normalized}'")
         if dream_exists and current is None and normalized not in SUBAGENT_ROLES:
@@ -506,6 +407,7 @@ class SubagentRoleStore:
                 "tools": list(_default_tools_for_role("general", base["permissions"])),
             })
         merged |= values
+
         from nanobot.config.schema import SubagentRoleConfig
 
         candidate = SubagentRoleConfig.model_validate(merged)
@@ -536,7 +438,8 @@ class SubagentRoleStore:
             self._commit(mutate)
             delete_role_usage(self.workspace, normalized)
             return {"name": normalized, "deleted": True}
-        path = self._dream_role_path(normalized)
+
+        path = dream_role_path(self.workspace, normalized)
         if path.exists():
             path.unlink()
             delete_role_usage(self.workspace, normalized)

@@ -1,8 +1,8 @@
 """Self context inspection and safe session compaction control.
 
-This module is intentionally a thin adapter over the existing session,
-Consolidator, and ContextGovernor budgeting rules. It does not own a second
-context store or compaction pipeline.
+This is a thin adapter over the existing SessionManager and Consolidator. It
+never edits an AgentRunner request in flight: compaction only advances the
+persisted session checkpoint used by later model requests.
 """
 
 from __future__ import annotations
@@ -28,8 +28,6 @@ CONTEXT_STRONG_RATIO = 0.85
 
 @dataclass(frozen=True, slots=True)
 class ContextSnapshot:
-    """Machine-readable view of one session's model-facing context pressure."""
-
     session_key: str
     estimated_tokens: int
     estimate_source: str
@@ -43,7 +41,6 @@ class ContextSnapshot:
     unarchived_messages: int
     has_summary: bool
     can_compact: bool
-    pending_compaction: bool
     recommendation: str
 
     @property
@@ -72,7 +69,6 @@ class ContextSnapshot:
             "unarchived_messages": self.unarchived_messages,
             "has_summary": self.has_summary,
             "can_compact": self.can_compact,
-            "pending_compaction": self.pending_compaction,
             "recommendation": self.recommendation,
             "should_compact": self.should_compact,
         }
@@ -87,14 +83,10 @@ class _ContextControlTarget(Protocol):
 
 
 class AgentContextControl:
-    """Allow Main and slash commands to reuse the normal session compactor safely."""
+    """Inspect and compact the current Main session through existing primitives."""
 
     def __init__(self, target: _ContextControlTarget) -> None:
         self.__target = target
-        # Main calls context.compact during an active turn. Do not rewrite that
-        # turn's session underneath AgentRunner; consume this request at the
-        # next turn's existing COMPACT stage instead.
-        self.__pending: set[str] = set()
 
     def _runtime(self, session: Session, runtime: LLMRuntime | None) -> LLMRuntime:
         return runtime or self.__target.runtime_for_session(session)
@@ -139,11 +131,7 @@ class AgentContextControl:
             usage = LLMUsage.from_dict(session.metadata.get("_last_usage"))
             if usage is not None:
                 context_tokens = getattr(usage, "context_tokens", None)
-                estimated = (
-                    context_tokens
-                    if isinstance(context_tokens, int)
-                    else usage.input_tokens
-                )
+                estimated = context_tokens if isinstance(context_tokens, int) else usage.input_tokens
                 source = "last provider usage"
 
         ratio = estimated / input_budget if input_budget > 0 else None
@@ -155,14 +143,11 @@ class AgentContextControl:
             session.metadata,
             fallback_last_active=session.updated_at,
         )
-        # Session compaction always retains the project-wide recent replay
-        # window. Compacting a shorter transcript cannot reduce model input.
         can_compact = (
             not session_key.startswith("dream:")
             and unarchived > 0
             and replayable > MIN_COMPACTED_REPLAY_MESSAGES
         )
-        recommendation = self._recommendation(ratio, can_compact)
         return ContextSnapshot(
             session_key=session_key,
             estimated_tokens=max(0, estimated),
@@ -177,45 +162,16 @@ class AgentContextControl:
             unarchived_messages=unarchived,
             has_summary=summary is not None,
             can_compact=can_compact,
-            pending_compaction=session_key in self.__pending,
-            recommendation=recommendation,
+            recommendation=self._recommendation(ratio, can_compact),
         )
 
-    def request_compaction(
+    async def compact(
         self,
         session_key: str,
         *,
         runtime: LLMRuntime | None = None,
     ) -> dict[str, object]:
-        snapshot = self.status(session_key, runtime=runtime)
-        if snapshot.pending_compaction:
-            return {
-                "status": "scheduled",
-                "reason": "already_pending",
-                "context": snapshot.as_dict(),
-            }
-        if not snapshot.can_compact:
-            return {
-                "status": "noop",
-                "reason": "not_enough_replayable_history",
-                "context": snapshot.as_dict(),
-            }
-        self.__pending.add(session_key)
-        return {
-            "status": "scheduled",
-            "reason": "next_turn_compact_stage",
-            "context": self.status(session_key, runtime=runtime).as_dict(),
-        }
-
-    def has_pending(self, session_key: str) -> bool:
-        return session_key in self.__pending
-
-    async def compact_now(
-        self,
-        session_key: str,
-        *,
-        runtime: LLMRuntime | None = None,
-    ) -> dict[str, object]:
+        """Advance the persisted checkpoint without mutating the active runner transcript."""
         before = self.status(session_key, runtime=runtime)
         if not before.can_compact:
             return {
@@ -224,41 +180,47 @@ class AgentContextControl:
                 "before": before.as_dict(),
                 "after": before.as_dict(),
             }
+
         session = self.__target.sessions.get_or_create(session_key)
         effective_runtime = self._runtime(session, runtime)
-        try:
-            summary = await self.__target.consolidator.compact_idle_session(
-                session_key,
+        lock = self.__target.consolidator.get_lock(session_key)
+        async with lock:
+            archive_start = session.last_archived
+            archive_end = len(session.messages)
+            if archive_end <= archive_start:
+                after = self.status(session_key, runtime=effective_runtime)
+                return {
+                    "status": "noop",
+                    "reason": "no_unarchived_messages",
+                    "before": before.as_dict(),
+                    "after": after.as_dict(),
+                }
+            last_active = session.updated_at
+            summary = await self.__target.consolidator.archive_session(
+                session,
+                archive_end=archive_end,
                 runtime=effective_runtime,
             )
-        except Exception:
-            return {
-                "status": "error",
-                "reason": "compaction_failed",
-                "before": before.as_dict(),
-            }
+            if summary is None:
+                return {
+                    "status": "error",
+                    "reason": "compaction_failed",
+                    "before": before.as_dict(),
+                }
+            if summary != "(nothing)":
+                session.metadata["_last_summary"] = {
+                    "text": summary,
+                    "last_active": last_active.isoformat(),
+                }
+            session.last_archived = archive_end
+            session.provider_state = None
+            self.__target.sessions.save(session)
+
         after = self.status(session_key, runtime=effective_runtime)
-        if summary is None:
-            return {
-                "status": "error",
-                "reason": "compaction_failed",
-                "before": before.as_dict(),
-                "after": after.as_dict(),
-            }
         return {
             "status": "compacted",
             "reason": "manual_compaction",
+            "applies_to": "later_model_requests",
             "before": before.as_dict(),
             "after": after.as_dict(),
         }
-
-    async def consume_pending(
-        self,
-        session_key: str,
-        *,
-        runtime: LLMRuntime | None = None,
-    ) -> dict[str, object] | None:
-        if session_key not in self.__pending:
-            return None
-        self.__pending.discard(session_key)
-        return await self.compact_now(session_key, runtime=runtime)

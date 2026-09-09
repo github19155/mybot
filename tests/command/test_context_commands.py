@@ -59,7 +59,8 @@ async def test_context_command_reports_pressure(tmp_path) -> None:
 
     assert out is not None
     assert "## Context" in out.content
-    assert "Usage: 75.0%" in out.content
+    assert "Usage: 75.2%" in out.content
+    assert "Input budget: 7976 tokens" in out.content
     assert "Recommendation: recommended" in out.content
 
 

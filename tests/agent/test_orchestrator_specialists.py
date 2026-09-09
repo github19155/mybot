@@ -64,6 +64,7 @@ def test_general_is_permanent_all_capability_fallback() -> None:
     assert general.source == "builtin"
     assert general.permissions == "read-write-exec"
     assert general.disabled is False
+    assert disabled_override.disabled is False
     assert {
         "read_file",
         "write_file",

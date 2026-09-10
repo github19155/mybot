@@ -712,6 +712,7 @@ class Config(BaseSettings):
 
 def _resolve_tool_config_refs() -> None:
     import sys
+
     from nanobot.agent.tools.cli_apps import CliAppsToolConfig
     from nanobot.agent.tools.filesystem import FileToolsConfig
     from nanobot.agent.tools.image_analysis import ImageAnalysisToolConfig

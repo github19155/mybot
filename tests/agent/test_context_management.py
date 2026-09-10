@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,6 +6,7 @@ import pytest
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.bus.queue import MessageBus
+from nanobot.bus.runtime_events import RuntimeEventContext, SessionTurnPersisted
 from nanobot.context_management import AgentContextControl
 from nanobot.providers.base import ProviderConversationState
 
@@ -76,25 +76,29 @@ async def test_manual_compaction_advances_checkpoint_and_clears_provider_state(t
 
 
 @pytest.mark.asyncio
-async def test_main_self_compaction_waits_for_current_session_lock(tmp_path) -> None:
+async def test_main_self_compaction_waits_for_persisted_turn_boundary(tmp_path) -> None:
     loop = _loop(tmp_path)
     _fill_session(loop)
     loop.consolidator.archive_session = AsyncMock(return_value="checkpoint summary")
     control = AgentRuntimeControl(loop)
-    lock = loop._get_session_lock("cli:direct")
 
-    await lock.acquire()
-    try:
-        result = await control.context_compact("cli:direct")
-        assert result["status"] == "scheduled"
-        assert loop.sessions.get_or_create("cli:direct").last_archived == 0
-        assert control.context_status("cli:direct")["pending_compaction"] is True
-    finally:
-        lock.release()
+    result = await control.context_compact("cli:direct")
 
-    tasks = list(loop._background_tasks)
-    if tasks:
-        await asyncio.gather(*tasks)
+    assert result["status"] == "scheduled"
+    assert loop.sessions.get_or_create("cli:direct").last_archived == 0
+    assert control.context_status("cli:direct")["pending_compaction"] is True
+
+    await loop.runtime_events.publish(
+        SessionTurnPersisted(
+            context=RuntimeEventContext(
+                channel="cli",
+                chat_id="direct",
+                session_key="cli:direct",
+            ),
+            turn_id="turn-1",
+            sender_id="user",
+        )
+    )
 
     assert loop.sessions.get_or_create("cli:direct").last_archived == 12
     assert control.context_status("cli:direct")["pending_compaction"] is False

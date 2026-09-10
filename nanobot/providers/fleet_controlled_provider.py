@@ -44,7 +44,11 @@ class FleetControlledProvider(LLMProvider):
         self._inner = inner
         self.fleet = fleet
         self.offering = fleet.bind_offering(offering)
-        super().__init__(provider_name=inner.provider_name)
+        super().__init__(
+            api_key=inner.api_key,
+            api_base=inner.api_base,
+            provider_name=inner.provider_name,
+        )
         self._inner.generation = generation
 
     @property

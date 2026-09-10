@@ -25,6 +25,12 @@ class FleetControlledProvider(LLMProvider):
     slot surrounds only the underlying physical API call and is released before
     the base retry policy sleeps. FallbackProvider can therefore wrap these
     leaves and each fallback route keeps its own fleet identity.
+
+    The adapter is intentionally transparent to existing provider-facing code:
+    provider-specific helpers are delegated to the wrapped provider and
+    ``__class__`` reflects the concrete provider class for compatibility with
+    existing runtime/type checks. ``type(provider)`` still identifies this
+    internal adapter, while the historical public surface remains unchanged.
     """
 
     def __init__(
@@ -40,6 +46,17 @@ class FleetControlledProvider(LLMProvider):
         self.offering = fleet.bind_offering(offering)
         super().__init__(provider_name=inner.provider_name)
         self._inner.generation = generation
+
+    @property
+    def __class__(self) -> type[LLMProvider]:
+        """Expose the concrete provider class through the transparent adapter."""
+        return self._inner.__class__
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate provider-specific helpers without widening the base contract."""
+        if name == "_inner":
+            raise AttributeError(name)
+        return getattr(self._inner, name)
 
     @property
     def generation(self) -> GenerationSettings:

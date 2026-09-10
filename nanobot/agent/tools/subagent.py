@@ -8,6 +8,7 @@ import copy
 import json
 from typing import TYPE_CHECKING, Any
 
+from nanobot.agent.resource_lease import delegated_resource_parent, request_resource_owner_key
 from nanobot.agent.subagent_roles import record_role_use
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import current_request_context
@@ -225,6 +226,7 @@ class SubagentTool(Tool):
                 allowed_tools=request_allowed_tools,
                 fork_history=fork_history,
             )
+            parent_resource_owner = request_resource_owner_key(request) if wait else None
 
             if work_override:
                 try:
@@ -236,16 +238,28 @@ class SubagentTool(Tool):
                     )
                 except ValueError as exc:
                     return ToolResult.error(f"Error: {exc}")
+                if wait:
+                    with delegated_resource_parent(parent_resource_owner):
+                        return await run_work_agent(
+                            self._manager,
+                            role_definition=role_definition,
+                            wait=True,
+                            **launch,
+                        )
                 return await run_work_agent(
                     self._manager,
                     role_definition=role_definition,
-                    wait=wait,
+                    wait=False,
                     **launch,
                 )
 
             selected_role = role or "general"
             method = self._manager.run_inline if wait else self._manager.spawn
-            result = await method(role=selected_role, **launch)
+            if wait:
+                with delegated_resource_parent(parent_resource_owner):
+                    result = await method(role=selected_role, **launch)
+            else:
+                result = await method(role=selected_role, **launch)
             if not is_tool_error_result(result):
                 workspace = getattr(self._manager, "workspace", None)
                 if workspace is not None:

@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Coroutine, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
+from loguru import logger
+
+from nanobot.bus.runtime_events import SessionTurnPersisted, SessionTurnStarted
 from nanobot.context_management import AgentContextControl
 
 if TYPE_CHECKING:
-    import asyncio
-
     from nanobot.agent.memory import Consolidator
     from nanobot.agent.subagent import SubagentManager, SubagentStatus
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.agent.tools.web import WebToolsConfig
+    from nanobot.bus.runtime_events import RuntimeEventBus
     from nanobot.config.schema import ModelPresetConfig
     from nanobot.session.manager import Session, SessionManager
     from nanobot.utils.llm_runtime import LLMRuntime
@@ -95,6 +97,7 @@ class _RuntimeControlTarget(Protocol):
     sessions: SessionManager
     consolidator: Consolidator
     context_block_limit: int | None
+    runtime_events: RuntimeEventBus
 
     @property
     def model(self) -> str: ...
@@ -113,8 +116,6 @@ class _RuntimeControlTarget(Protocol):
     def set_model_preset(self, name: str | None) -> LLMRuntime: ...
     def set_session_model_preset(self, session_key: str, name: str) -> LLMRuntime: ...
     def runtime_for_session(self, session: Session, *, recover_removed: bool = True) -> LLMRuntime: ...
-    def _get_session_lock(self, session_key: str) -> asyncio.Lock: ...
-    def schedule_background(self, coro: Coroutine[Any, Any, Any]) -> None: ...
 
 
 class AgentRuntimeControl:
@@ -123,9 +124,11 @@ class AgentRuntimeControl:
     def __init__(self, target: _RuntimeControlTarget) -> None:
         self.__target = target
         self.__context = AgentContextControl(target)
-        self.__pending_context_compactions: set[str] = set()
+        self.__pending_context_compactions: dict[str, LLMRuntime | None] = {}
         self.__scratchpad: dict[str, JsonValue] = {}
         self.__workspace_display: str | None = None
+        target.runtime_events.subscribe(self.__on_session_turn_persisted, SessionTurnPersisted)
+        target.runtime_events.subscribe(self.__on_session_turn_started, SessionTurnStarted)
 
     def snapshot(self) -> RuntimeSnapshot:
         target = self.__target
@@ -179,32 +182,39 @@ class AgentRuntimeControl:
         data["pending_compaction"] = session_key in self.__pending_context_compactions
         return data
 
+    async def __drain_context_compaction(self, session_key: str) -> None:
+        if session_key not in self.__pending_context_compactions:
+            return
+        runtime = self.__pending_context_compactions.pop(session_key)
+        try:
+            result = await self.__context.compact(session_key, runtime=runtime)
+        except Exception:
+            logger.exception("Post-turn context compaction failed for session {}", session_key)
+            return
+        if result.get("status") == "error":
+            logger.warning(
+                "Post-turn context compaction reported failure for session {}: {}",
+                session_key,
+                result.get("reason"),
+            )
+
+    async def __on_session_turn_persisted(self, event: SessionTurnPersisted) -> None:
+        await self.__drain_context_compaction(event.context.session_key)
+
+    async def __on_session_turn_started(self, event: SessionTurnStarted) -> None:
+        await self.__drain_context_compaction(event.context.session_key)
+
     async def context_compact(self, session_key: str, *, runtime: LLMRuntime | None = None) -> dict[str, object]:
         snapshot = self.__context.status(session_key, runtime=runtime)
         if not snapshot.can_compact:
-            return {
-                "status": "noop",
-                "reason": "not_enough_replayable_history",
-                "context": snapshot.as_dict(),
-            }
+            return {"status": "noop", "reason": "not_enough_replayable_history", "context": snapshot.as_dict()}
         if session_key in self.__pending_context_compactions:
             return {
                 "status": "scheduled",
                 "reason": "already_pending",
                 "context": self.context_status(session_key, runtime=runtime),
             }
-
-        self.__pending_context_compactions.add(session_key)
-
-        async def _compact_after_current_turn() -> None:
-            try:
-                lock = self.__target._get_session_lock(session_key)
-                async with lock:
-                    await self.__context.compact(session_key, runtime=runtime)
-            finally:
-                self.__pending_context_compactions.discard(session_key)
-
-        self.__target.schedule_background(_compact_after_current_turn())
+        self.__pending_context_compactions[session_key] = runtime
         return {
             "status": "scheduled",
             "reason": "after_current_turn",

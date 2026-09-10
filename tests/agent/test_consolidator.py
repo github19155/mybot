@@ -535,7 +535,7 @@ class TestCompactIdleSession:
         sessions.save(session)
 
         result = await real_consolidator.compact_idle_session(
-            "cli:test", runtime=runtime, max_suffix=8
+            "cli:test", runtime=runtime
         )
         assert result == "Summary of old conversation."
 
@@ -768,13 +768,13 @@ class TestCompactIdleSession:
         for i in range(18):
             session.add_message("user", f"user msg {i}")
             session.add_message("assistant", f"assistant msg {i}")
-        # Final correction exchange lands inside the retained max_suffix window.
+        # Final correction exchange lands inside the retained replay window.
         session.add_message("user", "no, that's wrong, use approach B")
         session.add_message("assistant", "CORRECTED_FINAL_RESULT_alpha")
         sessions.save(session)
 
         await real_consolidator.compact_idle_session(
-            "cli:correction", runtime=runtime, max_suffix=8
+            "cli:correction", runtime=runtime
         )
 
         sent_messages = mock_provider.chat_with_retry.call_args.kwargs["messages"]
@@ -800,7 +800,7 @@ class TestCompactIdleSession:
         sessions.save(session)
 
         await real_consolidator.compact_idle_session(
-            "cli:rawdrop", runtime=runtime, max_suffix=8
+            "cli:rawdrop", runtime=runtime
         )
 
         raw = "\n".join(e["content"] for e in store.read_unprocessed_history(since_cursor=0))
@@ -830,7 +830,7 @@ class TestCompactIdleSession:
         real_consolidator.sessions.save(session)
 
         await real_consolidator.compact_idle_session(
-            "cli:test", runtime=runtime, max_suffix=4
+            "cli:test", runtime=runtime
         )
 
         entries = store.read_unprocessed_history(since_cursor=0)
@@ -874,10 +874,10 @@ class TestCompactIdleSession:
         sessions.save(session)
 
         result = await real_consolidator.compact_idle_session(
-            "cli:nothing", runtime=runtime, max_suffix=4
+            "cli:nothing", runtime=runtime
         )
         second = await real_consolidator.compact_idle_session(
-            "cli:nothing", runtime=runtime, max_suffix=4
+            "cli:nothing", runtime=runtime
         )
         assert result == "(nothing)"
         assert second == ""
@@ -900,7 +900,7 @@ class TestCompactIdleSession:
         sessions.save(session)
 
         result = await real_consolidator.compact_idle_session(
-            "cli:fail", runtime=runtime, max_suffix=4
+            "cli:fail", runtime=runtime
         )
         assert result is not None
         assert "[RAW]" in result
@@ -942,7 +942,7 @@ class TestCompactIdleSession:
         sessions.save(session)
 
         result = await real_consolidator.compact_idle_session(
-            "cli:offset", runtime=runtime, max_suffix=4
+            "cli:offset", runtime=runtime
         )
         assert result == "Tail summary."
         reloaded = sessions.get_or_create("cli:offset")
@@ -978,7 +978,7 @@ class TestCompactIdleSession:
         sessions.save(session)
 
         result = await real_consolidator.compact_idle_session(
-            "cli:noncontiguous", runtime=runtime, max_suffix=6
+            "cli:noncontiguous", runtime=runtime
         )
         assert result == "Tail summary."
 
@@ -1263,7 +1263,7 @@ class TestCompactIdleSession:
 
         task = asyncio.ensure_future(
             real_consolidator.compact_idle_session(
-                "cli:lock", runtime=runtime, max_suffix=4
+                "cli:lock", runtime=runtime
             )
         )
         await started.wait()

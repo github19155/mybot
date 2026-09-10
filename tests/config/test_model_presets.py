@@ -363,7 +363,7 @@ def test_validator_accepts_dream_model_preset() -> None:
 
 
 def test_validator_rejects_unknown_dream_model_preset() -> None:
-    with pytest.raises(ValueError, match="Dream model preset 'unknown' not found"):
+    with pytest.raises(ValueError, match="Dream model_override preset 'unknown' not found in model_presets"):
         Config.model_validate({
             "agents": {"defaults": {"dream": {"modelOverride": "unknown"}}},
         })

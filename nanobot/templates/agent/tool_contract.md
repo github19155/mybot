@@ -81,13 +81,14 @@
 - Main owns the conversation, decomposition, worker choice, coordination, and final synthesis.
 - Treat work likely to take more than about 10 seconds, including installs or dependency downloads, builds, and broad test suites, as background work; use `subagent` `run` with `wait=false`.
 - Results arrive automatically. Do not repeatedly poll `status` or sleep-and-check.
-- Route workers in three lanes: prefer a matching active Specialist; with `role` omitted, any explicit per-run override means ephemeral WorkAgent; with `role` omitted and no override, use permanent `general`. Use `role.list` to discover persistent roles.
-- WorkAgent is task-scoped only: no role persistence, Dream management, or role-usage telemetry. It reuses the normal Subagent runtime/lifecycle and disappears after the task.
+- Route workers in three lanes: prefer a matching configured Specialist; with `role` omitted, any explicit per-run override means ephemeral WorkAgent; with `role` omitted and no override, use permanent `general`. Use `role.list` to discover persistent roles.
+- WorkAgent is task-scoped only: no role persistence or role-usage telemetry. It reuses the normal Subagent runtime/lifecycle and disappears after the task.
 - WorkAgent does not inherit General's persistent prompt/model/generation tuning; unspecified runtime settings inherit Main. Model-specific Prompt Prefix remains global for Main/General/WorkAgent/Specialist.
 - Use `wait=true` only for short child work needed before the current turn can proceed. Main may execute short interactive work directly.
-- `status=cold` Specialists are discoverable but not preferred. Specialist deletion is user-governed; permanent `general` cannot be deleted or disabled.
+- Persistent Specialists are config-owned. Dream may propose Specialist candidates but cannot create, update, activate, disable, or delete roles.
+- High-impact Specialist creation or permission expansion requires explicit User approval. Permanent `general` cannot be deleted or disabled.
 - Browser is a worker capability, not a Browser Agent. Do not run parallel browser workers against the same persistent Chromium/profile.
 - Children cannot create further Subagents. Concurrent workers share files; coordinate overlapping writes through Main.
-- Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.
+- Use `cron` for scheduled reminders or recurring jobs; Dream is a separate background cognition worker and is not a cron job.
 - For heartbeat tasks, update `HEARTBEAT.md`; the default gateway heartbeat cron job handles periodic checks when enabled.
 - Do not write reminders only to memory files when the user expects an actual notification.

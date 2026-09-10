@@ -106,7 +106,7 @@ class TestResolveConfig:
         saved = json.loads(config_path.read_text(encoding="utf-8"))
         assert saved["channels"]["telegram"]["token"] == "${MY_TOKEN}"
 
-    def test_save_preserves_dream_legacy_cron(self, tmp_path):
+    def test_save_drops_legacy_dream_cron(self, tmp_path):
         config_path = tmp_path / "config.json"
         config_path.write_text(
             json.dumps(
@@ -120,19 +120,15 @@ class TestResolveConfig:
         save_config(config, config_path)
 
         saved = json.loads(config_path.read_text(encoding="utf-8"))
-        assert saved["agents"]["defaults"]["dream"]["cron"] == "0 */4 * * *"
-
-        reloaded = load_config(config_path)
-        schedule = reloaded.agents.defaults.dream.build_schedule("UTC")
-        assert schedule.kind == "cron"
-        assert schedule.expr == "0 */4 * * *"
+        dream = saved["agents"]["defaults"]["dream"]
+        assert "cron" not in dream
+        assert dream["pollIntervalSeconds"] == 30
 
     def test_save_keeps_oauth_provider_configs_excluded(self, tmp_path):
         config_path = tmp_path / "config.json"
         config_path.write_text(
             json.dumps(
                 {
-                    "agents": {"defaults": {"dream": {"cron": "0 */4 * * *"}}},
                     "providers": {
                         "openaiCodex": {"apiKey": "codex-secret"},
                         "xaiGrok": {"apiKey": "xai-secret"},
@@ -148,7 +144,6 @@ class TestResolveConfig:
         save_config(config, config_path)
 
         saved = json.loads(config_path.read_text(encoding="utf-8"))
-        assert saved["agents"]["defaults"]["dream"]["cron"] == "0 */4 * * *"
         assert "openaiCodex" not in saved["providers"]
         assert "xaiGrok" not in saved["providers"]
         assert "githubCopilot" not in saved["providers"]

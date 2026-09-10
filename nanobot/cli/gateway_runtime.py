@@ -143,26 +143,6 @@ def _install_gateway_shutdown_handlers(
     return restore
 
 
-def _advance_dream_cursor_if_behind(memory: Any) -> None:
-    latest = memory.get_latest_cursor()
-    if memory.get_last_dream_cursor() < latest:
-        memory.set_last_dream_cursor(latest)
-
-
-def _commit_dream_changes(memory: Any) -> str | None:
-    """Commit durable Dream edits, without entering the commit path for a no-op run."""
-    if not memory.git.is_initialized():
-        return None
-    diff_body = memory.dream_content_diff()
-    if not diff_body:
-        return None
-    message = memory.build_dream_commit_message(
-        "dream: periodic memory consolidation",
-        diff_body,
-    )
-    return memory.git.auto_commit(message)
-
-
 _HEARTBEAT_PREAMBLE = (
     "[Your response will be delivered directly to the user's messaging app. "
     "Output ONLY the final user-facing message. Never reference internal "
@@ -303,21 +283,13 @@ async def _close_gateway_runtime(
     bounded and idempotent, so it also covers a cancelled or incomplete loop
     cleanup without leaving subprocess transports alive past ``loop.close()``.
     """
-    # Some SDKs swallow task cancellation while attempting to reconnect.
-    # Close channel transports before waiting for their runners to exit.
     await channels.stop_all()
     for task in tasks:
         if not task.done():
             task.cancel()
     pending: set[asyncio.Task[Any]] = set()
     if tasks:
-        # Bounded: a coroutine that swallows cancellation (e.g. an SDK reconnect
-        # loop) must not hold the stop open until systemd's timeout kills the
-        # cgroup. Anything still pending is abandoned and closed underneath.
         _done, pending = await asyncio.wait(tasks, timeout=task_wait_timeout)
-        # A task can swallow the first cancellation while unwinding. Re-cancel
-        # timed-out tasks so an agent loop stuck draining background work reaches
-        # its resource-cleanup phase before the explicit final close below.
         for task in pending:
             task.cancel()
     if runtime_tasks is not None and not runtime_tasks.done():
@@ -330,8 +302,6 @@ async def _close_gateway_runtime(
             await asyncio.wait_for(close(), timeout=close_timeout)
         except BaseException as exc:  # noqa: BLE001 - shutdown must proceed
             logger.warning("Gateway shutdown: {} cleanup incomplete: {}", label, exc)
-    # Retrieving an already-finished gather prevents noisy unhandled exceptions,
-    # but never wait for it here: its children were bounded individually above.
     if runtime_tasks is not None and runtime_tasks.done():
         with suppress(asyncio.CancelledError, Exception):
             await runtime_tasks
@@ -353,6 +323,7 @@ def _run_gateway(
     gateway_instance: GatewayInstance | None = None,
 ) -> None:
     """Shared gateway runtime; ``open_browser_url`` opens a tab once channels are up."""
+    from nanobot.agent.dream_worker import run_dream_worker
     from nanobot.agent.model_presets import load_model_preset_catalog
     from nanobot.agent.tools.message import MessageTool
     from nanobot.agent.turn_delivery import TurnDeliveryFactory
@@ -442,7 +413,6 @@ def _run_gateway(
             raise typer.Exit(1) from exc
     session_manager = SessionManager(config.workspace_path)
 
-    # Use the same runtime identity for foreground and managed gateway processes.
     from nanobot.config.loader import get_config_path
     from nanobot.gateway.runtime import (
         GatewayClientLease,
@@ -457,11 +427,9 @@ def _run_gateway(
     gateway_runtime = GatewayRuntime(paths=instance.paths)
     gateway_start_options = instance.start_options(port=port)
 
-    # Preserve existing single-workspace installs, but keep custom workspaces clean.
     if is_default_workspace(config.workspace_path):
         _migrate_cron_store(config)
 
-    # Create cron service with workspace-scoped store
     cron_store_path = config.workspace_path / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
     trigger_store = LocalTriggerStore(config.workspace_path)
@@ -481,7 +449,6 @@ def _run_gateway(
         unified_session=config.agents.defaults.unified_session,
     )
 
-    # Create agent with cron service
     agent = AgentLoop.from_config(
         config, bus,
         provider=provider_snapshot.provider,
@@ -501,6 +468,7 @@ def _run_gateway(
         tool_registry=tools,
         recovery_admission=recovery,
     )
+
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
 
@@ -557,73 +525,11 @@ def _run_gateway(
     if isinstance(message_tool, MessageTool):
         message_tool.set_send_callback(_deliver_to_channel)
 
-    # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
         async def _silent(*_args: Any, **_kwargs: Any) -> None:
             pass
 
-        # Dream is an internal job — run directly, not through the agent loop.
-        if job.name == "dream":
-            from nanobot.agent.memory import MemoryStore
-
-            dream_session_key = MemoryStore.dream_session_key
-            prune_dream_sessions = MemoryStore.prune_dream_sessions
-
-            store = agent.context.memory
-            resp = None
-            diff_body = ""
-            try:
-                result = store.build_dream_prompt()
-                if result is None:
-                    logger.info("Dream: nothing to process")
-                    return None
-                prompt, last_cursor = result
-                key = dream_session_key()
-                dream_runtime = agent.dream_runtime()
-                await mcp_provider.connect()
-                resp = await agent.process_direct(
-                    prompt,
-                    session_key=key,
-                    ephemeral=True,
-                    tools=store.build_dream_tools(),
-                    on_progress=_silent,
-                    runtime=dream_runtime,
-                )
-                # The real file delta grounds the audit record; normal completion
-                # decides whether this history batch has finished processing.
-                diff_body = store.dream_content_diff()
-                completed = MemoryStore.dream_run_completed(resp)
-                if completed:
-                    store.set_last_dream_cursor(last_cursor)
-                    if diff_body:
-                        logger.info(
-                            "Dream cron job completed, cursor advanced to {}",
-                            last_cursor,
-                        )
-                    else:
-                        logger.info(
-                            "Dream cron job completed with no memory changes; "
-                            "cursor advanced to {}",
-                            last_cursor,
-                        )
-                else:
-                    logger.warning(
-                        "Dream cron job did not complete ({}); cursor remains at {}",
-                        MemoryStore.dream_incompletion_reason(resp),
-                        store.get_last_dream_cursor(),
-                    )
-            except Exception:
-                logger.exception("Dream cron job failed")
-            finally:
-                sha = _commit_dream_changes(store)
-                if sha:
-                    logger.info("Dream commit: {}", sha)
-                store.compact_history()
-                prune_dream_sessions(agent.sessions)
-            return None
-
-        # Heartbeat is a system job that checks HEARTBEAT.md for active tasks.
         if job.name == "heartbeat":
             heartbeat_file = config.workspace_path / "HEARTBEAT.md"
             try:
@@ -644,8 +550,6 @@ def _run_gateway(
                 + f"You are executing periodic heartbeat tasks. Read the active tasks below, perform each one, and report what you did:\n\n{content}"
             )
 
-            # Internal check: funnel all output through the post-run gate so the
-            # turn can't deliver directly via the message tool and skip it.
             suppress_token = None
             if isinstance(message_tool, MessageTool):
                 suppress_token = message_tool.set_suppress_delivery(True)
@@ -663,13 +567,10 @@ def _run_gateway(
                     message_tool.reset_suppress_delivery(suppress_token)
 
             if not resp or not resp.content:
-                return
+                return None
 
             response = resp.content
-
             evaluator_prompt = resolve_evaluator_prompt(config.workspace_path)
-
-            # Fail closed: stay silent on evaluator failure instead of notifying.
             with llm_usage_source("cron"):
                 should_notify = await evaluate_response(
                     response=response,
@@ -715,8 +616,6 @@ def _run_gateway(
         agent.context.skills.disabled_skills = set(disabled_skills)
         agent.subagents.disabled_skills = set(disabled_skills)
 
-    # Create channel manager (forwards SessionManager so the WebSocket channel
-    # can serve the embedded webui's REST surface).
     channels = ChannelManager(
         config,
         bus,
@@ -763,6 +662,14 @@ def _run_gateway(
         console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
     else:
         console.print("[yellow]✗[/yellow] Heartbeat: disabled")
+
+    dream_cfg = config.agents.defaults.dream
+    if dream_cfg.enabled:
+        console.print(
+            f"[green]✓[/green] Dream: adaptive background worker, poll {dream_cfg.poll_interval_seconds}s"
+        )
+    else:
+        console.print("[yellow]○[/yellow] Dream: disabled")
 
     async def _health_server(host: str, health_port: int) -> None:
         """Lightweight HTTP health endpoint on the gateway port."""
@@ -820,24 +727,13 @@ def _run_gateway(
         _print_gateway_health_endpoint(host, health_port)
         async with server:
             await server.serve_forever()
-    # Register Dream system job (idempotent on restart)
-    from nanobot.cron.types import CronJob, CronPayload, CronSchedule
-    dream_cfg = config.agents.defaults.dream
-    if dream_cfg.enabled:
-        cron.register_system_job(CronJob(
-            id="dream",
-            name="dream",
-            schedule=dream_cfg.build_schedule(config.agents.defaults.timezone),
-            payload=CronPayload(kind="system_event"),
-        ))
-        console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
-    else:
-        console.print("[yellow]○[/yellow] Dream: disabled")
-        # Cursor repair must not depend on a healthy cron store.
-        _advance_dream_cursor_if_behind(agent.context.memory)
-        cron.remove_system_job("dream")
 
-    # Register Heartbeat system job (idempotent on restart)
+    from nanobot.cron.types import CronJob, CronPayload, CronSchedule
+
+    # Remove the obsolete internal Dream cron job if it exists in a workspace
+    # created by an earlier build. Dream is no longer part of the cron subsystem.
+    cron.remove_system_job("dream")
+
     if hb_cfg.enabled:
         cron.register_system_job(CronJob(
             id="heartbeat",
@@ -863,11 +759,8 @@ def _run_gateway(
             return
         from urllib.parse import urlparse
 
-        # Channels start asynchronously. When the caller supplies a backend
-        # readiness route, wait for an actual HTTP response rather than probing
-        # the WebSocket listener with an incomplete TCP connection.
         if open_browser_ready_url:
-            for _ in range(40):  # ~4s max per listener
+            for _ in range(40):
                 if await asyncio.to_thread(
                     _http_endpoint_responding,
                     open_browser_ready_url,
@@ -878,7 +771,7 @@ def _run_gateway(
         parsed = urlparse(open_browser_url)
         target_host = parsed.hostname or config.gateway.host or "127.0.0.1"
         target_port = parsed.port or port
-        for _ in range(40):  # ~4s max
+        for _ in range(40):
             try:
                 _reader, writer = await asyncio.open_connection(
                     target_host,
@@ -914,12 +807,9 @@ def _run_gateway(
         )
         try:
             await cron.start()
-            # Re-read once on first admission to close the watcher subscription window.
             agent.runtime_resolver.invalidate()
-            # Recovery must finish before WebSocket and other channels begin
-            # accepting new input.  That makes a new user message reliably
-            # supersede an old recoverable turn instead of racing its queue.
             await recovery.scan()
+
             async def _run_agent() -> None:
                 try:
                     await mcp_provider.connect()
@@ -944,6 +834,7 @@ def _run_gateway(
                     name="nanobot-config-watcher",
                 ),
                 asyncio.create_task(_run_agent(), name="nanobot-agent-loop"),
+                asyncio.create_task(run_dream_worker(agent), name="nanobot-dream-worker"),
                 asyncio.create_task(channels.start_all(), name="nanobot-channels"),
                 asyncio.create_task(
                     run_local_trigger_queue(
@@ -997,8 +888,6 @@ def _run_gateway(
             console.print("\n[red]Error: Gateway crashed unexpectedly[/red]")
             console.print(traceback.format_exc())
             if not startup_complete:
-                # Do not report a successful gateway command when startup
-                # failed before any runtime task or listener was created.
                 raise typer.Exit(1)
         finally:
             try:
@@ -1007,13 +896,8 @@ def _run_gateway(
                     with suppress(asyncio.CancelledError):
                         await shutdown_task
                 cron.stop()
-                # A gateway exit interrupts ownership of active turns; it is
-                # not the same as the user stopping a turn.  Keep checkpoints
-                # so the next gateway can offer an explicit Continue action.
                 agent.preserve_inflight_turns_on_shutdown()
                 agent.stop()
-                # Cancel runtime tasks first, then deterministically close
-                # exec/MCP resources while the event loop is still alive.
                 await _close_gateway_runtime(
                     agent,
                     mcp_provider,
@@ -1021,9 +905,6 @@ def _run_gateway(
                     tasks,
                     runtime_tasks,
                 )
-                # Flush all cached sessions to durable storage before exit.
-                # This prevents data loss on filesystems with write-back
-                # caching (rclone VFS, NFS, FUSE mounts, etc.).
                 flushed = agent.sessions.flush_all()
                 if flushed:
                     logger.info("Shutdown: flushed {} session(s) to disk", flushed)

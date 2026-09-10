@@ -1,4 +1,4 @@
-"""Tests for GitStore — git-backed version control for memory files."""
+"""Tests for the standalone GitStore utility."""
 
 import os
 from unittest.mock import patch
@@ -114,7 +114,7 @@ class TestAutoCommit:
     def test_does_not_create_empty_commits(self, git_ready):
         git_ready.auto_commit("nothing 1")
         git_ready.auto_commit("nothing 2")
-        assert len(git_ready.log()) == 1  # only init commit
+        assert len(git_ready.log()) == 1
 
     def test_status_failure_is_explicit(self, git_ready):
         with patch("dulwich.porcelain.status", side_effect=OSError("broken index")):
@@ -133,7 +133,7 @@ class TestLog:
             git_ready.auto_commit(f"commit {i}")
 
         commits = git_ready.log()
-        assert len(commits) == 4  # init + 3
+        assert len(commits) == 4
         assert "commit 2" in commits[0].message
         assert "init" in commits[-1].message
 
@@ -225,7 +225,6 @@ class TestShowCommitDiff:
 
 class TestCommitInfoFormat:
     def test_format_with_diff(self):
-        from nanobot.utils.gitstore import CommitInfo
         c = CommitInfo(sha="abcd1234", message="test commit\nsecond line", timestamp="2026-04-02 12:00")
         result = c.format(diff="some diff")
         assert "test commit" in result
@@ -233,13 +232,11 @@ class TestCommitInfoFormat:
         assert "some diff" in result
 
     def test_format_without_diff(self):
-        from nanobot.utils.gitstore import CommitInfo
         c = CommitInfo(sha="abcd1234", message="test", timestamp="2026-04-02 12:00")
         result = c.format()
         assert "(no file changes)" in result
 
     def test_format_empty_message(self):
-        from nanobot.utils.gitstore import CommitInfo
         c = CommitInfo(sha="abcd1234", message="", timestamp="2026-04-02 12:00")
         result = c.format()
         assert "(no message)" in result
@@ -258,14 +255,11 @@ class TestRevert:
         git_ready.auto_commit("v2")
 
         commits = git_ready.log()
-        # commits[0] = v2 (HEAD), commits[1] = init
-        # Revert v2 → restore to init's state (empty SOUL.md)
         new_sha = git_ready.revert(commits[0].sha)
         assert new_sha is not None
         assert (ws / "SOUL.md").read_text(encoding="utf-8") == ""
 
     def test_root_commit_returns_none(self, git_ready):
-        """Cannot revert the root commit (no parent to restore to)."""
         commits = git_ready.log()
         assert len(commits) == 1
         assert git_ready.revert(commits[0].sha) is None
@@ -285,15 +279,3 @@ class TestRevert:
         assert git_ready.revert(backup_sha, message_prefix="dream:") is None
         assert (ws / "SOUL.md").read_text(encoding="utf-8") == "dream v2"
         assert git_ready.log()[0].sha == latest_sha
-
-
-class TestMemoryStoreGitProperty:
-    def test_git_property_exposes_gitstore(self, tmp_path):
-        from nanobot.agent.memory import MemoryStore
-        store = MemoryStore(tmp_path)
-        assert isinstance(store.git, GitStore)
-
-    def test_git_property_is_same_object(self, tmp_path):
-        from nanobot.agent.memory import MemoryStore
-        store = MemoryStore(tmp_path)
-        assert store.git is store._git

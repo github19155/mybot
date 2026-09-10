@@ -18,6 +18,8 @@ from nanobot.webui import settings_models as models
 from nanobot.webui.settings_contracts import WebUISettingsError
 from nanobot.webui.settings_services import WebUISettingsConfig
 
+_DREAM_MIN_CONTEXT_TOKENS = 16_000
+
 
 class ModelManagement:
     """Model/provider administration plus Main-facing fleet discovery."""
@@ -30,6 +32,11 @@ class ModelManagement:
 
     def _load(self) -> Config:
         return self._store.load() if self._store is not None else self.config
+
+    def config_snapshot(self) -> Config:
+        """Return the current validated configuration without exposing mutable storage."""
+        with self._lock:
+            return self._load().model_copy(deep=True)
 
     def _runtime_from_selection(
         self,
@@ -68,6 +75,25 @@ class ModelManagement:
             )
         except Exception:
             raise ValueError("Cannot resolve task model; check the configured provider and credentials") from None
+        return runtime_from_provider_snapshot(snapshot)
+
+    def _runtime_from_named_preset_without_main_fallbacks(
+        self,
+        config: Config,
+        preset_name: str,
+    ) -> LLMRuntime:
+        """Resolve an explicit Dream route without inheriting Main's fallback chain."""
+        if preset_name != "default" and preset_name not in config.model_presets:
+            raise ValueError(f"Unknown Dream model preset: {preset_name}")
+        isolated = config.model_copy(deep=True)
+        isolated.agents.defaults.fallback_models = []
+        isolated = resolve_config_env_vars(isolated, config_path=isolated.source_path)
+        preset = isolated.resolve_preset(preset_name)
+        snapshot = build_provider_snapshot(
+            isolated,
+            preset=preset,
+            preset_name=preset_name,
+        )
         return runtime_from_provider_snapshot(snapshot)
 
     def resolve_task_runtime(
@@ -113,6 +139,43 @@ class ModelManagement:
                 parent, self._load(), model=model, model_preset=model_preset,
             )
 
+    async def resolve_dream_runtime(self, workload: str) -> LLMRuntime:
+        """Resolve Dream independently from Main while reusing Fleet and Admission."""
+        with self._lock:
+            config = self._load()
+            dream = config.agents.defaults.dream
+            if dream.model_override:
+                return self._runtime_from_named_preset_without_main_fallbacks(
+                    config,
+                    dream.model_override,
+                )
+            pool = dream.pool_for(workload)
+
+        recommendation = await self.fleet_recommend(
+            pool=pool,
+            task_type="background",
+            min_context_tokens=_DREAM_MIN_CONTEXT_TOKENS,
+        )
+        selected: str | None = None
+        if recommendation.get("status") == "ok":
+            recommended = recommendation.get("recommended")
+            if isinstance(recommended, dict):
+                value = cast(dict[str, object], recommended).get("preset")
+                if isinstance(value, str) and value:
+                    selected = value
+
+        with self._lock:
+            config = self._load()
+            dream = config.agents.defaults.dream
+            if selected is None:
+                selected = dream.fallback_preset
+            if selected is None:
+                raise RuntimeError(
+                    "Dream has no eligible model route; configure a Dream pool, "
+                    "model_override, or fallback_preset"
+                )
+            return self._runtime_from_named_preset_without_main_fallbacks(config, selected)
+
     @staticmethod
     def _catalog(config: Config) -> dict[str, Any]:
         payload = models.model_settings_payload(config, oauth_status=models.oauth_provider_status)
@@ -131,6 +194,7 @@ class ModelManagement:
             "status": "ok",
             "model_presets": payload["model_presets"],
             "fleet_profiles": fleet_presets,
+            "dream": config.agents.defaults.dream.model_dump(),
             "image_analysis": payload["image_analysis"],
             "subagent_roles": payload["subagent_roles"],
             "max_concurrent_subagents": payload["max_concurrent_subagents"],
@@ -274,6 +338,29 @@ class ModelManagement:
                 raise WebUISettingsError("Unknown provider")
             config.providers.model_extra[matched] = validated
 
+    @staticmethod
+    def _update_dream(config: Config, params: dict[str, Any]) -> None:
+        """Update only Main-adjustable Dream policy fields."""
+        fields = {
+            "enabled",
+            "cooldown_minutes",
+            "idle_minutes",
+            "pressure_entries",
+            "max_defer_minutes",
+            "max_entries_per_run",
+            "max_runs_per_day",
+            "retention_days",
+            "poll_interval_seconds",
+            "model_override",
+            "fallback_preset",
+            "pools",
+        }
+        unknown = set(params) - fields
+        if unknown:
+            raise WebUISettingsError(f"Unknown Dream setting: {sorted(unknown)[0]}")
+        payload = {**config.agents.defaults.dream.model_dump(), **params}
+        config.agents.defaults.dream = type(config.agents.defaults.dream).model_validate(payload)
+
     def _execute(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             if action == "list":
@@ -287,7 +374,8 @@ class ModelManagement:
                 "provider_update": models.update_provider_settings,
             }
             operation = operations.get(action)
-            if operation is None and action not in {"fleet_profile_update", "fleet_provider_update"}:
+            internal_actions = {"fleet_profile_update", "fleet_provider_update", "dream_update"}
+            if operation is None and action not in internal_actions:
                 return {"status": "error", "message": "Unknown model management action"}
             query = {
                 key: [value if isinstance(value, str) else json.dumps(value)]
@@ -299,6 +387,8 @@ class ModelManagement:
                     self._update_fleet_profile(config, params)
                 elif action == "fleet_provider_update":
                     self._update_fleet_provider(config, params)
+                elif action == "dream_update":
+                    self._update_dream(config, params)
                 elif action in {"model_create", "model_update"}:
                     selected = config.agents.defaults.model_preset
                     fallbacks = list(config.agents.defaults.fallback_models)
@@ -317,7 +407,7 @@ class ModelManagement:
             self.config.model_fleet = updated.model_fleet
             self.config.agents.defaults.model_preset = updated.agents.defaults.model_preset
             self.config.agents.defaults.fallback_models = updated.agents.defaults.fallback_models
-            self.config.agents.defaults.dream.model_override = updated.agents.defaults.dream.model_override
+            self.config.agents.defaults.dream = updated.agents.defaults.dream
             return self._catalog(updated)
 
     async def execute(self, action: str, **params: Any) -> dict[str, Any]:
@@ -348,7 +438,11 @@ class ModelManagement:
             result = await asyncio.to_thread(self._execute, action, params)
         except WebUISettingsError as exc:
             message = exc.message if action in {
-                "roles_update", "model_delete", "fleet_profile_update", "fleet_provider_update",
+                "roles_update",
+                "model_delete",
+                "fleet_profile_update",
+                "fleet_provider_update",
+                "dream_update",
             } else "Invalid model/provider settings; check the action fields and provider configuration"
             return {"status": "error", "message": message}
         except Exception:

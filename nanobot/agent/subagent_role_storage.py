@@ -1,4 +1,4 @@
-"""Persistence helpers for Dream-managed specialist roles and telemetry."""
+"""Persistence helpers for subagent role usage telemetry."""
 
 from __future__ import annotations
 
@@ -14,25 +14,12 @@ if TYPE_CHECKING:
     from nanobot.config.schema import Config
 
 
-# Dream role state is separate from reusable skills. Generic Dream file tools
-# cannot write these paths; the restricted dream_roles capability owns them.
-DREAM_ROLE_STATE_FILE = Path("agents") / "roles.json"
-DREAM_CANDIDATES_FILE = Path("agents") / "role_candidates.json"
-DREAM_USAGE_FILE = Path("agents") / "role_usage.json"
+ROLE_USAGE_FILE = Path("agents") / "role_usage.json"
 ROLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_ROLE_LOCK = threading.Lock()
 _USAGE_LOCK = threading.Lock()
-_CANDIDATE_LOCK = threading.Lock()
-_ROLE_GITIGNORE_RULES = (
-    "!agents/",
-    "!agents/roles.json",
-    "!agents/role_candidates.json",
-    "agents/role_usage.json",
-)
 
 
 def normalize_role_name(name: object) -> str:
-    """Normalize and validate a role identifier."""
     if not isinstance(name, str):
         raise ValueError("role name must be a string")
     normalized = name.strip().lower()
@@ -47,16 +34,8 @@ def workspace_from_config(config: "Config | None") -> Path | None:
     return Path(config.workspace_path).expanduser().resolve()
 
 
-def role_state_path(workspace: Path) -> Path:
-    return workspace.expanduser().resolve() / DREAM_ROLE_STATE_FILE
-
-
-def candidate_state_path(workspace: Path) -> Path:
-    return workspace.expanduser().resolve() / DREAM_CANDIDATES_FILE
-
-
 def usage_state_path(workspace: Path) -> Path:
-    return workspace.expanduser().resolve() / DREAM_USAGE_FILE
+    return workspace.expanduser().resolve() / ROLE_USAGE_FILE
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
@@ -77,82 +56,7 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def _ensure_dream_state_git_visibility(workspace: Path) -> None:
-    """Let pre-role-state memory repos track the new durable role files."""
-    root = workspace.expanduser().resolve()
-    if not (root / ".git").exists():
-        return
-
-    gitignore = root / ".gitignore"
-    try:
-        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    except OSError:
-        return
-    existing_lines = set(existing.splitlines())
-    missing = [rule for rule in _ROLE_GITIGNORE_RULES if rule not in existing_lines]
-    if not missing:
-        return
-
-    prefix = existing.rstrip("\n")
-    updated = (prefix + "\n" if prefix else "") + "\n".join(missing) + "\n"
-    try:
-        gitignore.write_text(updated, encoding="utf-8")
-    except OSError:
-        return
-
-
-def dream_role_entries_for_workspace(workspace: Path) -> dict[str, dict[str, Any]]:
-    raw = read_json_object(role_state_path(workspace))
-    result: dict[str, dict[str, Any]] = {}
-    for raw_name, value in raw.items():
-        if not isinstance(raw_name, str) or not isinstance(value, dict):
-            continue
-        try:
-            name = normalize_role_name(raw_name)
-        except ValueError:
-            continue
-        payload = dict(value)
-        declared_name = payload.get("name")
-        if declared_name is not None:
-            try:
-                if normalize_role_name(declared_name) != name:
-                    continue
-            except ValueError:
-                continue
-        result[name] = payload
-    return result
-
-
-def dream_role_entries(config: "Config | None") -> dict[str, dict[str, Any]]:
-    workspace = workspace_from_config(config)
-    return dream_role_entries_for_workspace(workspace) if workspace is not None else {}
-
-
-def write_dream_role(workspace: Path, name: str, payload: dict[str, Any]) -> None:
-    normalized = normalize_role_name(name)
-    path = role_state_path(workspace)
-    with _ROLE_LOCK:
-        _ensure_dream_state_git_visibility(workspace)
-        roles = read_json_object(path)
-        roles[normalized] = dict(payload)
-        atomic_write_json(path, roles)
-
-
-def delete_dream_role(workspace: Path, name: str) -> bool:
-    normalized = normalize_role_name(name)
-    path = role_state_path(workspace)
-    with _ROLE_LOCK:
-        _ensure_dream_state_git_visibility(workspace)
-        roles = read_json_object(path)
-        if normalized not in roles:
-            return False
-        roles.pop(normalized, None)
-        atomic_write_json(path, roles)
-        return True
-
-
 def role_usage(workspace: Path, role: str) -> dict[str, Any]:
-    """Return persisted lightweight usage metadata for one role."""
     name = normalize_role_name(role)
     payload = read_json_object(usage_state_path(workspace))
     value = payload.get(name)
@@ -160,7 +64,7 @@ def role_usage(workspace: Path, role: str) -> dict[str, Any]:
 
 
 def record_role_use(workspace: Path, role: str) -> None:
-    """Record an accepted persistent-role launch for Dream's hot/cold reasoning."""
+    """Record an accepted role launch for lifecycle/value analysis."""
     name = normalize_role_name(role)
     path = usage_state_path(workspace)
     with _USAGE_LOCK:
@@ -182,96 +86,4 @@ def delete_role_usage(workspace: Path, role: str) -> None:
         if name not in payload:
             return
         payload.pop(name, None)
-        atomic_write_json(path, payload)
-
-
-def candidate_entries(workspace: Path) -> dict[str, dict[str, Any]]:
-    raw = read_json_object(candidate_state_path(workspace))
-    return {
-        name: dict(value)
-        for name, value in raw.items()
-        if isinstance(name, str) and isinstance(value, dict)
-    }
-
-
-def observe_candidate(
-    workspace: Path,
-    name: str,
-    *,
-    responsibility: str,
-    evidence: str,
-    occurrence: str | None = None,
-) -> dict[str, Any]:
-    """Persist evidence for one independent candidate occurrence.
-
-    ``occurrence`` is a stable source/task identity supplied by Dream. Rewording
-    evidence for the same occurrence does not increase the independent-evidence
-    count. Legacy callers without an occurrence retain evidence-text deduping.
-    """
-    normalized = normalize_role_name(name)
-    responsibility = responsibility.strip()
-    evidence = evidence.strip()
-    occurrence = occurrence.strip() if isinstance(occurrence, str) else ""
-    if not responsibility or not evidence:
-        raise ValueError("candidate observation requires responsibility and evidence")
-    path = candidate_state_path(workspace)
-    now = datetime.now(UTC).isoformat()
-    with _CANDIDATE_LOCK:
-        _ensure_dream_state_git_visibility(workspace)
-        payload = read_json_object(path)
-        current = payload.get(normalized)
-        row = dict(current) if isinstance(current, dict) else {}
-
-        prior_evidence = [
-            str(item).strip()
-            for item in row.get("evidence", [])
-            if isinstance(item, str) and item.strip()
-        ]
-        prior_occurrences = [
-            str(item).strip()
-            for item in row.get("occurrences", [])
-            if isinstance(item, str) and item.strip()
-        ]
-        if occurrence:
-            is_new = occurrence.casefold() not in {
-                item.casefold() for item in prior_occurrences
-            }
-        else:
-            is_new = evidence.casefold() not in {
-                item.casefold() for item in prior_evidence
-            }
-
-        if is_new:
-            prior_evidence.append(evidence)
-            if occurrence:
-                prior_occurrences.append(occurrence)
-        prior_evidence = prior_evidence[-8:]
-        prior_occurrences = prior_occurrences[-8:]
-
-        count = row.get("evidence_count", 0)
-        if not isinstance(count, int) or isinstance(count, bool):
-            count = 0
-        row.update({
-            "name": normalized,
-            "responsibility": responsibility,
-            "evidence_count": count + (1 if is_new else 0),
-            "evidence": prior_evidence,
-            "occurrences": prior_occurrences,
-            "first_seen": row.get("first_seen") or now,
-            "last_seen": now,
-        })
-        payload[normalized] = row
-        atomic_write_json(path, payload)
-        return dict(row)
-
-
-def remove_candidate(workspace: Path, name: str) -> None:
-    normalized = normalize_role_name(name)
-    path = candidate_state_path(workspace)
-    with _CANDIDATE_LOCK:
-        _ensure_dream_state_git_visibility(workspace)
-        payload = read_json_object(path)
-        if normalized not in payload:
-            return
-        payload.pop(normalized, None)
         atomic_write_json(path, payload)

@@ -1,16 +1,10 @@
 """Memory storage, transcript archiving, and session checkpoint consolidation."""
 
-# Tool schemas are installed by the ``@tool_parameters`` class decorator at
-# runtime; static analyzers cannot observe that it clears ``parameters`` from
-# ``__abstractmethods__`` before these classes are instantiated.
-# pyright: reportAbstractUsage=false, reportPrivateUsage=false
-
 from __future__ import annotations
 
 import asyncio
 import json
 import os
-import re
 import threading
 import weakref
 from contextlib import suppress
@@ -23,13 +17,8 @@ from loguru import logger
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import ProviderCallContext, ProviderConversationState
 from nanobot.runtime_context import public_history_messages
-from nanobot.session.manager import (
-    MIN_COMPACTED_REPLAY_MESSAGES,
-    Session,
-    SessionManager,
-)
+from nanobot.session.manager import MIN_COMPACTED_REPLAY_MESSAGES, Session, SessionManager
 from nanobot.session.summary import session_summary_from_metadata
-from nanobot.utils.gitstore import GitStore
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
     ensure_dir,
@@ -47,34 +36,21 @@ from nanobot.utils.workspace_prompts import (
 )
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.config.schema import Config
     from nanobot.utils.llm_runtime import LLMRuntime
 
-# ---------------------------------------------------------------------------
-# MemoryStore — pure file I/O layer
-# ---------------------------------------------------------------------------
+
+_RAW_ARCHIVE_MAX_CHARS = 16_000
+_HISTORY_ENTRY_HARD_CAP = 64_000
 
 
 class MemoryStore:
-    """Pure file I/O for memory files: MEMORY.md, history.jsonl, SOUL.md, USER.md."""
+    """Durable Memory and append-only history storage.
+
+    Dream only consumes the history/cursor/prompt surface. Mutation authority for
+    canonical Memory belongs to normal runtime code, not to Dream.
+    """
 
     _DEFAULT_MAX_HISTORY = 1000
-    # Durable files whose real working-tree delta grounds Dream commit messages.
-    # Usage telemetry is deliberately excluded: it is runtime evidence, not a
-    # Dream-authored state change.
-    _DREAM_CONTENT_PATHS = (
-        "SOUL.md",
-        "USER.md",
-        "memory/MEMORY.md",
-        "agents/roles.json",
-        "agents/role_candidates.json",
-    )
-    _LEGACY_ENTRY_START_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*")
-    _LEGACY_TIMESTAMP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\s*")
-    _LEGACY_RAW_MESSAGE_RE = re.compile(
-        r"^\[\d{4}-\d{2}-\d{2}[^\]]*\]\s+[A-Z][A-Z0-9_]*(?:\s+\[tools:\s*[^\]]+\])?:"
-    )
 
     def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
         self.workspace = workspace
@@ -82,31 +58,15 @@ class MemoryStore:
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "history.jsonl"
-        self.legacy_history_file = self.memory_dir / "HISTORY.md"
         self.soul_file = workspace / "SOUL.md"
         self.user_file = workspace / "USER.md"
         self._cursor_file = self.memory_dir / ".cursor"
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
-        self._corruption_logged = False  # rate-limit invalid cursor warning
-        self._malformed_entry_logged = False  # rate-limit bad history shape warning
-        self._oversize_logged = False  # rate-limit oversized-entry warning
+        self._corruption_logged = False
+        self._malformed_entry_logged = False
+        self._oversize_logged = False
         self._dream_prompt_oversize_logged = False
-        self._append_lock = threading.Lock()  # serialize cursor allocation + append
-        self._git = GitStore(workspace, tracked_files=[
-            "SOUL.md",
-            "USER.md",
-            "memory/MEMORY.md",
-            "memory/.dream_cursor",
-            "agents/roles.json",
-            "agents/role_candidates.json",
-        ])
-        self._maybe_migrate_legacy_history()
-
-    @property
-    def git(self) -> GitStore:
-        return self._git
-
-    # -- generic helpers -----------------------------------------------------
+        self._append_lock = threading.Lock()
 
     @staticmethod
     def read_file(path: Path) -> str:
@@ -115,136 +75,11 @@ class MemoryStore:
         except FileNotFoundError:
             return ""
 
-    def _maybe_migrate_legacy_history(self) -> None:
-        """One-time upgrade from legacy HISTORY.md to history.jsonl.
-
-        The migration is best-effort and prioritizes preserving as much content
-        as possible over perfect parsing.
-        """
-        if not self.legacy_history_file.exists():
-            return
-        if self.history_file.exists() and self.history_file.stat().st_size > 0:
-            return
-
-        try:
-            legacy_text = self.legacy_history_file.read_text(
-                encoding="utf-8",
-                errors="replace",
-            )
-        except OSError:
-            logger.exception("Failed to read legacy HISTORY.md for migration")
-            return
-
-        entries = self._parse_legacy_history(legacy_text)
-        try:
-            if entries:
-                self._write_entries(entries)
-                last_cursor = entries[-1]["cursor"]
-                self._cursor_file.write_text(str(last_cursor), encoding="utf-8")
-                # Default to "already processed" so upgrades do not replay the
-                # user's entire historical archive into Dream on first start.
-                self._dream_cursor_file.write_text(str(last_cursor), encoding="utf-8")
-
-            backup_path = self._next_legacy_backup_path()
-            self.legacy_history_file.replace(backup_path)
-            logger.info(
-                "Migrated legacy HISTORY.md to history.jsonl ({} entries)",
-                len(entries),
-            )
-        except Exception:
-            logger.exception("Failed to migrate legacy HISTORY.md")
-
-    def _parse_legacy_history(self, text: str) -> list[dict[str, Any]]:
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
-        if not normalized:
-            return []
-
-        fallback_timestamp = self._legacy_fallback_timestamp()
-        entries: list[dict[str, Any]] = []
-        chunks = self._split_legacy_history_chunks(normalized)
-
-        for cursor, chunk in enumerate(chunks, start=1):
-            timestamp = fallback_timestamp
-            content = chunk
-            match = self._LEGACY_TIMESTAMP_RE.match(chunk)
-            if match:
-                timestamp = match.group(1)
-                remainder = chunk[match.end():].lstrip()
-                if remainder:
-                    content = remainder
-
-            entries.append({
-                "cursor": cursor,
-                "timestamp": timestamp,
-                "content": content,
-            })
-        return entries
-
-    def _split_legacy_history_chunks(self, text: str) -> list[str]:
-        lines = text.split("\n")
-        chunks: list[str] = []
-        current: list[str] = []
-        saw_blank_separator = False
-
-        for line in lines:
-            if saw_blank_separator and line.strip() and current:
-                chunks.append("\n".join(current).strip())
-                current = [line]
-                saw_blank_separator = False
-                continue
-            if self._should_start_new_legacy_chunk(line, current):
-                chunks.append("\n".join(current).strip())
-                current = [line]
-                saw_blank_separator = False
-                continue
-            current.append(line)
-            saw_blank_separator = not line.strip()
-
-        if current:
-            chunks.append("\n".join(current).strip())
-        return [chunk for chunk in chunks if chunk]
-
-    def _should_start_new_legacy_chunk(self, line: str, current: list[str]) -> bool:
-        if not current:
-            return False
-        if not self._LEGACY_ENTRY_START_RE.match(line):
-            return False
-        if self._is_raw_legacy_chunk(current) and self._LEGACY_RAW_MESSAGE_RE.match(line):
-            return False
-        return True
-
-    def _is_raw_legacy_chunk(self, lines: list[str]) -> bool:
-        first_nonempty = next((line for line in lines if line.strip()), "")
-        match = self._LEGACY_TIMESTAMP_RE.match(first_nonempty)
-        if not match:
-            return False
-        return first_nonempty[match.end():].lstrip().startswith("[RAW]")
-
-    def _legacy_fallback_timestamp(self) -> str:
-        try:
-            return datetime.fromtimestamp(
-                self.legacy_history_file.stat().st_mtime,
-            ).strftime("%Y-%m-%d %H:%M")
-        except OSError:
-            return datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    def _next_legacy_backup_path(self) -> Path:
-        candidate = self.memory_dir / "HISTORY.md.bak"
-        suffix = 2
-        while candidate.exists():
-            candidate = self.memory_dir / f"HISTORY.md.bak.{suffix}"
-            suffix += 1
-        return candidate
-
-    # -- MEMORY.md (long-term facts) -----------------------------------------
-
     def read_memory(self) -> str:
         return self.read_file(self.memory_file)
 
     def write_memory(self, content: str) -> None:
         self.memory_file.write_text(content, encoding="utf-8")
-
-    # -- SOUL.md -------------------------------------------------------------
 
     def read_soul(self) -> str:
         return self.read_file(self.soul_file)
@@ -252,21 +87,15 @@ class MemoryStore:
     def write_soul(self, content: str) -> None:
         self.soul_file.write_text(content, encoding="utf-8")
 
-    # -- USER.md -------------------------------------------------------------
-
     def read_user(self) -> str:
         return self.read_file(self.user_file)
 
     def write_user(self, content: str) -> None:
         self.user_file.write_text(content, encoding="utf-8")
 
-    # -- context injection (used by context.py) ------------------------------
-
     def get_memory_context(self) -> str:
         long_term = self.read_memory()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
-
-    # -- history.jsonl — append-only, JSONL format ---------------------------
 
     def _normalize_history_entry(
         self,
@@ -274,17 +103,13 @@ class MemoryStore:
         *,
         max_chars: int | None = None,
     ) -> str:
-        """Return the exact bounded, model-safe text accepted by the journal."""
         limit = max_chars if max_chars is not None else _HISTORY_ENTRY_HARD_CAP
-        raw = entry.rstrip()
-        content = strip_think(raw)
+        content = strip_think(entry.rstrip())
         if len(content) > limit:
             if not self._oversize_logged:
                 self._oversize_logged = True
                 logger.warning(
-                    "history entry exceeds {} chars ({}); truncating. "
-                    "Usually means a caller forgot its own cap; "
-                    "further occurrences suppressed.",
+                    "history entry exceeds {} chars ({}); truncating; further occurrences suppressed",
                     limit,
                     len(content),
                 )
@@ -298,50 +123,44 @@ class MemoryStore:
         max_chars: int | None = None,
         session_key: str | None = None,
     ) -> int:
-        """Append *entry* to history.jsonl and return its auto-incrementing cursor.
-
-        Entries are passed through `strip_think` to drop template-level leaks
-        (e.g. unclosed `<think` prefixes, `<channel|>` markers) before being
-        persisted. If the cleaned content is empty but the raw entry wasn't,
-        the record is persisted with an empty string rather than falling back
-        to the raw leak — otherwise `strip_think`'s guarantees would be
-        undone when Dream consumes the journal entry.
-
-        A defensive cap (*max_chars*, default ``_HISTORY_ENTRY_HARD_CAP``) is
-        applied as a final safety net: individual callers should cap their own
-        content more tightly; this default only exists to catch unintentional
-        large writes (e.g. an LLM echoing its input back as a "summary").
-        """
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         raw = entry.rstrip()
         content = self._normalize_history_entry(entry, max_chars=max_chars)
-        # Cursor allocation and the append must be atomic: concurrent writers
-        # could otherwise read the same current cursor and emit duplicates.
         with self._append_lock:
             cursor = self._next_cursor()
             if raw and not content:
                 logger.debug(
-                    "history entry {} stripped to empty (likely template leak); "
-                    "persisting empty content to avoid re-polluting Dream input",
+                    "history entry {} stripped to empty; persisting empty content",
                     cursor,
                 )
-            record = {"cursor": cursor, "timestamp": ts, "content": content}
+            record: dict[str, Any] = {
+                "cursor": cursor,
+                "timestamp": ts,
+                "content": content,
+            }
             if session_key:
                 record["session_key"] = session_key
-            with open(self.history_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            with self.history_file.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             self._cursor_file.write_text(str(cursor), encoding="utf-8")
         return cursor
 
     @staticmethod
     def _valid_cursor(value: Any) -> int | None:
-        """Non-negative int cursors only; reject bool (``isinstance(True, int)`` is True)."""
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             return None
         return value
 
+    @staticmethod
+    def _valid_history_payload(entry: dict[str, Any]) -> bool:
+        if not isinstance(entry.get("timestamp"), str):
+            return False
+        if not isinstance(entry.get("content"), str):
+            return False
+        session_key = entry.get("session_key")
+        return session_key is None or isinstance(session_key, str)
+
     def _iter_valid_entries(self) -> Iterator[tuple[dict[str, Any], int]]:
-        """Yield ``(entry, cursor)`` for well-formed entries; warn once on corruption."""
         poisoned: Any = None
         malformed_cursor: int | None = None
         for entry in self._read_entries():
@@ -359,29 +178,17 @@ class MemoryStore:
         if poisoned is not None and not self._corruption_logged:
             self._corruption_logged = True
             logger.warning(
-                "history.jsonl contains an invalid cursor ({!r}); dropping it. "
-                "Usually caused by an external writer; further occurrences suppressed.",
+                "history.jsonl contains invalid cursor {!r}; dropping it; further occurrences suppressed",
                 poisoned,
             )
         if malformed_cursor is not None and not self._malformed_entry_logged:
             self._malformed_entry_logged = True
             logger.warning(
-                "history.jsonl contains a malformed entry at cursor {}; dropping it. "
-                "Usually caused by an external writer; further occurrences suppressed.",
+                "history.jsonl contains malformed entry at cursor {}; dropping it; further occurrences suppressed",
                 malformed_cursor,
             )
 
-    @staticmethod
-    def _valid_history_payload(entry: dict[str, Any]) -> bool:
-        if not isinstance(entry.get("timestamp"), str):
-            return False
-        if not isinstance(entry.get("content"), str):
-            return False
-        session_key = entry.get("session_key")
-        return session_key is None or isinstance(session_key, str)
-
     def _read_cursor_counter(self) -> int | None:
-        """Return the persisted cursor counter when it is usable."""
         if not self._cursor_file.exists():
             return None
         with suppress(ValueError, OSError):
@@ -391,7 +198,6 @@ class MemoryStore:
         return None
 
     def _next_cursor(self) -> int:
-        """Read the current cursor counter and return the next value."""
         cursor_counter = self._read_cursor_counter()
         last = self._read_last_entry() or {}
         last_cursor = self._valid_cursor(last.get("cursor"))
@@ -400,20 +206,14 @@ class MemoryStore:
                 return max(cursor_counter, last_cursor) + 1
             max_history_cursor = max((c for _, c in self._iter_valid_entries()), default=0)
             return max(cursor_counter, max_history_cursor) + 1
-
-        # Fast path: trust the tail when intact.  Otherwise scan the whole
-        # file and take ``max`` — that stays correct even if the monotonic
-        # invariant was broken by external writes.
         if last_cursor is not None:
             return last_cursor + 1
         return max((c for _, c in self._iter_valid_entries()), default=0) + 1
 
     def read_unprocessed_history(self, since_cursor: int) -> list[dict[str, Any]]:
-        """Return history entries with a valid cursor > *since_cursor*."""
-        return [e for e, c in self._iter_valid_entries() if c > since_cursor]
+        return [entry for entry, cursor in self._iter_valid_entries() if cursor > since_cursor]
 
     def compact_history(self) -> None:
-        """Drop oldest processed entries without discarding pending Dream input."""
         if self.max_history_entries <= 0:
             return
         entries = self._read_entries()
@@ -435,43 +235,38 @@ class MemoryStore:
         kept = entries[keep_from:]
         if len(kept) > self.max_history_entries:
             logger.warning(
-                "History compaction retained {} unprocessed entries beyond the configured "
-                "limit of {}",
+                "History compaction retained {} pending entries beyond configured limit {}",
                 len(kept),
                 self.max_history_entries,
             )
         self._write_entries(kept)
 
-    # -- JSONL helpers -------------------------------------------------------
-
     def _read_entries(self) -> list[dict[str, Any]]:
-        """Read all entries from history.jsonl."""
         entries: list[dict[str, Any]] = []
         with suppress(FileNotFoundError):
-            with open(self.history_file, "r", encoding="utf-8") as f:
-                for line in f:
+            with self.history_file.open("r", encoding="utf-8") as handle:
+                for line in handle:
                     line = line.strip()
-                    if line:
-                        try:
-                            parsed: object = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(parsed, dict):
-                            entries.append(cast(dict[str, Any], parsed))
-
+                    if not line:
+                        continue
+                    try:
+                        parsed: object = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(parsed, dict):
+                        entries.append(cast(dict[str, Any], parsed))
         return entries
 
     def _read_last_entry(self) -> dict[str, Any] | None:
-        """Read the last entry from the JSONL file efficiently."""
         try:
-            with open(self.history_file, "rb") as f:
-                f.seek(0, 2)
-                size = f.tell()
+            with self.history_file.open("rb") as handle:
+                handle.seek(0, 2)
+                size = handle.tell()
                 if size == 0:
                     return None
                 read_size = min(size, 4096)
-                f.seek(size - read_size)
-                data = f.read().decode("utf-8")
+                handle.seek(size - read_size)
+                data = handle.read().decode("utf-8")
                 lines = [line for line in data.split("\n") if line.strip()]
                 if not lines:
                     return None
@@ -481,20 +276,14 @@ class MemoryStore:
             return None
 
     def _write_entries(self, entries: list[dict[str, Any]]) -> None:
-        """Overwrite history.jsonl with the given entries (atomic write)."""
         tmp_path = self.history_file.with_suffix(self.history_file.suffix + ".tmp")
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with tmp_path.open("w", encoding="utf-8") as handle:
                 for entry in entries:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
+                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp_path, self.history_file)
-
-            # fsync the directory so the rename is durable.
-            # On Windows, opening a directory with O_RDONLY raises
-            # PermissionError — skip the dir sync there (NTFS
-            # journals metadata synchronously).
             with suppress(PermissionError):
                 fd = os.open(str(self.history_file.parent), os.O_RDONLY)
                 try:
@@ -505,8 +294,6 @@ class MemoryStore:
             tmp_path.unlink(missing_ok=True)
             raise
 
-    # -- dream cursor --------------------------------------------------------
-
     def get_last_dream_cursor(self) -> int:
         if self._dream_cursor_file.exists():
             with suppress(ValueError, OSError):
@@ -515,9 +302,6 @@ class MemoryStore:
 
     def set_last_dream_cursor(self, cursor: int) -> None:
         self._dream_cursor_file.write_text(str(cursor), encoding="utf-8")
-
-    def get_latest_cursor(self) -> int:
-        return max(self._next_cursor() - 1, 0)
 
     @property
     def dream_prompt_file(self) -> Path:
@@ -528,129 +312,35 @@ class MemoryStore:
 
     @staticmethod
     def default_dream_prompt() -> str:
-        from nanobot.agent.skills import BUILTIN_SKILLS_DIR
-
-        return render_template(
-            "agent/dream.md",
-            strip=True,
-            skill_creator_path=str(BUILTIN_SKILLS_DIR / "skill-creator" / "SKILL.md"),
-        )
+        return render_template("agent/dream.md", strip=True)
 
     def _dream_template(self) -> str:
         text, original_chars = load_workspace_prompt_override(self.dream_prompt_file)
         if text is not None:
-            if (
-                original_chars > WORKSPACE_PROMPT_MAX_CHARS
-                and not self._dream_prompt_oversize_logged
-            ):
+            if original_chars > WORKSPACE_PROMPT_MAX_CHARS and not self._dream_prompt_oversize_logged:
                 self._dream_prompt_oversize_logged = True
                 logger.warning(
-                    "workspace Dream prompt exceeds {} chars ({}); truncating. "
-                    "Further occurrences suppressed.",
-                    WORKSPACE_PROMPT_MAX_CHARS, original_chars,
+                    "workspace Dream prompt exceeds {} chars ({}); truncating; further occurrences suppressed",
+                    WORKSPACE_PROMPT_MAX_CHARS,
+                    original_chars,
                 )
             return text
         return self.default_dream_prompt()
 
     def build_dream_prompt(self, *, max_entries: int = 20) -> tuple[str, int] | None:
-        """Build the Dream prompt with unprocessed history context.
-
-        Returns ``(prompt, last_cursor)`` or ``None`` if nothing to process.
-
-        The current contents of the durable memory files (SOUL.md, USER.md,
-        memory/MEMORY.md) reach Dream through the normal agent system context.
-        """
         last_cursor = self.get_last_dream_cursor()
         entries = self.read_unprocessed_history(since_cursor=last_cursor)
         if not entries:
             return None
-
         batch = entries[:max_entries]
         history_text = "\n".join(
-            f"[{e['timestamp']}] {truncate_text(e['content'], 1000)}"
-            for e in batch
+            f"[{entry['timestamp']}] {truncate_text(entry['content'], 1000)}"
+            for entry in batch
         )
-        template = self._dream_template()
-        prompt = f"{template}\n\n## Conversation History\n{history_text}"
-        return (prompt, batch[-1]["cursor"])
-
-    def dream_content_diff(self) -> str:
-        """Structured summary of uncommitted Dream-authored durable state."""
-        if not self._git.is_initialized():
-            return ""
-        return self._git.summarize_working_tree(list(self._DREAM_CONTENT_PATHS))
-
-    def build_dream_tools(self, config: Config | None = None) -> ToolRegistry:
-        """Build the restricted tool registry used by Dream runs."""
-        from nanobot.agent.skills import BUILTIN_SKILLS_DIR
-        from nanobot.agent.tools.apply_patch import ApplyPatchTool
-        from nanobot.agent.tools.dream_roles import DreamRoleTool
-        from nanobot.agent.tools.file_state import FileStates
-        from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
-        from nanobot.agent.tools.registry import ToolRegistry
-
-        tools = ToolRegistry()
-        file_states = FileStates()
-        workspace = self.workspace
-        skills_dir = workspace / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-
-        extra_read = [BUILTIN_SKILLS_DIR] if BUILTIN_SKILLS_DIR.exists() else None
-        editable_files = [self.memory_file, self.soul_file, self.user_file]
-
-        tools.register(ReadFileTool(
-            workspace=workspace,
-            allowed_dir=workspace,
-            extra_read_allowed_dirs=extra_read,
-            file_states=file_states,
-        ))
-        tools.register(EditFileTool(
-            workspace=workspace,
-            allowed_dir=skills_dir,
-            extra_write_allowed_files=editable_files,
-            file_states=file_states,
-        ))
-        tools.register(ApplyPatchTool(
-            workspace=workspace,
-            allowed_dir=skills_dir,
-            extra_write_allowed_files=editable_files,
-            file_states=file_states,
-        ))
-        tools.register(WriteFileTool(
-            workspace=workspace,
-            allowed_dir=skills_dir,
-            extra_write_allowed_files=editable_files,
-            file_states=file_states,
-        ))
-        # Role lifecycle is a governance boundary: Dream can create/evolve/cold
-        # its own specialists, but cannot delete or disable them and cannot
-        # directly write the canonical role state files.
-        tools.register(DreamRoleTool(workspace, config=config))
-        return tools
-
-    @staticmethod
-    def dream_run_completed(
-        resp: object | None,
-    ) -> bool:
-        """Return True when the Dream agent reached a normal terminal response."""
-        metadata = getattr(resp, "metadata", None)
-        if not isinstance(metadata, dict):
-            return False
-        return cast(dict[str, Any], metadata).get("_stop_reason") == "completed"
-
-    @staticmethod
-    def dream_incompletion_reason(
-        resp: object | None,
-    ) -> str:
-        """Human-readable explanation of why a Dream run cannot advance."""
-        metadata = getattr(resp, "metadata", None)
-        if isinstance(metadata, dict):
-            stop_reason = cast(dict[str, Any], metadata).get("_stop_reason", "unknown")
-        else:
-            stop_reason = "missing response metadata"
-        return f"stop_reason: {stop_reason}"
-
-    # -- message formatting utility ------------------------------------------
+        return (
+            f"{self._dream_template()}\n\n## Conversation History\n{history_text}",
+            batch[-1]["cursor"],
+        )
 
     @staticmethod
     def _format_messages(messages: list[dict[str, Any]]) -> str:
@@ -666,8 +356,7 @@ class MemoryStore:
             tools_used = message.get("tools_used")
             tools = (
                 f" [tools: {', '.join(cast(list[str], tools_used))}]"
-                if tools_used
-                else ""
+                if tools_used else ""
             )
             raw_timestamp = message.get("timestamp")
             timestamp = str(raw_timestamp) if raw_timestamp is not None else "?"
@@ -682,12 +371,9 @@ class MemoryStore:
         max_chars: int | None = None,
         session_key: str | None = None,
     ) -> str:
-        """Persist and return a bounded raw checkpoint when summarization degrades."""
         checkpoint = self._build_raw_checkpoint(messages, max_chars=max_chars)
         self.append_history(checkpoint, session_key=session_key)
-        logger.warning(
-            "Memory consolidation degraded: raw-archived {} messages", len(messages)
-        )
+        logger.warning("Memory consolidation degraded: raw-archived {} messages", len(messages))
         return checkpoint
 
     def _build_raw_checkpoint(
@@ -696,7 +382,6 @@ class MemoryStore:
         *,
         max_chars: int | None = None,
     ) -> str:
-        """Build the same bounded checkpoint as :meth:`raw_archive` without writing it."""
         limit = max_chars if max_chars is not None else _RAW_ARCHIVE_MAX_CHARS
         checkpoint = (
             f"[RAW] {len(messages)} messages\n"
@@ -704,73 +389,9 @@ class MemoryStore:
         )
         return self._normalize_history_entry(checkpoint, max_chars=limit)
 
-    # ------------------------------------------------------------------
-    # Dream helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def dream_session_key() -> str:
-        """Return a unique session key for a Dream run, e.g. ``dream:20260528-100000``."""
-        return f"dream:{datetime.now():%Y%m%d-%H%M%S}"
-
-    @staticmethod
-    def build_dream_commit_message(prefix: str, diff_body: str) -> str:
-        """Build a Dream commit message grounded in the real working-tree diff.
-
-        *diff_body* is a structured, machine-derived summary of the actual file
-        changes (see :meth:`dream_content_diff` /
-        :meth:`GitStore.summarize_working_tree`). The LLM narrative is
-        deliberately excluded so the audit record (``/dream-log``) reflects the
-        filesystem's truth, not the model's self-report.
-
-        An empty *diff_body* yields the bare *prefix*, which ``auto_commit``
-        turns into a no-op when there is nothing to stage.
-        """
-        diff_body = (diff_body or "").strip()
-        if not diff_body:
-            return prefix
-        return f"{prefix}\n\n{diff_body}"
-
-    @staticmethod
-    def prune_dream_sessions(sessions: SessionManager, *, keep: int = 10) -> None:
-        """Remove the oldest Dream session files, keeping only the N most recent.
-
-        Only current base64url-encoded Dream session keys are considered.
-        Non-dream session files are never touched.
-        """
-        with sessions.locked_session_files() as sessions_dir:
-            dream_files: list[tuple[Path, str]] = []
-            for path in sessions_dir.glob("*.jsonl"):
-                decoded_key = SessionManager.decode_storage_key(path.stem)
-                if decoded_key is not None and decoded_key.startswith("dream:"):
-                    dream_files.append((path, decoded_key))
-            dream_files.sort(key=lambda item: item[0].stat().st_mtime)
-
-            for path, key in dream_files[: max(0, len(dream_files) - keep)]:
-                if sessions.delete_session(key):
-                    logger.debug("Pruned old dream session: {}", path.stem)
-                else:
-                    logger.warning("Failed to prune dream session {}", path)
-
-
-# ---------------------------------------------------------------------------
-# Memory ingestion and context-pressure coordination
-# ---------------------------------------------------------------------------
-
-# Raw fallbacks use a tighter cap. Completed model summaries may scale with the
-# configured generation budget, while append_history() still enforces the
-# emergency hard cap against pathological provider output.
-_RAW_ARCHIVE_MAX_CHARS = 16_000   # fallback dump (LLM failed)
-_HISTORY_ENTRY_HARD_CAP = 64_000  # emergency cap in append_history
-
 
 class MemoryArchiver:
-    """Write durable transcript batches to the Memory ingestion journal.
-
-    The archiver deliberately has no SessionManager dependency: it may read a
-    captured transcript batch and append to history.jsonl, but it cannot mutate
-    provider continuation state or advance a session watermark.
-    """
+    """Write transcript checkpoints to the Memory ingestion journal."""
 
     def __init__(
         self,
@@ -792,7 +413,6 @@ class MemoryArchiver:
         previous_summary: str | None,
         max_tokens: int,
     ) -> str:
-        """Persist the failed chunk and return a bounded replacement checkpoint."""
         raw = self.store.raw_archive(messages, session_key=session_key)
         return self._combine_raw_checkpoint(
             raw,
@@ -807,11 +427,9 @@ class MemoryArchiver:
         previous_summary: str | None,
         max_tokens: int,
     ) -> str:
-        """Return a bounded checkpoint that preserves prior and newly archived context."""
         token_limit = max(1, max_tokens)
         if not previous_summary:
             return truncate_text_to_tokens(raw, token_limit)
-
         combined = (
             "[Previous archived context]\n"
             f"{previous_summary}\n\n"
@@ -821,8 +439,6 @@ class MemoryArchiver:
         bounded = truncate_text_to_tokens(combined, token_limit)
         if bounded == combined:
             return combined
-
-        # Keep evidence from both sides when their full concatenation cannot fit.
         section_limit = max(1, (token_limit - 32) // 2)
         return truncate_text_to_tokens(
             "[Previous archived context]\n"
@@ -845,7 +461,6 @@ class MemoryArchiver:
         fallback_max_tokens: int | None = None,
         provider_state: ProviderConversationState | None = None,
     ) -> str | None:
-        """Append the archive prompt to H and persist its summary."""
         if not source_messages:
             return None
 
@@ -870,10 +485,7 @@ class MemoryArchiver:
         provider_context = None
         call_tools = request_tools
         if provider_state is not None:
-            if not runtime.provider.can_resume_conversation_state(
-                provider_state,
-                runtime.model,
-            ):
+            if not runtime.provider.can_resume_conversation_state(provider_state, runtime.model):
                 return raw_fallback()
             instruction_messages: list[dict[str, Any]] = []
             for message in history:
@@ -891,10 +503,8 @@ class MemoryArchiver:
             )
             call_tools = []
         else:
-            request_messages = [
-                *[dict(message) for message in history],
-                prompt_message,
-            ]
+            request_messages = [*map(dict, history), prompt_message]
+
         if input_token_budget is not None and provider_context is None:
             estimated, source = estimate_prompt_tokens_chain(
                 runtime.provider,
@@ -913,7 +523,7 @@ class MemoryArchiver:
                 return raw_fallback()
 
         try:
-            with llm_usage_source("dream"):
+            with llm_usage_source("system"):
                 response = await runtime.provider.chat_with_retry(
                     model=runtime.model,
                     messages=request_messages,
@@ -956,7 +566,6 @@ class MemoryArchiver:
         runtime: LLMRuntime,
         input_token_budget: int,
     ) -> str | None:
-        """Archive a captured session prefix without mutating the session."""
         messages = list(session.messages[session.last_archived:archive_end])
         if not messages:
             return None
@@ -967,10 +576,7 @@ class MemoryArchiver:
         previous_summary = session_summary["text"] if session_summary else None
 
         if input_token_budget <= 0:
-            logger.debug(
-                "Memory archive has no safe input budget for {}; raw-dumping",
-                session.key,
-            )
+            logger.debug("Memory archive has no safe input budget for {}; raw-dumping", session.key)
             return self._raw_checkpoint(
                 messages,
                 session_key=session.key,
@@ -983,15 +589,9 @@ class MemoryArchiver:
             last_consolidated=session.last_archived,
         )
         history = prefix.get_history(max_tokens=input_token_budget)
-        archive_history = Session(
-            key=session.key,
-            messages=messages,
-        ).get_history()
+        archive_history = Session(key=session.key, messages=messages).get_history()
         if not archive_history or history[-len(archive_history):] != archive_history:
-            logger.debug(
-                "Memory archive cannot replay the full chunk for {}; raw-dumping",
-                session.key,
-            )
+            logger.debug("Memory archive cannot replay full chunk for {}; raw-dumping", session.key)
             return self._raw_checkpoint(
                 messages,
                 session_key=session.key,
@@ -1009,22 +609,21 @@ class MemoryArchiver:
             session_summary=session_summary,
             workspace=workspace,
         )
-        tools = self._get_tool_definitions()
         return await self.archive(
             messages,
             runtime=runtime,
             session_key=session.key,
             history=history_messages,
-            request_tools=tools,
+            request_tools=self._get_tool_definitions(),
             previous_summary=previous_summary,
             input_token_budget=input_token_budget,
         )
 
 
 class Consolidator:
-    """Coordinate session Memory checkpoints through ``MemoryArchiver``."""
+    """Coordinate session Memory checkpoints through MemoryArchiver."""
 
-    _SAFETY_BUFFER = 1024  # extra headroom for tokenizer estimation drift
+    _SAFETY_BUFFER = 1024
 
     def __init__(
         self,
@@ -1044,12 +643,9 @@ class Consolidator:
             get_tool_definitions=get_tool_definitions,
             resolve_prompt_context=resolve_prompt_context,
         )
-        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
-            weakref.WeakValueDictionary()
-        )
+        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
     def get_lock(self, session_key: str) -> asyncio.Lock:
-        """Return the shared consolidation lock for one session."""
         return self._locks.setdefault(session_key, asyncio.Lock())
 
     async def summarize_transcript(
@@ -1062,7 +658,6 @@ class Consolidator:
         tools: list[dict[str, Any]],
         provider_state: ProviderConversationState | None = None,
     ) -> str | None:
-        """Summarize the exact transcript prefix already accepted by the model."""
         source_messages = [
             dict(message)
             for message in accepted_messages
@@ -1077,7 +672,6 @@ class Consolidator:
             max_output_tokens,
             max(1, (input_token_budget - self._SAFETY_BUFFER) // 2),
         )
-
         summary = await self.archiver.archive(
             source_messages,
             runtime=runtime,
@@ -1110,7 +704,6 @@ class Consolidator:
         session_key: str,
         tools: list[dict[str, Any]],
     ) -> str | None:
-        """Prompt a native compacted state without replaying its raw history."""
         return await self.summarize_transcript(
             fallback_messages,
             previous_summary,
@@ -1121,13 +714,8 @@ class Consolidator:
         )
 
     @staticmethod
-    def _full_replay_history(
-        session: Session,
-    ) -> list[dict[str, Any]]:
-        """Return all messages that can reach the next model prompt."""
-        if not session.messages:
-            return []
-        return session.get_history()
+    def _full_replay_history(session: Session) -> list[dict[str, Any]]:
+        return [] if not session.messages else session.get_history()
 
     @staticmethod
     def _set_last_summary(
@@ -1148,7 +736,6 @@ class Consolidator:
         *,
         runtime: LLMRuntime,
     ) -> tuple[int, str]:
-        """Estimate prompt size from the full replayable session history."""
         history = self._full_replay_history(session)
         channel = session.key.split(":", 1)[0] if ":" in session.key else None
         summary = session_summary_from_metadata(
@@ -1169,12 +756,7 @@ class Consolidator:
         )
 
     def _input_token_budget(self, runtime: LLMRuntime) -> int:
-        """Available input token budget for consolidation LLM."""
-        return (
-            runtime.context_window_tokens
-            - runtime.generation.max_tokens
-            - self._SAFETY_BUFFER
-        )
+        return runtime.context_window_tokens - runtime.generation.max_tokens - self._SAFETY_BUFFER
 
     async def archive_session(
         self,
@@ -1183,7 +765,6 @@ class Consolidator:
         archive_end: int,
         runtime: LLMRuntime,
     ) -> str | None:
-        """Archive one captured session range through the shared Memory path."""
         return await self.archiver.archive_session(
             session,
             archive_end=archive_end,
@@ -1196,26 +777,11 @@ class Consolidator:
         session_key: str,
         *,
         runtime: LLMRuntime,
-        max_suffix: int = MIN_COMPACTED_REPLAY_MESSAGES,
     ) -> str | None:
-        """Archive the full idle tail while keeping recent messages replayable.
-
-        ``max_suffix`` remains accepted for SDK compatibility. Replay retention
-        is now derived independently from archive progress using the project-wide
-        compacted-session window.
-        """
-        if max_suffix != MIN_COMPACTED_REPLAY_MESSAGES:
-            logger.debug(
-                "Idle-session compact for {} uses the fixed replay window ({}, requested {})",
-                session_key,
-                MIN_COMPACTED_REPLAY_MESSAGES,
-                max_suffix,
-            )
         lock = self.get_lock(session_key)
         async with lock:
             self.sessions.invalidate(session_key)
             session = self.sessions.get_or_create(session_key)
-
             archive_start = session.last_archived
             messages_to_archive = list(session.messages[archive_start:])
             if not messages_to_archive:
@@ -1232,9 +798,6 @@ class Consolidator:
                 return None
 
             self._set_last_summary(session, summary, last_active=last_active)
-
-            # A turn can append while the provider call is in flight. Advance only
-            # through the captured batch so new messages remain eligible next time.
             session.last_archived = archive_end
             self.sessions.save(session)
 
@@ -1242,7 +805,6 @@ class Consolidator:
                 max_messages=MIN_COMPACTED_REPLAY_MESSAGES,
                 extend_to_user=True,
             )
-
             logger.info(
                 "Idle-session compact for {}: archived={}, visible={}, retained={}, summary={}",
                 session_key,
@@ -1251,5 +813,4 @@ class Consolidator:
                 len(session.messages),
                 bool(summary),
             )
-
             return summary

@@ -67,9 +67,6 @@ def build_work_role_definition(
         permissions="read-write-exec",
         category="work",
         source="ephemeral",
-        status="active",
-        version=1,
-        created_by=None,
         usage={},
     )
 

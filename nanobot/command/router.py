@@ -76,8 +76,16 @@ class CommandRouter:
         self._exact[cmd] = handler
 
     def prefix(self, pfx: str, handler: Handler) -> None:
+        self._prefix = [(existing, h) for existing, h in self._prefix if existing != pfx]
         self._prefix.append((pfx, handler))
         self._prefix.sort(key=lambda p: len(p[0]), reverse=True)
+
+    def remove(self, cmd: str) -> None:
+        """Remove an exact command and its argument prefix from every routing tier."""
+        self._priority.pop(cmd, None)
+        self._exact.pop(cmd, None)
+        prefix = f"{cmd} "
+        self._prefix = [(existing, h) for existing, h in self._prefix if existing != prefix]
 
     def is_priority(self, text: str) -> bool:
         return normalize_command_text(text).lower() in self._priority

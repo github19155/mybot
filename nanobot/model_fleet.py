@@ -22,7 +22,7 @@ from typing import Any, AsyncIterator, Literal, Mapping, Sequence
 
 from loguru import logger
 
-FleetPriority = Literal["main", "worker", "background"]
+FleetPriority = Literal["main", "worker", "background", "dream"]
 RateLimitScope = Literal["provider", "model"]
 
 
@@ -90,7 +90,7 @@ class ModelAdmissionController:
 
     @staticmethod
     def _rank(priority: FleetPriority) -> int:
-        return {"main": 0, "worker": 1, "background": 2}[priority]
+        return {"main": 0, "worker": 1, "background": 2, "dream": 3}[priority]
 
     def _candidate(self) -> _Waiter | None:
         if not self._waiters:
@@ -683,7 +683,7 @@ class ModelFleetManager:
         task = task_type.strip().lower()
         if task in {"interactive", "chat"}:
             return {"quality": .25, "reliability": .20, "speed": .30, "cost": .10, "capacity": .15}
-        if task in {"batch", "background", "dream"}:
+        if task in {"batch", "background"}:
             return {"quality": .20, "reliability": .15, "speed": .15, "cost": .35, "capacity": .15}
         return {"quality": .45, "reliability": .20, "speed": .15, "cost": .10, "capacity": .10}
 
@@ -831,13 +831,18 @@ def current_fleet_priority() -> FleetPriority:
         request = current_request_context()
         if request is not None and request.exec_owner_session_key:
             return "worker"
-        if request is not None and request.channel.lower() in {"system", "cron", "dream"}:
+        if request is not None and request.channel.lower() == "dream":
+            return "dream"
+        if request is not None and request.channel.lower() in {"system", "cron"}:
             return "background"
     except Exception:
         pass
     try:
         from nanobot.llm_usage.context import current_llm_usage_source
-        if current_llm_usage_source() in {"cron", "dream", "system"}:
+        source = current_llm_usage_source()
+        if source == "dream":
+            return "dream"
+        if source in {"cron", "system"}:
             return "background"
     except Exception:
         pass

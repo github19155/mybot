@@ -9,7 +9,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.resource_lease import delegated_resource_parent, request_resource_owner_key
-from nanobot.agent.subagent_roles import record_role_use
+from nanobot.agent.subagent_role_storage import record_role_use
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.registry import is_tool_error_result
@@ -54,7 +54,6 @@ def _fork_snapshot(history: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
             if key not in private_keys
         }
         if clean.get("role") == "tool":
-            # Tool results are portable, but an orphaned provider tool call is not.
             clean.pop("tool_call_id", None)
         snapshot.append(clean)
     return snapshot
@@ -135,9 +134,9 @@ class SubagentTool(Tool):
             "clearly fits. Omit role with no per-task overrides to use the permanent general worker. "
             "Omit role and provide any per-task override (description, system_prompt, tools, model, "
             "model_preset, thinking, temperature, timeout_seconds, or context) to create a temporary "
-            "WorkAgent snapshot that is destroyed after the task and never persisted or Dream-managed. "
+            "WorkAgent snapshot that is destroyed after the task and never persisted. "
             "Do not combine WorkAgent identity/tool overrides with a persistent role. Use role.list "
-            "to discover current built-in, user, and Dream-managed specialists. Default long or "
+            "to discover current built-in and config-managed specialists. Default long or "
             "independent work to run with wait=false, especially installs/downloads, builds, broad "
             "test suites, environment setup, multi-step debugging, or work likely to take more than "
             "about 10 seconds. Browser automation is a worker capability, not a separate Agent type. "
@@ -266,8 +265,6 @@ class SubagentTool(Tool):
                     try:
                         record_role_use(workspace, selected_role)
                     except OSError:
-                        # Usage telemetry is advisory input for Dream and must never
-                        # turn a successfully launched child into a failed tool call.
                         pass
             return result
 

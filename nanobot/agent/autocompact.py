@@ -87,7 +87,6 @@ class AutoCompact:
             summary = await self.consolidator.compact_idle_session(
                 key,
                 runtime=runtime,
-                max_suffix=self._RECENT_SUFFIX_MESSAGES,
             )
             if summary and summary != "(nothing)":
                 session = self.sessions.get_or_create(key)

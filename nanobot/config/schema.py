@@ -10,7 +10,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nanobot.config.timezone import detect_system_timezone
 from nanobot.config_base import Base
-from nanobot.cron.types import CronSchedule
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.cli_apps import CliAppsToolConfig
@@ -47,26 +46,62 @@ class TranscriptionConfig(Base):
 
 
 class DreamConfig(Base):
-    """Dream memory consolidation configuration."""
+    """Main-adjustable policy for read-only background Dream cognition.
 
-    _HOUR_MS = 3_600_000
+    These fields are the only Dream policy source. Runtime state lives under the
+    workspace, but state files never override policy. Bounds are deliberately
+    enforced here so Main can adapt ordinary policy without expanding its own
+    safety/resource envelope.
+    """
+
     enabled: bool = True
-    interval_h: int = Field(default=2, ge=1)
-    cron: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    model_override: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("modelOverride", "model", "model_override"),
-    )
+    cooldown_minutes: int = Field(default=30, ge=5, le=24 * 60)
+    idle_minutes: int = Field(default=10, ge=0, le=24 * 60)
+    pressure_entries: int = Field(default=20, ge=1, le=500)
+    max_defer_minutes: int = Field(default=360, ge=1, le=7 * 24 * 60)
+    max_entries_per_run: int = Field(default=40, ge=1, le=100)
+    max_runs_per_day: int = Field(default=8, ge=1, le=24)
+    retention_days: int = Field(default=30, ge=1, le=90)
+    poll_interval_seconds: int = Field(default=30, ge=5, le=300)
+    model_override: str | None = None
+    fallback_preset: str | None = None
+    pools: dict[str, str] = Field(default_factory=lambda: {
+        "dream.consolidation": "dream",
+        "dream.extraction": "dream",
+        "dream.governance": "dream",
+        "dream.housekeeping": "dream",
+    })
 
-    def build_schedule(self, timezone: str) -> CronSchedule:
-        if self.cron:
-            return CronSchedule(kind="cron", expr=self.cron, tz=timezone)
-        return CronSchedule(kind="every", every_ms=self.interval_h * self._HOUR_MS)
+    @field_validator("model_override", "fallback_preset")
+    @classmethod
+    def _normalize_optional_preset(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
-    def describe_schedule(self) -> str:
-        if self.cron:
-            return f"cron {self.cron} (legacy)"
-        return f"every {self.interval_h}h"
+    @field_validator("pools")
+    @classmethod
+    def _validate_pools(cls, value: dict[str, str]) -> dict[str, str]:
+        allowed = {
+            "dream.consolidation",
+            "dream.extraction",
+            "dream.governance",
+            "dream.housekeeping",
+        }
+        normalized: dict[str, str] = {}
+        for raw_key, raw_pool in value.items():
+            key = raw_key.strip().lower()
+            pool = raw_pool.strip().lower()
+            if key not in allowed:
+                raise ValueError(f"unsupported Dream workload pool {raw_key!r}")
+            if not pool:
+                raise ValueError("Dream pool name must not be blank")
+            normalized[key] = pool
+        return normalized
+
+    def pool_for(self, workload: str) -> str:
+        return self.pools.get(workload, "dream")
 
 
 class InlineFallbackConfig(Base):
@@ -520,9 +555,13 @@ class Config(BaseSettings):
         name = self.agents.defaults.model_preset
         if name and name != "default" and name not in self.model_presets:
             raise ValueError(f"model_preset {name!r} not found in model_presets")
-        dream_name = self.agents.defaults.dream.model_override
-        if dream_name and dream_name != "default" and dream_name not in self.model_presets:
-            raise ValueError(f"Dream model preset {dream_name!r} not found in model_presets")
+        dream = self.agents.defaults.dream
+        for field_name, dream_name in (
+            ("model_override", dream.model_override),
+            ("fallback_preset", dream.fallback_preset),
+        ):
+            if dream_name and dream_name != "default" and dream_name not in self.model_presets:
+                raise ValueError(f"Dream {field_name} preset {dream_name!r} not found in model_presets")
         for fallback in self.agents.defaults.fallback_models:
             if isinstance(fallback, str) and fallback not in self.model_presets:
                 raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")

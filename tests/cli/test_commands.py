@@ -13,7 +13,6 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.agent.memory import MemoryStore
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn_delivery import TurnDeliveryFactory
 from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -227,49 +226,6 @@ def test_webui_restores_tty_before_loading_config(monkeypatch, tmp_path: Path) -
 
     assert result.exit_code == 0
     assert calls[:2] == ["tty", "config"]
-
-
-def test_disabled_dream_cursor_only_advances_when_behind(tmp_path) -> None:
-    store = MemoryStore(tmp_path)
-    store.append_history("first")
-    store.append_history("second")
-
-    cli_gateway_runtime._advance_dream_cursor_if_behind(store)
-    assert store.get_last_dream_cursor() == 2
-
-    store.set_last_dream_cursor(10)
-    cli_gateway_runtime._advance_dream_cursor_if_behind(store)
-    assert store.get_last_dream_cursor() == 10
-
-
-def test_commit_dream_changes_skips_noop_run(tmp_path) -> None:
-    store = MemoryStore(tmp_path)
-    store.write_soul("# Soul")
-    store.write_memory("# Memory")
-    store.git.init()
-    store.git.auto_commit("initial")
-    store.git.auto_commit = MagicMock(wraps=store.git.auto_commit)
-
-    assert cli_gateway_runtime._commit_dream_changes(store) is None
-    store.git.auto_commit.assert_not_called()
-
-
-def test_commit_dream_changes_commits_real_edits(tmp_path) -> None:
-    store = MemoryStore(tmp_path)
-    store.write_soul("# Soul")
-    store.write_memory("# Memory")
-    store.git.init()
-    store.git.auto_commit("initial")
-    store.write_memory("# Memory\n- Research notes")
-    store.git.auto_commit = MagicMock(wraps=store.git.auto_commit)
-
-    sha = cli_gateway_runtime._commit_dream_changes(store)
-
-    assert sha is not None
-    store.git.auto_commit.assert_called_once()
-    message = store.git.auto_commit.call_args.args[0]
-    assert message.startswith("dream: periodic memory consolidation\n\n")
-    assert "Research notes" in message
 
 
 @pytest.fixture
@@ -2129,6 +2085,9 @@ def test_heartbeat_empty_response_is_not_evaluated(
         def status(self) -> dict[str, int]:
             return {"jobs": 0}
 
+        def remove_system_job(self, _job_id: str) -> bool:
+            return False
+
         def register_system_job(self, _job: CronJob) -> None:
             raise _StopGatewayError("stop")
 
@@ -3638,6 +3597,9 @@ def test_gateway_health_endpoint_binds_and_serves_expected_responses(
         def status(self) -> dict[str, int]:
             return {"jobs": 0}
 
+        def remove_system_job(self, _job_id: str) -> bool:
+            return False
+
         def register_system_job(self, _job) -> None:
             return None
 
@@ -3873,6 +3835,9 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
         def status(self) -> dict[str, int]:
             return {"jobs": 0}
 
+        def remove_system_job(self, _job_id: str) -> bool:
+            return False
+
         def register_system_job(self, _job) -> None:
             return None
 
@@ -3989,6 +3954,9 @@ def test_gateway_shutdown_event_exits_forever_runtime_tasks(
 
         def status(self) -> dict[str, int]:
             return {"jobs": 0}
+
+        def remove_system_job(self, _job_id: str) -> bool:
+            return False
 
         def register_system_job(self, _job) -> None:
             return None

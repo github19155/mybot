@@ -11,12 +11,12 @@ from typing import Any, cast
 from nanobot.agent.subagent_roles import resolve_role
 from nanobot.config.loader import resolve_config_env_vars
 from nanobot.config.schema import Config, ModelPresetConfig, ProviderConfig
+from nanobot.config.store import ConfigStore
 from nanobot.model_fleet import get_model_fleet, offering_from_config
 from nanobot.providers.factory import build_provider_snapshot
 from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 from nanobot.webui import settings_models as models
 from nanobot.webui.settings_contracts import WebUISettingsError
-from nanobot.webui.settings_services import WebUISettingsConfig
 
 _DREAM_MIN_CONTEXT_TOKENS = 16_000
 
@@ -26,7 +26,7 @@ class ModelManagement:
 
     def __init__(self, config: Config, *, invalidate: Callable[[], None] | None = None) -> None:
         self.config = config
-        self._store = WebUISettingsConfig(config.source_path) if config.source_path is not None else None
+        self._store = ConfigStore(config.source_path) if config.source_path is not None else None
         self._invalidate = invalidate
         self._lock = threading.RLock()
 

@@ -76,6 +76,7 @@ def _portable_fork_history(history: list[dict[str, Any]] | None) -> list[dict[st
 
 if TYPE_CHECKING:
     from nanobot.agent.model_management import ModelManagement
+    from nanobot.agent.model_runtime import ModelRuntimeResolver
 
 
 class _SubagentOrigin(TypedDict):
@@ -163,6 +164,7 @@ class SubagentManager:
         max_concurrent_subagents: int | None = None,
         llm_wall_timeout_for_session: Callable[[str | None], float | None] | None = None,
         model_management: "ModelManagement | None" = None,
+        runtime_resolver: "ModelRuntimeResolver | None" = None,
         *,
         permission_manager: PermissionManager,
     ):
@@ -214,6 +216,7 @@ class SubagentManager:
         self._exec_session_manager = ExecSessionManager()
         self._llm_wall_timeout_for_session = llm_wall_timeout_for_session
         self.model_management = model_management
+        self.runtime_resolver = runtime_resolver
         self.permissions = permission_manager
         self._running_tasks: dict[str, asyncio.Task[str]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
@@ -225,7 +228,7 @@ class SubagentManager:
         self.max_concurrent_per_session = 8
 
     def _role_config(self):
-        return self.model_management.config if self.model_management is not None else None
+        return self.model_management.config_snapshot() if self.model_management is not None else None
 
     def _resolve_role(self, role: str):
         return resolve_role(self._role_config(), role)
@@ -330,29 +333,26 @@ class SubagentManager:
         self,
         runtime: LLMRuntime,
         *,
-        role: str,
+        role_definition: ResolvedSubagentRole,
         model: str | None,
         model_preset: str | None,
-        role_definition: ResolvedSubagentRole | None = None,
     ) -> LLMRuntime:
-        resolved_role = role_definition or self._resolve_role(role)
-        if resolved_role.disabled:
-            raise ValueError(f"Subagent role '{role}' is disabled")
-        if self.model_management is not None:
-            if role_definition is not None and role_definition.source == "ephemeral":
-                return self.model_management.resolve_ephemeral_runtime(
-                    runtime,
-                    model=model,
-                    model_preset=model_preset,
-                )
-            return self.model_management.resolve_task_runtime(
-                runtime, role=role, model=model, model_preset=model_preset,
-            )
-        if model is not None or model_preset is not None or (
-            resolved_role.model is not None or resolved_role.model_preset is not None
-        ):
-            raise ValueError("Per-task model selection requires configured model management")
-        return runtime
+        if role_definition.disabled:
+            raise ValueError(f"Subagent role '{role_definition.name}' is disabled")
+        selected_model = model
+        selected_preset = model_preset
+        if selected_model is None and selected_preset is None:
+            selected_model = role_definition.model
+            selected_preset = role_definition.model_preset
+        if selected_model is None and selected_preset is None:
+            return runtime
+        if self.runtime_resolver is None:
+            raise ValueError("Subagent model selection requires ModelRuntimeResolver")
+        return self.runtime_resolver.resolve_selection(
+            runtime,
+            model=selected_model,
+            model_preset=selected_preset,
+        )
 
     def _subagent_tools_config(self) -> ToolsConfig:
         """Build a ToolsConfig scoped for subagent use."""
@@ -481,10 +481,9 @@ class SubagentManager:
                 raise ValueError("timeout_seconds must be greater than zero")
             runtime = self._resolve_task_runtime(
                 runtime,
-                role=role,
                 model=model,
                 model_preset=model_preset,
-                role_definition=role_definition,
+                role_definition=role_config,
             )
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")
@@ -614,10 +613,9 @@ class SubagentManager:
                 raise ValueError("timeout_seconds must be greater than zero")
             runtime = self._resolve_task_runtime(
                 runtime,
-                role=role,
                 model=model,
                 model_preset=model_preset,
-                role_definition=role_definition,
+                role_definition=role_config,
             )
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")

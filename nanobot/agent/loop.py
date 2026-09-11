@@ -110,7 +110,7 @@ from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.document import reference_non_image_attachments
 from nanobot.utils.helpers import image_placeholder_text
 from nanobot.utils.helpers import truncate_text as truncate_text_fn
-from nanobot.utils.llm_runtime import LLMRuntime
+from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 from nanobot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
 )
@@ -290,12 +290,12 @@ class AgentLoop:
         image_generation_provider_config: ProviderConfig | None = None,
         image_generation_provider_configs: dict[str, ProviderConfig] | None = None,
         provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None,
+        provider_snapshot: ProviderSnapshot | None = None,
         provider_signature: tuple[object, ...] | None = None,
         model_presets: dict[str, ModelPresetConfig] | None = None,
         prompt_for_model: Callable[[str | None], str | None] | None = None,
         preset_catalog_loader: preset_helpers.PresetCatalogLoader | None = None,
         model_preset: str | None = None,
-        preset_snapshot_loader: preset_helpers.PresetSnapshotLoader | None = None,
         runtime_events: RuntimeEventBus | None = None,
         turn_delivery_factory: TurnDeliveryFactory | None = None,
         runtime_model_publisher: Callable[[str, str | None], None] | None = None,
@@ -330,18 +330,19 @@ class AgentLoop:
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
         self.workspace = workspace
-        initial_model = model or provider.get_default_model()
         self.max_iterations = (
             max_iterations if max_iterations is not None else defaults.max_tool_iterations
         )
-        initial_context_window = (
-            context_window_tokens
-            if context_window_tokens is not None
-            else defaults.context_window_tokens
-        )
-        configured_presets = model_presets or {}
-        self.runtime_resolver = ModelRuntimeResolver(
-            LLMRuntime.capture(
+        if provider_snapshot is not None:
+            initial_runtime = runtime_from_provider_snapshot(provider_snapshot)
+        else:
+            initial_model = model or provider.get_default_model()
+            initial_context_window = (
+                context_window_tokens
+                if context_window_tokens is not None
+                else defaults.context_window_tokens
+            )
+            initial_runtime = LLMRuntime.capture(
                 provider,
                 initial_model,
                 context_window_tokens=initial_context_window,
@@ -350,13 +351,13 @@ class AgentLoop:
                 system_prompt_prefix=(
                     prompt_for_model(initial_model) if prompt_for_model else None
                 ),
-            ),
+            )
+        configured_presets = model_presets or {}
+        self.runtime_resolver = ModelRuntimeResolver(
+            initial_runtime,
             model_presets=configured_presets,
             preset_catalog_loader=preset_catalog_loader,
-            prompt_for_model=prompt_for_model,
-            configured_default_preset=model_preset,
             provider_snapshot_loader=provider_snapshot_loader,
-            preset_snapshot_loader=preset_snapshot_loader,
         )
         self.context_block_limit = context_block_limit
         self.max_tool_result_chars = (
@@ -402,7 +403,11 @@ class AgentLoop:
         self._exec_session_manager = ExecSessionManager()
         self.runner = AgentRunner()
         self.model_management = (
-            ModelManagement(model_management_config, invalidate=self.invalidate_runtime_config)
+            ModelManagement(
+                model_management_config,
+                runtime_resolver=self.runtime_resolver,
+                invalidate=self.invalidate_runtime_config,
+            )
             if model_management_config is not None else None
         )
         self.permissions = PermissionManager(
@@ -422,6 +427,7 @@ class AgentLoop:
             max_concurrent_subagents=max_concurrent_subagents,
             llm_wall_timeout_for_session=lambda sk: runner_wall_llm_timeout_s(self.sessions, sk),
             model_management=self.model_management,
+            runtime_resolver=self.runtime_resolver,
             permission_manager=self.permissions,
         )
         self._unified_session = unified_session
@@ -478,7 +484,7 @@ class AgentLoop:
         )
         self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
         self._next_idle_compact_check_at = time.monotonic()
-        if model_preset:
+        if model_preset and self.runtime_resolver.model_preset != model_preset:
             self.set_model_preset(model_preset, publish_update=False)
         self._register_default_tools(provider_snapshot_loader=provider_snapshot_loader)
         self.commands = CommandRouter()
@@ -493,16 +499,8 @@ class AgentLoop:
         tool_registry: ToolRegistry,
         **extra: Any,
     ) -> AgentLoop:
-        """Create an AgentLoop from config with the common parameter set.
-
-        The tool registry is caller-owned so application composition can share
-        it with infrastructure such as an ``MCPProvider``.
-
-        Extra keyword arguments are forwarded to ``AgentLoop.__init__``,
-        allowing callers to override or extend the standard config-derived
-        parameters (e.g. ``cron_service``, ``session_manager``).
-        """
-        from nanobot.providers.factory import make_provider
+        """Create an AgentLoop from one canonical provider snapshot."""
+        from nanobot.providers.factory import build_provider_snapshot, load_provider_snapshot
 
         if bus is None:
             bus = MessageBus()
@@ -513,37 +511,43 @@ class AgentLoop:
                 config.workspace_path,
                 sessions_root=data_dir / "sessions" if data_dir is not None else None,
             )
-        provider = extra.pop("provider", None) or make_provider(config)
-        resolved = config.resolve_preset()
-        model_override = extra.pop("model", None)
-        model = model_override or resolved.model
-        supports_vision = extra.pop(
-            "supports_vision",
-            resolved.supports_vision if model_override is None else False,
-        )
-        prompt_for_model = extra.pop("prompt_for_model", None) or config.system_prompt_for
-        context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
-        provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
-        if provider_snapshot_loader is None:
-            from nanobot.providers.factory import build_provider_snapshot
 
-            def _load_provider_snapshot(**kwargs: Any) -> Any:
+        explicit_provider = extra.pop("provider", None)
+        provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
+        supplied_snapshot_loader = provider_snapshot_loader is not None
+        if provider_snapshot_loader is None:
+            def _load_provider_snapshot(**kwargs: Any) -> ProviderSnapshot:
+                if config.source_path is not None:
+                    return load_provider_snapshot(config.source_path, **kwargs)
                 return build_provider_snapshot(config, **kwargs)
 
             provider_snapshot_loader = _load_provider_snapshot
-        preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
-            config,
-            provider_snapshot_loader,
-        )
-        return cls(
+
+        provider_snapshot = extra.pop("provider_snapshot", None)
+        if provider_snapshot is None and explicit_provider is None:
+            if supplied_snapshot_loader:
+                provider_snapshot = provider_snapshot_loader(include_fallbacks=True)
+            else:
+                provider_snapshot = build_provider_snapshot(config, include_fallbacks=True)
+
+        model_override = extra.pop("model", None)
+        preset_override = extra.pop("model_preset", None)
+        context_window_override = extra.pop("context_window_tokens", None)
+        if model_override is not None and preset_override is not None:
+            raise ValueError("model and model_preset are mutually exclusive")
+
+        loop = cls(
             bus=bus,
-            provider=provider,
+            provider=(
+                provider_snapshot.provider
+                if provider_snapshot is not None
+                else explicit_provider
+            ),
+            provider_snapshot=provider_snapshot,
             workspace=config.workspace_path,
-            model=model,
-            supports_vision=supports_vision,
+            model=model_override if explicit_provider is not None else None,
             max_iterations=defaults.max_tool_iterations,
             max_concurrent_subagents=defaults.max_concurrent_subagents,
-            context_window_tokens=context_window_tokens,
             context_block_limit=defaults.context_block_limit,
             max_tool_result_chars=defaults.max_tool_result_chars,
             provider_retry_mode=defaults.provider_retry_mode,
@@ -557,15 +561,19 @@ class AgentLoop:
             idle_compact_check_interval_seconds=defaults.idle_compact_check_interval_seconds,
             tools_config=config.tools,
             model_presets=preset_helpers.configured_model_presets(config),
-            model_preset=defaults.model_preset,
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
-            preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
-            prompt_for_model=prompt_for_model,
             model_management_config=config,
             **extra,
         )
+        if model_override is not None and explicit_provider is None:
+            loop.runtime_resolver.select_model(model_override)
+        elif preset_override is not None:
+            loop.set_model_preset(preset_override, publish_update=False)
+        if context_window_override is not None:
+            loop.set_runtime_context_window(context_window_override)
+        return loop
 
     def _sync_subagent_runtime_limits(self) -> None:
         """Keep subagent runtime limits aligned with mutable loop settings."""

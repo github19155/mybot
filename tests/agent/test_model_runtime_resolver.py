@@ -30,14 +30,34 @@ def _runtime(provider: MagicMock | None = None) -> LLMRuntime:
         provider or _provider(),
         "base-model",
         context_window_tokens=10_000,
-        snapshot_signature=("base-model", "auto"),
+        snapshot_signature=("base-model", "auto", "v1"),
+    )
+
+
+def _snapshot(
+    *,
+    model: str,
+    preset: str | None = None,
+    signature: tuple[object, ...] | None = None,
+    generation: GenerationSettings | None = None,
+    supports_vision: bool = False,
+    context_window_tokens: int = 20_000,
+) -> ProviderSnapshot:
+    return ProviderSnapshot(
+        provider=_provider(),
+        model=model,
+        context_window_tokens=context_window_tokens,
+        signature=signature or (model, "auto", "v1"),
+        generation=generation or GenerationSettings(0.4, 2048, "medium"),
+        model_preset=preset,
+        supports_vision=supports_vision,
+        system_prompt_prefix=f"prompt:{model}",
     )
 
 
 def test_runtime_captures_generation_and_is_immutable() -> None:
     provider = _provider(temperature=0.2, max_tokens=2048, reasoning_effort="low")
     runtime = _runtime(provider)
-
     provider.generation = GenerationSettings(temperature=0.9, max_tokens=99)
 
     assert runtime.generation == GenerationSettings(0.2, 2048, "low")
@@ -45,133 +65,150 @@ def test_runtime_captures_generation_and_is_immutable() -> None:
         runtime.model = "changed"  # type: ignore[misc]
 
 
-def test_provider_snapshot_has_one_canonical_runtime_conversion() -> None:
-    provider = _provider(temperature=0.3, max_tokens=4096)
-    snapshot = ProviderSnapshot(
-        provider=provider,
+def test_provider_snapshot_has_one_complete_runtime_conversion() -> None:
+    snapshot = _snapshot(
         model="snapshot-model",
+        preset="fast",
+        signature=("snapshot-model", "openai", "credential"),
+        generation=GenerationSettings(0.3, 4096, "high"),
+        supports_vision=True,
         context_window_tokens=32_768,
-        signature=("snapshot-model", "openai"),
-        model_preset="fast",
     )
 
     runtime = runtime_from_provider_snapshot(snapshot)
 
-    assert runtime.provider is provider
-    assert runtime.model == "snapshot-model"
-    assert runtime.generation == GenerationSettings(0.3, 4096, None)
-    assert runtime.context_window_tokens == 32_768
-    assert runtime.model_preset == "fast"
+    assert runtime.provider is snapshot.provider
+    assert runtime.model == snapshot.model
+    assert runtime.generation == snapshot.generation
+    assert runtime.context_window_tokens == snapshot.context_window_tokens
+    assert runtime.model_preset == snapshot.model_preset
     assert runtime.snapshot_signature == snapshot.signature
+    assert runtime.supports_vision is True
+    assert runtime.system_prompt_prefix == "prompt:snapshot-model"
 
 
-def test_resolver_resolves_preset_without_mutating_selected_runtime() -> None:
-    initial = _runtime()
-    preset_provider = _provider(temperature=0.5, max_tokens=512)
-    preset = ModelPresetConfig(
-        model="fast-model",
-        temperature=0.5,
-        max_tokens=512,
-        context_window_tokens=8192,
-    )
+def test_inherited_selection_returns_exact_parent_without_loading() -> None:
+    parent = _runtime()
+    loader = MagicMock()
+    resolver = ModelRuntimeResolver(parent, provider_snapshot_loader=loader)
+
+    resolved = resolver.resolve_selection(parent)
+
+    assert resolved is parent
+    assert resolver.runtime is parent
+    loader.assert_not_called()
+
+
+def test_named_preset_resolution_is_non_mutating_normalized_and_cached() -> None:
+    parent = _runtime()
+    snapshot = _snapshot(model="fast-model", preset="Fast")
+    loader = MagicMock(return_value=snapshot)
     resolver = ModelRuntimeResolver(
-        initial,
-        model_presets={"fast": preset},
-        preset_snapshot_loader=lambda name: ProviderSnapshot(
-            provider=preset_provider,
-            model=preset.model,
-            context_window_tokens=preset.context_window_tokens,
-            signature=(name, preset.model),
-        ),
+        parent,
+        model_presets={"Fast": ModelPresetConfig(model="fast-model")},
+        provider_snapshot_loader=loader,
     )
 
-    resolved = resolver.resolve_preset("fast")
-
-    assert resolved.model == "fast-model"
-    assert resolved.model_preset == "fast"
-    assert resolver.runtime is initial
-    assert resolver.model_preset is None
-    assert initial.provider.generation == GenerationSettings(0.1, 1024, None)
-    assert resolved.generation == GenerationSettings(0.5, 512, None)
-
-
-def test_resolver_reuses_preset_until_runtime_config_is_invalidated() -> None:
-    initial = _runtime()
-    preset = ModelPresetConfig(model="fast-model")
-    load_count = 0
-    preset_signature = ("fast-model", "auto", "initial")
-
-    def load_preset(_name: str) -> ProviderSnapshot:
-        nonlocal load_count
-        load_count += 1
-        return ProviderSnapshot(
-            provider=_provider(),
-            model="fast-model",
-            context_window_tokens=20_000,
-            signature=preset_signature,
-        )
-
-    resolver = ModelRuntimeResolver(
-        initial,
-        model_presets={"fast": preset},
-        preset_snapshot_loader=load_preset,
-    )
-
-    first = resolver.resolve_preset("fast")
-    second = resolver.resolve_preset("fast")
+    first = resolver.resolve_selection(parent, model_preset="fast")
+    second = resolver.resolve_preset("Fast")
 
     assert first is second
-    assert load_count == 1
-
-    preset_signature = ("fast-model", "auto", "new-credential")
-    resolver.invalidate()
-    refreshed = resolver.resolve_preset("fast")
-
-    assert refreshed is not first
-    assert load_count == 2
+    assert first.model_preset == "Fast"
+    assert resolver.runtime is parent
+    loader.assert_called_once_with(preset_name="Fast", include_fallbacks=True)
 
 
-def test_resolver_refreshes_preset_catalog_after_invalidation() -> None:
-    provider = _provider()
-    catalog = {
-        "old": ModelPresetConfig(model="old-model", provider="openai"),
-    }
-    default_name = "old"
+def test_direct_model_rebuilds_a_canonical_snapshot_from_parent_settings() -> None:
+    parent = _runtime(_provider(temperature=0.25, max_tokens=3072, reasoning_effort="high"))
+    canonical = _snapshot(
+        model="provider/new-model",
+        signature=("provider/new-model", "resolved-provider", "credential-v2"),
+        generation=GenerationSettings(0.25, 3072, "high"),
+        supports_vision=False,
+        context_window_tokens=10_000,
+    )
+    loader = MagicMock(return_value=canonical)
+    resolver = ModelRuntimeResolver(parent, provider_snapshot_loader=loader)
 
-    def load_preset(name: str) -> ProviderSnapshot:
-        preset = catalog[name]
-        return ProviderSnapshot(
-            provider=provider,
-            model=preset.model,
-            context_window_tokens=preset.context_window_tokens,
-            signature=(preset.model, preset.provider),
-            model_preset=name,
-        )
+    resolved = resolver.resolve_selection(parent, model="provider/new-model")
 
+    call = loader.call_args
+    assert call is not None
+    preset = call.kwargs["preset"]
+    assert preset.model == "provider/new-model"
+    assert preset.provider == "auto"
+    assert preset.to_generation_settings() == parent.generation
+    assert preset.context_window_tokens == parent.context_window_tokens
+    assert preset.supports_vision is False
+    assert call.kwargs["include_fallbacks"] is True
+    assert resolved.provider is canonical.provider
+    assert resolved.snapshot_signature == canonical.signature
+    assert resolved.system_prompt_prefix == canonical.system_prompt_prefix
+    assert resolver.runtime is parent
+
+
+def test_selection_forwards_explicit_fallback_policy() -> None:
+    parent = _runtime()
+    loader = MagicMock(return_value=_snapshot(model="dream-model", preset="dream"))
     resolver = ModelRuntimeResolver(
-        runtime_from_provider_snapshot(load_preset("old")),
-        model_presets=catalog,
-        preset_catalog_loader=lambda: catalog,
-        configured_default_preset="old",
-        provider_snapshot_loader=lambda: load_preset(default_name),
-        preset_snapshot_loader=load_preset,
+        parent,
+        model_presets={"dream": ModelPresetConfig(model="dream-model")},
+        provider_snapshot_loader=loader,
     )
 
-    catalog["new"] = ModelPresetConfig(model="new-model", provider="openai")
-    default_name = "new"
-    resolver.invalidate()
+    resolver.resolve_selection(parent, model_preset="dream", include_fallbacks=False)
 
-    assert resolver.admit().model_preset == "new"
-    assert set(resolver.model_presets) == {"old", "new"}
-
-    del catalog["old"]
-    resolver.invalidate()
-
-    assert resolver.admit().model_preset == "new"
-    assert set(resolver.model_presets) == {"new"}
+    loader.assert_called_once_with(preset_name="dream", include_fallbacks=False)
 
 
-def test_resolver_model_presets_are_read_only() -> None:
+def test_selection_requires_one_canonical_snapshot_loader() -> None:
+    resolver = ModelRuntimeResolver(
+        _runtime(),
+        model_presets={"fast": ModelPresetConfig(model="fast-model")},
+    )
+
+    with pytest.raises(RuntimeError, match="provider snapshot loader"):
+        resolver.resolve_preset("fast")
+
+
+def test_selection_validates_model_and_preset_inputs() -> None:
+    parent = _runtime()
+    resolver = ModelRuntimeResolver(parent, provider_snapshot_loader=MagicMock())
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        resolver.resolve_selection(parent, model="m", model_preset="p")
+    with pytest.raises(ValueError, match="non-empty"):
+        resolver.resolve_selection(parent, model="  ")
+
+
+def test_select_wrappers_mutate_only_the_resolver_default() -> None:
+    parent = _runtime()
+
+    def load(**kwargs) -> ProviderSnapshot:
+        if "preset_name" in kwargs:
+            return _snapshot(model="fast-model", preset=kwargs["preset_name"])
+        preset = kwargs["preset"]
+        return _snapshot(model=preset.model)
+
+    resolver = ModelRuntimeResolver(
+        parent,
+        model_presets={"fast": ModelPresetConfig(model="fast-model")},
+        provider_snapshot_loader=load,
+    )
+
+    preset_runtime = resolver.select_preset("fast")
+    model_runtime = resolver.select_model("direct-model")
+    window_runtime = resolver.select_context_window(65_536)
+
+    assert preset_runtime.model_preset == "fast"
+    assert model_runtime.model == "direct-model"
+    assert model_runtime.model_preset is None
+    assert window_runtime.context_window_tokens == 65_536
+    assert resolver.runtime is window_runtime
+    assert parent.model == "base-model"
+
+
+def test_model_presets_are_deep_read_only_views() -> None:
     resolver = ModelRuntimeResolver(
         _runtime(),
         model_presets={"fast": ModelPresetConfig(model="fast-model")},
@@ -179,197 +216,79 @@ def test_resolver_model_presets_are_read_only() -> None:
 
     exposed = resolver.model_presets
     with pytest.raises(TypeError):
-        exposed["other"] = ModelPresetConfig(  # type: ignore[index]
-            model="other-model"
-        )
+        exposed["other"] = ModelPresetConfig(model="other")  # type: ignore[index]
+    exposed["fast"].model = "mutated"
 
-    exposed["fast"].model = "mutated-model"
-
-    assert set(resolver.model_presets) == {"fast"}
     assert resolver.model_presets["fast"].model == "fast-model"
-    assert resolver.resolve_preset("fast").model == "fast-model"
 
 
-def test_resolver_model_override_is_derived_without_default_mutation() -> None:
+def test_invalidate_refreshes_only_on_next_admission() -> None:
     initial = _runtime()
-    resolver = ModelRuntimeResolver(initial)
+    refreshed = _snapshot(model="refreshed-model")
+    loader = MagicMock(return_value=refreshed)
+    resolver = ModelRuntimeResolver(initial, provider_snapshot_loader=loader)
 
-    override = resolver.resolve_override(
-        model="override-model",
-        model_preset=None,
+    assert resolver.admit() is initial
+    loader.assert_not_called()
+
+    resolver.invalidate()
+    admitted = resolver.admit()
+
+    assert admitted.model == "refreshed-model"
+    loader.assert_called_once_with(include_fallbacks=True)
+    assert resolver.admit() is admitted
+
+
+def test_refresh_preserves_active_preset_when_configured_default_is_unchanged() -> None:
+    default = _snapshot(
+        model="base-model",
+        preset="default",
+        signature=("base-model", "auto", "v1"),
     )
+    fast_v1 = _snapshot(
+        model="fast-model",
+        preset="fast",
+        signature=("fast-model", "auto", "v1"),
+    )
+    fast_v2 = _snapshot(
+        model="fast-model",
+        preset="fast",
+        signature=("fast-model", "auto", "v2"),
+    )
+    active_fast = fast_v1
+
+    def load(**kwargs) -> ProviderSnapshot:
+        nonlocal active_fast
+        if kwargs.get("preset_name") == "fast":
+            return active_fast
+        return default
+
+    resolver = ModelRuntimeResolver(
+        runtime_from_provider_snapshot(default),
+        model_presets={
+            "default": ModelPresetConfig(model="base-model"),
+            "fast": ModelPresetConfig(model="fast-model"),
+        },
+        provider_snapshot_loader=load,
+    )
+    resolver.select_preset("fast")
+    active_fast = fast_v2
+    resolver.invalidate()
+
+    refreshed = resolver.admit()
+
+    assert refreshed.model_preset == "fast"
+    assert refreshed.snapshot_signature == fast_v2.signature
+
+
+def test_resolve_override_delegates_without_mutating_default() -> None:
+    parent = _runtime()
+    loader = MagicMock(return_value=_snapshot(model="override-model"))
+    resolver = ModelRuntimeResolver(parent, provider_snapshot_loader=loader)
+
+    override = resolver.resolve_override(model="override-model", model_preset=None)
 
     assert override is not None
     assert override.model == "override-model"
-    assert override.provider is initial.provider
-    assert override.generation is initial.generation
-    assert resolver.runtime is initial
-
-
-def test_resolver_refresh_preserves_unchanged_active_preset() -> None:
-    initial = _runtime()
-    preset = ModelPresetConfig(model="fast-model")
-    preset_provider = _provider()
-    resolver = ModelRuntimeResolver(
-        initial,
-        model_presets={"fast": preset},
-        provider_snapshot_loader=lambda: ProviderSnapshot(
-            provider=_provider(),
-            model="base-model",
-            context_window_tokens=10_000,
-            signature=("base-model", "auto", "refreshed"),
-        ),
-        preset_snapshot_loader=lambda _name: ProviderSnapshot(
-            provider=preset_provider,
-            model="fast-model",
-            context_window_tokens=20_000,
-            signature=("fast-model", "auto", "refreshed"),
-        ),
-    )
-    resolver.select_preset("fast")
-
-    refreshed = resolver.refresh()
-
-    assert refreshed is None
-    assert resolver.runtime.provider is preset_provider
-    assert resolver.model_preset == "fast"
-
-
-def test_refresh_clears_preset_when_new_default_has_same_snapshot_signature() -> None:
-    initial = _runtime()
-    preset_provider = _provider()
-    preset_snapshot = ProviderSnapshot(
-        provider=preset_provider,
-        model="fast-model",
-        context_window_tokens=20_000,
-        signature=("fast-model", "auto", "same-runtime"),
-    )
-    default_snapshot = ProviderSnapshot(
-        provider=preset_provider,
-        model="fast-model",
-        context_window_tokens=20_000,
-        signature=preset_snapshot.signature,
-    )
-    resolver = ModelRuntimeResolver(
-        initial,
-        model_presets={"fast": ModelPresetConfig(model="fast-model")},
-        provider_snapshot_loader=lambda: default_snapshot,
-        preset_snapshot_loader=lambda _name: preset_snapshot,
-    )
-    resolver.select_preset("fast")
-
-    refreshed = resolver.refresh()
-
-    assert refreshed is resolver.runtime
-    assert refreshed is not None
-    assert resolver.model_preset is None
-    assert resolver.runtime.model_preset is None
-    assert "_active_preset" not in resolver.__dict__
-
-
-def test_resolver_refreshes_provider_generation_for_next_default_turn() -> None:
-    provider = _provider(temperature=0.2, max_tokens=2048)
-    resolver = ModelRuntimeResolver(_runtime(provider))
-    admitted = resolver.current()
-
-    provider.generation = GenerationSettings(temperature=0.8, max_tokens=512)
-    refreshed = resolver.admit()
-
-    assert admitted.generation == GenerationSettings(0.2, 2048, None)
-    assert refreshed.generation == GenerationSettings(0.8, 512, None)
-
-
-def test_resolver_admission_reloads_config_only_after_invalidation() -> None:
-    initial = _runtime()
-    refreshed_provider = _provider()
-    load_count = 0
-
-    def load_snapshot() -> ProviderSnapshot:
-        nonlocal load_count
-        load_count += 1
-        return ProviderSnapshot(
-            provider=refreshed_provider,
-            model="refreshed-model",
-            context_window_tokens=20_000,
-            signature=("refreshed-model", "auto"),
-        )
-
-    resolver = ModelRuntimeResolver(initial, provider_snapshot_loader=load_snapshot)
-
-    assert resolver.admit() is initial
-    assert load_count == 0
-
-    resolver.invalidate()
-    refreshed = resolver.admit()
-
-    assert refreshed.provider is refreshed_provider
-    assert refreshed.model == "refreshed-model"
-    assert resolver.admit() is refreshed
-    assert load_count == 1
-
-
-def test_current_refresh_forces_config_reload() -> None:
-    initial = _runtime()
-    load_snapshot = MagicMock(
-        return_value=ProviderSnapshot(
-            provider=_provider(),
-            model="refreshed-model",
-            context_window_tokens=20_000,
-            signature=("refreshed-model", "auto"),
-        )
-    )
-    resolver = ModelRuntimeResolver(initial, provider_snapshot_loader=load_snapshot)
-
-    refreshed = resolver.current(refresh=True)
-
-    assert refreshed.model == "refreshed-model"
-    load_snapshot.assert_called_once_with()
-
-
-def test_selected_preset_generation_does_not_fall_back_to_provider_defaults() -> None:
-    provider = _provider(temperature=0.1, max_tokens=1024)
-    resolver = ModelRuntimeResolver(
-        _runtime(provider),
-        model_presets={
-            "creative": ModelPresetConfig(
-                model="creative-model",
-                temperature=0.7,
-                max_tokens=4096,
-            )
-        },
-    )
-    selected = resolver.select_preset("creative")
-
-    provider.generation = GenerationSettings(temperature=0.9, max_tokens=64)
-    refreshed = resolver.admit()
-
-    assert refreshed is selected
-    assert refreshed.generation == GenerationSettings(0.7, 4096, None)
-
-
-def test_resolver_mutates_only_its_default_selection() -> None:
-    initial = _runtime()
-    resolver = ModelRuntimeResolver(initial)
-
-    selected_model = resolver.select_model("next-model")
-    selected_window = resolver.select_context_window(65_536)
-
-    assert selected_model.model == "next-model"
-    assert selected_window.model == "next-model"
-    assert selected_window.context_window_tokens == 65_536
-    assert resolver.runtime is selected_window
-    assert resolver.model_preset is None
-    assert initial.model == "base-model"
-    assert initial.context_window_tokens == 10_000
-
-
-def test_resolver_preserves_canonical_preset_name_for_case_insensitive_input() -> None:
-    resolver = ModelRuntimeResolver(
-        _runtime(),
-        model_presets={"Deep Research": ModelPresetConfig(model="deep-model")},
-    )
-
-    selected = resolver.select_preset("deep research")
-
-    assert selected.model == "deep-model"
-    assert selected.model_preset == "Deep Research"
+    assert resolver.runtime is parent
+    assert resolver.resolve_override(model=None, model_preset=None) is None

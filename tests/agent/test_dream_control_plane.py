@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -312,6 +312,59 @@ async def test_dream_routing_never_falls_back_to_main_implicitly() -> None:
 
     with pytest.raises(RuntimeError, match="no eligible model route"):
         await management.resolve_dream_runtime(DREAM_CONSOLIDATION)
+
+
+@pytest.mark.asyncio
+async def test_dream_override_bypasses_fleet_and_disables_main_fallbacks() -> None:
+    config = Config(modelPresets={"dream": {"model": "provider/dream"}})
+    config.agents.defaults.dream.model_override = "dream"
+    resolver = MagicMock()
+    resolver.runtime = object()
+    resolved = object()
+    resolver.resolve_selection.return_value = resolved
+    management = ModelManagement(config, runtime_resolver=resolver)
+    management.fleet_recommend = AsyncMock()
+
+    assert await management.resolve_dream_runtime(DREAM_CONSOLIDATION) is resolved
+    management.fleet_recommend.assert_not_awaited()
+    resolver.resolve_selection.assert_called_once_with(
+        resolver.runtime,
+        model_preset="dream",
+        include_fallbacks=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_dream_fleet_then_dream_fallback_choose_only_the_preset() -> None:
+    config = Config(modelPresets={
+        "fleet": {"model": "provider/fleet"},
+        "fallback": {"model": "provider/fallback"},
+    })
+    resolver = MagicMock()
+    resolver.runtime = object()
+    resolver.resolve_selection.side_effect = ["fleet-runtime", "fallback-runtime"]
+    management = ModelManagement(config, runtime_resolver=resolver)
+    management.fleet_recommend = AsyncMock(return_value={
+        "status": "ok",
+        "recommended": {"preset": "fleet"},
+    })
+
+    assert await management.resolve_dream_runtime(DREAM_CONSOLIDATION) == "fleet-runtime"
+    resolver.resolve_selection.assert_called_once_with(
+        resolver.runtime,
+        model_preset="fleet",
+        include_fallbacks=False,
+    )
+
+    resolver.resolve_selection.reset_mock()
+    management.fleet_recommend = AsyncMock(return_value={"status": "error"})
+    config.agents.defaults.dream.fallback_preset = "fallback"
+    assert await management.resolve_dream_runtime(DREAM_CONSOLIDATION) == "fallback-runtime"
+    resolver.resolve_selection.assert_called_once_with(
+        resolver.runtime,
+        model_preset="fallback",
+        include_fallbacks=False,
+    )
 
 
 def test_fleet_has_no_dream_specific_scoring_and_dream_is_lowest_priority() -> None:

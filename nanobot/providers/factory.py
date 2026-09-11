@@ -255,7 +255,14 @@ def _inline_fallback_preset(
     )
 
 
-def _resolve_fallback_presets(config: Config, primary: ModelPresetConfig) -> list[ModelPresetConfig]:
+def _resolve_fallback_presets(
+    config: Config,
+    primary: ModelPresetConfig,
+    *,
+    include_fallbacks: bool = True,
+) -> list[ModelPresetConfig]:
+    if not include_fallbacks:
+        return []
     presets: list[ModelPresetConfig] = []
     for fallback in config.agents.defaults.fallback_models:
         if isinstance(fallback, str):
@@ -271,6 +278,7 @@ def make_provider(
     preset_name: str | None = None,
     preset: ModelPresetConfig | None = None,
     model: str | None = None,
+    include_fallbacks: bool = True,
 ) -> LLMProvider:
     """Create the LLM provider implied by config, with fleet-controlled leaves."""
     resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)
@@ -280,7 +288,11 @@ def make_provider(
         model=model,
         preset_name=preset_name,
     )
-    fallback_presets = _resolve_fallback_presets(config, resolved)
+    fallback_presets = _resolve_fallback_presets(
+        config,
+        resolved,
+        include_fallbacks=include_fallbacks,
+    )
 
     if fallback_presets:
         provider = FallbackProvider(
@@ -335,6 +347,7 @@ def provider_signature(
     *,
     preset_name: str | None = None,
     preset: ModelPresetConfig | None = None,
+    include_fallbacks: bool = True,
 ) -> tuple[object, ...]:
     """Return config fields that affect the active provider chain.
 
@@ -344,7 +357,11 @@ def provider_signature(
     """
     resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)
     p = config.get_provider(resolved.model, preset=resolved)
-    fallback_presets = _resolve_fallback_presets(config, resolved)
+    fallback_presets = _resolve_fallback_presets(
+        config,
+        resolved,
+        include_fallbacks=include_fallbacks,
+    )
 
     def _fallback_signature(fallback: ModelPresetConfig) -> tuple[object, ...]:
         fp = config.get_provider(fallback.model, preset=fallback)
@@ -403,15 +420,32 @@ def build_provider_snapshot(
     *,
     preset_name: str | None = None,
     preset: ModelPresetConfig | None = None,
+    include_fallbacks: bool = True,
 ) -> ProviderSnapshot:
     resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)
     selected_preset = config.agents.defaults.model_preset if preset_name is None and preset is None else preset_name
-    fallback_windows = [fallback.context_window_tokens for fallback in _resolve_fallback_presets(config, resolved)]
+    fallback_windows = [
+        fallback.context_window_tokens
+        for fallback in _resolve_fallback_presets(
+            config,
+            resolved,
+            include_fallbacks=include_fallbacks,
+        )
+    ]
     return ProviderSnapshot(
-        provider=make_provider(config, preset=resolved, preset_name=selected_preset),
+        provider=make_provider(
+            config,
+            preset=resolved,
+            preset_name=selected_preset,
+            include_fallbacks=include_fallbacks,
+        ),
         model=resolved.model,
         context_window_tokens=min([resolved.context_window_tokens, *fallback_windows]),
-        signature=provider_signature(config, preset=resolved),
+        signature=provider_signature(
+            config,
+            preset=resolved,
+            include_fallbacks=include_fallbacks,
+        ),
         generation=resolved.to_generation_settings(),
         model_preset=selected_preset,
         supports_vision=resolved.supports_vision,
@@ -423,10 +457,14 @@ def load_provider_snapshot(
     config_path: Path | None = None,
     *,
     preset_name: str | None = None,
+    preset: ModelPresetConfig | None = None,
+    include_fallbacks: bool = True,
 ) -> ProviderSnapshot:
     from nanobot.config.loader import load_config, resolve_config_env_vars
 
     return build_provider_snapshot(
         resolve_config_env_vars(load_config(config_path), config_path=config_path),
         preset_name=preset_name,
+        preset=preset,
+        include_fallbacks=include_fallbacks,
     )

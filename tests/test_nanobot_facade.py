@@ -749,10 +749,9 @@ async def test_run_model_overrides_can_overlap_without_default_mutation(tmp_path
     both_entered = asyncio.Event()
     release_first = asyncio.Event()
 
-    def fake_resolve(*, model, model_preset, config):
+    def fake_resolve(*, model, model_preset):
         assert model is not None
         assert model_preset is None
-        assert config is bot._config
         return runtime_from_provider_snapshot(ProviderSnapshot(
             provider=_fake_provider(model, max_tokens=2048),
             model=model,
@@ -838,7 +837,6 @@ async def test_run_model_override_is_per_run_without_default_mutation(tmp_path):
     bot._loop.runtime_resolver.resolve_override.assert_called_once_with(
         model="openai/gpt-4.1-mini",
         model_preset=None,
-        config=bot._config,
     )
     assert not hasattr(bot._loop.runner, "provider")
     assert bot._loop.runtime_resolver.runtime is original_runtime
@@ -876,7 +874,6 @@ async def test_run_model_preset_override_is_per_run(tmp_path):
     bot._loop.runtime_resolver.resolve_override.assert_called_once_with(
         model=None,
         model_preset="fast",
-        config=bot._config,
     )
     assert bot._loop.runtime_resolver.runtime is original_runtime
     assert bot._loop.model_preset is None

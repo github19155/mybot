@@ -1,4 +1,4 @@
-"""Instance-scoped model administration and immutable task runtime resolution."""
+"""Instance-scoped model/provider administration and Dream selection orchestration."""
 
 from __future__ import annotations
 
@@ -6,15 +6,15 @@ import asyncio
 import json
 import threading
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from nanobot.agent.subagent_roles import resolve_role
-from nanobot.config.loader import resolve_config_env_vars
 from nanobot.config.schema import Config, ModelPresetConfig, ProviderConfig
 from nanobot.config.store import ConfigStore
 from nanobot.model_fleet import get_model_fleet, offering_from_config
-from nanobot.providers.factory import build_provider_snapshot
-from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
+
+if TYPE_CHECKING:
+    from nanobot.agent.model_runtime import ModelRuntimeResolver
+    from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.webui import settings_models as models
 from nanobot.webui.settings_contracts import WebUISettingsError
 
@@ -24,9 +24,16 @@ _DREAM_MIN_CONTEXT_TOKENS = 16_000
 class ModelManagement:
     """Model/provider administration plus Main-facing fleet discovery."""
 
-    def __init__(self, config: Config, *, invalidate: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        *,
+        runtime_resolver: "ModelRuntimeResolver | None" = None,
+        invalidate: Callable[[], None] | None = None,
+    ) -> None:
         self.config = config
         self._store = ConfigStore(config.source_path) if config.source_path is not None else None
+        self._runtime_resolver = runtime_resolver
         self._invalidate = invalidate
         self._lock = threading.RLock()
 
@@ -38,143 +45,42 @@ class ModelManagement:
         with self._lock:
             return self._load().model_copy(deep=True)
 
-    def _runtime_from_selection(
-        self,
-        parent: LLMRuntime,
-        config: Config,
-        *,
-        model: str | None,
-        model_preset: str | None,
-    ) -> LLMRuntime:
-        if model is not None and model_preset is not None:
-            raise ValueError("Choose either model or model_preset, not both")
-        if model is None and model_preset is None:
-            return parent
-        if model is not None:
-            if not model.strip():
-                raise ValueError("model must be a non-empty string")
-            preset = ModelPresetConfig(
-                model=model.strip(), provider="auto",
-                max_tokens=parent.generation.max_tokens,
-                temperature=parent.generation.temperature,
-                reasoning_effort=parent.generation.reasoning_effort,
-                context_window_tokens=parent.context_window_tokens,
-            )
-            preset_name = None
-        else:
-            if model_preset != "default" and model_preset not in config.model_presets:
-                raise ValueError("Unknown model preset")
-            preset = config.resolve_preset(model_preset)
-            preset_name = model_preset
-        try:
-            resolved = resolve_config_env_vars(config.model_copy(deep=True), config_path=config.source_path)
-            snapshot = build_provider_snapshot(
-                resolved,
-                preset=preset,
-                preset_name=preset_name,
-            )
-        except Exception:
-            raise ValueError("Cannot resolve task model; check the configured provider and credentials") from None
-        return runtime_from_provider_snapshot(snapshot)
-
-    def _runtime_from_named_preset_without_main_fallbacks(
-        self,
-        config: Config,
-        preset_name: str,
-    ) -> LLMRuntime:
-        """Resolve an explicit Dream route without inheriting Main's fallback chain."""
-        if preset_name != "default" and preset_name not in config.model_presets:
-            raise ValueError(f"Unknown Dream model preset: {preset_name}")
-        isolated = config.model_copy(deep=True)
-        isolated.agents.defaults.fallback_models = []
-        isolated = resolve_config_env_vars(isolated, config_path=isolated.source_path)
-        preset = isolated.resolve_preset(preset_name)
-        snapshot = build_provider_snapshot(
-            isolated,
-            preset=preset,
-            preset_name=preset_name,
-        )
-        return runtime_from_provider_snapshot(snapshot)
-
-    def resolve_task_runtime(
-        self,
-        parent: LLMRuntime,
-        *,
-        role: str,
-        model: str | None = None,
-        model_preset: str | None = None,
-    ) -> LLMRuntime:
-        with self._lock:
-            config = self._load()
-            role_config = resolve_role(config, role)
-            if role_config.disabled:
-                raise ValueError("Subagent role is disabled")
-            if model is not None and model_preset is not None:
-                raise ValueError("Choose either model or model_preset, not both")
-            if model is not None:
-                selected_model = model
-                selected_preset = None
-            elif model_preset is not None:
-                selected_model = None
-                selected_preset = model_preset
-            elif role_config.model is not None:
-                selected_model = role_config.model
-                selected_preset = None
-            else:
-                selected_model = None
-                selected_preset = role_config.model_preset
-            return self._runtime_from_selection(
-                parent, config, model=selected_model, model_preset=selected_preset,
-            )
-
-    def resolve_ephemeral_runtime(
-        self,
-        parent: LLMRuntime,
-        *,
-        model: str | None = None,
-        model_preset: str | None = None,
-    ) -> LLMRuntime:
-        with self._lock:
-            return self._runtime_from_selection(
-                parent, self._load(), model=model, model_preset=model_preset,
-            )
-
-    async def resolve_dream_runtime(self, workload: str) -> LLMRuntime:
-        """Resolve Dream independently from Main while reusing Fleet and Admission."""
+    async def resolve_dream_runtime(self, workload: str) -> "LLMRuntime":
+        """Choose a Dream route, then delegate selection-to-runtime resolution."""
         with self._lock:
             config = self._load()
             dream = config.agents.defaults.dream
-            if dream.model_override:
-                return self._runtime_from_named_preset_without_main_fallbacks(
-                    config,
-                    dream.model_override,
-                )
+            selected = dream.model_override
             pool = dream.pool_for(workload)
 
-        recommendation = await self.fleet_recommend(
-            pool=pool,
-            task_type="background",
-            min_context_tokens=_DREAM_MIN_CONTEXT_TOKENS,
-        )
-        selected: str | None = None
-        if recommendation.get("status") == "ok":
-            recommended = recommendation.get("recommended")
-            if isinstance(recommended, dict):
-                value = cast(dict[str, object], recommended).get("preset")
-                if isinstance(value, str) and value:
-                    selected = value
+        if selected is None:
+            recommendation = await self.fleet_recommend(
+                pool=pool,
+                task_type="background",
+                min_context_tokens=_DREAM_MIN_CONTEXT_TOKENS,
+            )
+            if recommendation.get("status") == "ok":
+                recommended = recommendation.get("recommended")
+                if isinstance(recommended, dict):
+                    value = cast(dict[str, object], recommended).get("preset")
+                    if isinstance(value, str) and value:
+                        selected = value
 
-        with self._lock:
-            config = self._load()
-            dream = config.agents.defaults.dream
-            if selected is None:
-                selected = dream.fallback_preset
-            if selected is None:
-                raise RuntimeError(
-                    "Dream has no eligible model route; configure a Dream pool, "
-                    "model_override, or fallback_preset"
-                )
-            return self._runtime_from_named_preset_without_main_fallbacks(config, selected)
+        if selected is None:
+            with self._lock:
+                selected = self._load().agents.defaults.dream.fallback_preset
+        if selected is None:
+            raise RuntimeError(
+                "Dream has no eligible model route; configure a Dream pool, "
+                "model_override, or fallback_preset"
+            )
+        if self._runtime_resolver is None:
+            raise RuntimeError("Dream runtime selection requires ModelRuntimeResolver")
+        return self._runtime_resolver.resolve_selection(
+            self._runtime_resolver.runtime,
+            model_preset=selected,
+            include_fallbacks=False,
+        )
 
     @staticmethod
     def _catalog(config: Config) -> dict[str, Any]:

@@ -25,14 +25,34 @@ def _provider(default_model: str, max_tokens: int = 123) -> MagicMock:
 
 def _make_loop(tmp_path, presets=None, active_preset=None):
     provider = _provider("base-model")
+    configured = presets or {}
+
+    def load_snapshot(*, preset_name=None, preset=None, **_kwargs):
+        selected = preset or configured[preset_name]
+        selected_provider = _provider(selected.model, max_tokens=selected.max_tokens or 123)
+        selected_provider.generation = SimpleNamespace(
+            max_tokens=selected.max_tokens or 123,
+            temperature=selected.temperature if selected.temperature is not None else 0.1,
+            reasoning_effort=selected.reasoning_effort,
+        )
+        return ProviderSnapshot(
+            provider=selected_provider,
+            model=selected.model,
+            context_window_tokens=selected.context_window_tokens,
+            signature=(preset_name, selected.model),
+            generation=selected_provider.generation,
+            model_preset=preset_name,
+        )
+
     return AgentLoop(
         bus=MessageBus(),
         provider=provider,
         workspace=tmp_path,
         model="base-model",
         context_window_tokens=1000,
-        model_presets=presets or {},
+        model_presets=configured,
         model_preset=active_preset,
+        provider_snapshot_loader=load_snapshot,
     )
 
 
@@ -87,6 +107,13 @@ def test_model_preset_setter_calls_runtime_model_publisher(tmp_path) -> None:
         model="base-model",
         context_window_tokens=1000,
         model_presets={"fast": ModelPresetConfig(model="openai/gpt-4.1")},
+        provider_snapshot_loader=lambda *, preset_name=None, **_kwargs: ProviderSnapshot(
+            provider=_provider("openai/gpt-4.1"),
+            model="openai/gpt-4.1",
+            context_window_tokens=200_000,
+            signature=(preset_name, "openai/gpt-4.1"),
+            model_preset=preset_name,
+        ),
         runtime_model_publisher=lambda model, preset: published.append((model, preset)),
     )
 
@@ -111,11 +138,12 @@ def test_model_preset_setter_replaces_provider_from_snapshot(tmp_path) -> None:
         model="base-model",
         context_window_tokens=1000,
         model_presets={"deep": preset},
-        preset_snapshot_loader=lambda name: ProviderSnapshot(
+        provider_snapshot_loader=lambda *, preset_name=None, **_kwargs: ProviderSnapshot(
             provider=new_provider,
             model=preset.model,
             context_window_tokens=preset.context_window_tokens,
-            signature=(name, preset.model),
+            signature=(preset_name, preset.model),
+            model_preset=preset_name,
         ),
     )
 
@@ -141,7 +169,7 @@ def test_model_preset_setter_failure_leaves_old_state(tmp_path) -> None:
         model="base-model",
         context_window_tokens=1000,
         model_presets={"fast": preset},
-        preset_snapshot_loader=lambda _name: (_ for _ in ()).throw(
+        provider_snapshot_loader=lambda **_kwargs: (_ for _ in ()).throw(
             RuntimeError("provider unavailable")
         ),
     )
@@ -156,80 +184,6 @@ def test_model_preset_setter_failure_leaves_old_state(tmp_path) -> None:
     assert loop.context_window_tokens == 1000
     assert not hasattr(loop.consolidator, "max_completion_tokens")
     assert loop.llm_runtime().generation.max_tokens == 123
-
-
-def test_active_model_preset_survives_unchanged_config_refresh(tmp_path) -> None:
-    base_provider = _provider("base-model", max_tokens=123)
-    fast_provider = _provider("openai/gpt-4.1", max_tokens=4096)
-    default_snapshot = ProviderSnapshot(
-        provider=base_provider,
-        model="base-model",
-        context_window_tokens=1000,
-        signature=("base-model", "auto", "openai", "sk-old"),
-    )
-    fast_snapshot = ProviderSnapshot(
-        provider=fast_provider,
-        model="openai/gpt-4.1",
-        context_window_tokens=32_768,
-        signature=("openai/gpt-4.1", "auto", "openai", "sk-old"),
-    )
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=base_provider,
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=1000,
-        provider_signature=default_snapshot.signature,
-        model_presets={"fast": ModelPresetConfig(model="openai/gpt-4.1")},
-        provider_snapshot_loader=lambda: default_snapshot,
-        preset_snapshot_loader=lambda _name: fast_snapshot,
-    )
-
-    loop.set_model_preset("fast")
-    loop.runtime_resolver.invalidate()
-    loop.llm_runtime()
-
-    assert loop.model_preset == "fast"
-    assert loop.provider is fast_provider
-    assert loop.model == "openai/gpt-4.1"
-
-
-def test_config_model_refresh_clears_active_model_preset(tmp_path) -> None:
-    base_provider = _provider("base-model", max_tokens=123)
-    fast_provider = _provider("openai/gpt-4.1", max_tokens=4096)
-    webui_provider = _provider("anthropic/claude-opus-4-5", max_tokens=2048)
-    webui_snapshot = ProviderSnapshot(
-        provider=webui_provider,
-        model="anthropic/claude-opus-4-5",
-        context_window_tokens=200_000,
-        signature=("anthropic/claude-opus-4-5", "anthropic", "anthropic", "sk-old"),
-    )
-    fast_snapshot = ProviderSnapshot(
-        provider=fast_provider,
-        model="openai/gpt-4.1",
-        context_window_tokens=32_768,
-        signature=("openai/gpt-4.1", "auto", "openai", "sk-old"),
-    )
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=base_provider,
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=1000,
-        provider_snapshot_loader=lambda: webui_snapshot,
-        provider_signature=("base-model", "auto", "openai", "sk-old"),
-        model_presets={"fast": ModelPresetConfig(model="openai/gpt-4.1")},
-        preset_snapshot_loader=lambda _name: fast_snapshot,
-    )
-
-    loop.set_model_preset("fast")
-    loop.runtime_resolver.invalidate()
-    loop.llm_runtime()
-
-    assert loop.model_preset is None
-    assert loop.provider is webui_provider
-    assert loop.model == "anthropic/claude-opus-4-5"
-    assert loop.context_window_tokens == 200_000
 
 
 def test_model_preset_setter_raises_on_unknown(tmp_path) -> None:
@@ -397,19 +351,3 @@ def test_from_config_injects_default_preset(tmp_path) -> None:
     assert "default" in loop.model_presets
     assert loop.model_presets["default"].model == "openai/gpt-4.1"
 
-
-def test_from_config_static_preset_loader_does_not_enable_hot_reload(tmp_path) -> None:
-    from unittest.mock import patch
-
-    from nanobot.config.schema import Config
-    config = Config.model_validate({
-        "agents": {"defaults": {"model": "openai/gpt-4.1", "workspace": str(tmp_path)}},
-        "model_presets": {"fast": {"model": "openai/gpt-4.1-mini"}},
-    })
-    fake_provider = _provider("openai/gpt-4.1")
-    with patch("nanobot.providers.factory.make_provider", return_value=fake_provider):
-        loop = AgentLoop.from_config(config, tool_registry=ToolRegistry())
-        default_runtime = loop.runtime_resolver.runtime
-        resolved = loop.runtime_resolver.resolve_preset("fast")
-    assert resolved.model == "openai/gpt-4.1-mini"
-    assert loop.runtime_resolver.runtime is default_runtime

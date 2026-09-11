@@ -191,32 +191,66 @@ async def test_run_snapshots_thinking_and_fork_context(tmp_path) -> None:
     assert "reasoning_content" not in seen["messages"][-2]
 
 
-def test_run_model_preset_overrides_role_model(monkeypatch) -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role_selection", "run_model", "run_preset", "expected_model", "expected_preset", "calls"),
+    [
+        ({"model": "provider/role"}, "provider/run", None, "provider/run", None, 1),
+        ({"modelPreset": "fast"}, None, None, None, "fast", 1),
+        ({}, None, None, None, None, 0),
+    ],
+)
+async def test_subagent_runtime_precedence_uses_one_frozen_role(
+    tmp_path,
+    monkeypatch,
+    role_selection,
+    run_model,
+    run_preset,
+    expected_model,
+    expected_preset,
+    calls,
+) -> None:
     from nanobot.agent.model_management import ModelManagement
+    from nanobot.agent.subagent_roles import resolve_role as real_resolve_role
 
     config = Config(
         modelPresets={"fast": {"model": "provider/fast"}},
-        subagentRoles={"coder": {"model": "provider/role"}},
+        subagentRoles={"coder": role_selection},
     )
-    management = ModelManagement(config)
-    captured = {}
+    parent = _runtime()
+    resolver = MagicMock()
+    resolver.runtime = parent
+    resolver.resolve_selection.return_value = parent
+    management = ModelManagement(config, runtime_resolver=resolver)
+    role_resolver = MagicMock(side_effect=real_resolve_role)
+    monkeypatch.setattr("nanobot.agent.subagent.resolve_role", role_resolver)
+    manager = _manager(
+        tmp_path,
+        model_management=management,
+        runtime_resolver=resolver,
+    )
+    manager.runner.run = AsyncMock(return_value=SimpleNamespace(
+        stop_reason="completed", final_content="done", error=None, tool_events=[],
+    ))
 
-    monkeypatch.setattr(
-        "nanobot.agent.model_management.build_provider_snapshot",
-        lambda config, *, preset, preset_name: captured.update(
-            preset=preset, preset_name=preset_name,
-        ) or object(),
-    )
-    monkeypatch.setattr(
-        "nanobot.agent.model_management.runtime_from_provider_snapshot",
-        lambda snapshot: "resolved-runtime",
+    result = await manager.run_inline(
+        "runtime precedence",
+        runtime=parent,
+        role="coder",
+        model=run_model,
+        model_preset=run_preset,
     )
 
-    assert management.resolve_task_runtime(
-        _runtime(), role="coder", model_preset="fast",
-    ) == "resolved-runtime"
-    assert captured["preset"].model == "provider/fast"
-    assert captured["preset_name"] == "fast"
+    assert result == "done"
+    assert role_resolver.call_count == 1
+    assert resolver.resolve_selection.call_count == calls
+    if calls:
+        resolver.resolve_selection.assert_called_once_with(
+            parent,
+            model=expected_model,
+            model_preset=expected_preset,
+        )
+
 
 
 @pytest.mark.asyncio

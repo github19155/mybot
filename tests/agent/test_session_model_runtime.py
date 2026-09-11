@@ -45,7 +45,8 @@ async def test_sessions_run_concurrently_with_isolated_model_presets(tmp_path) -
         "deep": ModelPresetConfig(model="deep-model", context_window_tokens=32_000),
     }
 
-    def load_preset(name: str) -> ProviderSnapshot:
+    def load_preset(*, preset_name=None, **_kwargs) -> ProviderSnapshot:
+        name = preset_name
         load_counts[name] += 1
         preset = presets[name]
         provider = base if name == "default" else providers[name]
@@ -53,7 +54,8 @@ async def test_sessions_run_concurrently_with_isolated_model_presets(tmp_path) -
             provider=provider,
             model=preset.model,
             context_window_tokens=preset.context_window_tokens,
-            signature=(name, preset.model),
+            signature=(preset_name, preset.model),
+            model_preset=preset_name,
         )
 
     loop = AgentLoop(
@@ -63,7 +65,7 @@ async def test_sessions_run_concurrently_with_isolated_model_presets(tmp_path) -
         model="base-model",
         context_window_tokens=8_000,
         model_presets=presets,
-        preset_snapshot_loader=load_preset,
+        provider_snapshot_loader=load_preset,
     )
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
     loop.set_session_model_preset("sdk:fast", "fast")
@@ -143,13 +145,15 @@ async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(tmp_pa
         "deep": ModelPresetConfig(model="deep-model", context_window_tokens=32_000),
     }
 
-    def load_preset(name: str) -> ProviderSnapshot:
+    def load_preset(*, preset_name=None, **_kwargs) -> ProviderSnapshot:
+        name = preset_name
         preset = presets[name]
         return ProviderSnapshot(
             provider=providers[name],
             model=preset.model,
             context_window_tokens=preset.context_window_tokens,
-            signature=(name, preset.model),
+            signature=(preset_name, preset.model),
+            model_preset=preset_name,
         )
 
     loop = AgentLoop(
@@ -159,7 +163,7 @@ async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(tmp_pa
         model="base-model",
         context_window_tokens=8_000,
         model_presets=presets,
-        preset_snapshot_loader=load_preset,
+        provider_snapshot_loader=load_preset,
     )
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
     session_key = "sdk:queued"

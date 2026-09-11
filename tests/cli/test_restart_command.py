@@ -13,7 +13,7 @@ import pytest
 
 from nanobot.agent.context import TranscriptInput
 from nanobot.bus.events import InboundMessage
-from nanobot.providers.base import LLMResponse, LLMUsage
+from nanobot.providers.base import GenerationSettings, LLMResponse, LLMUsage
 
 
 def _make_loop():
@@ -24,6 +24,7 @@ def _make_loop():
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings(max_tokens=8192, temperature=0.1)
     workspace = MagicMock()
     workspace.__truediv__ = MagicMock(return_value=MagicMock())
 
@@ -31,7 +32,26 @@ def _make_loop():
          patch("nanobot.agent.loop.SessionManager"), \
          patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr:
         mock_sub_mgr.return_value.close = AsyncMock()
-        loop = AgentLoop(bus=bus, provider=provider, workspace=workspace)
+        from nanobot.providers.factory import ProviderSnapshot
+
+        def load_snapshot(*, preset=None, **_kwargs):
+            selected_model = preset.model if preset is not None else "test-model"
+            return ProviderSnapshot(
+                provider=provider,
+                model=selected_model,
+                context_window_tokens=(
+                    preset.context_window_tokens if preset is not None else 200_000
+                ),
+                signature=(selected_model,),
+                generation=provider.generation,
+            )
+
+        loop = AgentLoop(
+            bus=bus,
+            provider=provider,
+            workspace=workspace,
+            provider_snapshot_loader=load_snapshot,
+        )
     return loop, bus
 
 
@@ -249,7 +269,6 @@ class TestRestartCommand:
 
         msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="/status")
         runtime = loop.llm_runtime()
-        loop.set_runtime_model("replacement-model")
         loop.set_runtime_context_window(10)
         loop.provider.generation = SimpleNamespace(
             temperature=1.0,

@@ -13,7 +13,8 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext
 from nanobot.config.schema import AgentDefaults, Config
-from nanobot.providers.base import LLMResponse
+from nanobot.providers.base import GenerationSettings, LLMResponse
+from nanobot.providers.factory import ProviderSnapshot
 
 
 def _make_loop(
@@ -191,7 +192,13 @@ class TestIdleScanThrottling:
         loop = AgentLoop.from_config(
             config,
             tool_registry=ToolRegistry(),
-            provider=provider,
+            provider_snapshot=ProviderSnapshot(
+                provider=provider,
+                model="test-model",
+                context_window_tokens=128_000,
+                signature=("test-model",),
+                generation=GenerationSettings(max_tokens=4096),
+            ),
         )
         loop.auto_compact.check_expired = MagicMock()
 

@@ -17,6 +17,7 @@ from nanobot.command.builtin import (
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.config.schema import ModelPresetConfig
 from nanobot.permission_types import GOAL_MUTATE
+from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
@@ -34,26 +35,36 @@ def _provider(default_model: str, max_tokens: int = 123) -> MagicMock:
     return provider
 
 
-def _make_loop(tmp_path, *, preset_snapshot_loader=None, model_presets=None) -> AgentLoop:
+def _make_loop(tmp_path, *, provider_snapshot_loader=None, model_presets=None) -> AgentLoop:
+    presets = model_presets or {
+        "default": ModelPresetConfig(
+            model="base-model", max_tokens=123, context_window_tokens=1000
+        ),
+        "fast": ModelPresetConfig(
+            model="openai/gpt-4.1", max_tokens=4096, context_window_tokens=32_768
+        ),
+    }
+
+    def load_snapshot(*, preset_name=None, preset=None, **_kwargs):
+        selected = preset or presets[preset_name]
+        provider = _provider(selected.model, max_tokens=selected.max_tokens or 123)
+        return ProviderSnapshot(
+            provider=provider,
+            model=selected.model,
+            context_window_tokens=selected.context_window_tokens,
+            signature=(preset_name, selected.model),
+            generation=provider.generation,
+            model_preset=preset_name,
+        )
+
     return AgentLoop(
         bus=MessageBus(),
         provider=_provider("base-model", max_tokens=123),
         workspace=tmp_path,
         model="base-model",
         context_window_tokens=1000,
-        model_presets=model_presets or {
-            "default": ModelPresetConfig(
-                model="base-model",
-                max_tokens=123,
-                context_window_tokens=1000,
-            ),
-            "fast": ModelPresetConfig(
-                model="openai/gpt-4.1",
-                max_tokens=4096,
-                context_window_tokens=32_768,
-            ),
-        },
-        preset_snapshot_loader=preset_snapshot_loader,
+        model_presets=presets,
+        provider_snapshot_loader=provider_snapshot_loader or load_snapshot,
     )
 
 
@@ -154,10 +165,10 @@ async def test_model_command_unknown_preset_keeps_old_state(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_model_command_reports_provider_configuration_errors(tmp_path) -> None:
-    def fail_preset(_name: str):
+    def fail_preset(**_kwargs):
         raise ValueError("No API key configured for provider 'openai'.")
 
-    loop = _make_loop(tmp_path, preset_snapshot_loader=fail_preset)
+    loop = _make_loop(tmp_path, provider_snapshot_loader=fail_preset)
 
     switched = await cmd_model(_ctx(loop, "/model fast", args="fast"))
     session = loop.sessions.get_or_create("cli:direct")

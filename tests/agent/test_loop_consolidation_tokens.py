@@ -44,9 +44,13 @@ def _make_loop(
 
 @pytest.mark.asyncio
 async def test_runner_pressure_commits_summary_and_current_delta(tmp_path) -> None:
-    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=2_000)
+    loop = _make_loop(
+        tmp_path,
+        estimated_tokens=100,
+        context_window_tokens=2_000,
+        max_tokens=100,
+    )
     loop.context_block_limit = 500
-    loop.provider.generation = GenerationSettings(max_tokens=100)
     loop.provider.can_resume_conversation_state.return_value = False
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
 
@@ -77,7 +81,7 @@ async def test_runner_pressure_commits_summary_and_current_delta(tmp_path) -> No
     assert result.content == "done"
     assert loop.provider.chat_with_retry.await_count == 2
     model_request = loop.provider.chat_with_retry.await_args_list[1].kwargs["messages"]
-    assert "Current checkpoint." in model_request[0]["content"]
+    assert "[Archived Context Summary]" in model_request[0]["content"]
     assert model_request[1]["content"] == SUMMARY_CONTINUATION_TEXT
     assert model_request[2]["content"] == "continue the task"
 

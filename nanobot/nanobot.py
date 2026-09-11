@@ -179,7 +179,6 @@ class Nanobot:
         runtime = self._loop.runtime_resolver.resolve_override(
             model=model,
             model_preset=model_preset,
-            config=self._config,
         )
         kwargs = build_process_direct_kwargs(
             session_key=session_key,
@@ -221,7 +220,6 @@ class Nanobot:
         override_runtime = self._loop.runtime_resolver.resolve_override(
             model=model,
             model_preset=model_preset,
-            config=self._config,
         )
         queue: asyncio.Queue[StreamEvent | object] = asyncio.Queue(maxsize=256)
         emitter = SDKStreamEmitter(queue)

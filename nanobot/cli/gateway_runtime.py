@@ -390,12 +390,9 @@ def _run_gateway(
             snapshot.provider.set_fallback_model_observer(fallback_model_observer)
         return snapshot
 
-    def _load_gateway_provider_snapshot(
-        *args: Any,
-        **kwargs: Any,
-    ) -> ProviderSnapshot:
+    def _load_gateway_provider_snapshot(**kwargs: Any) -> ProviderSnapshot:
         try:
-            return _observe_provider(load_provider_snapshot(*args, **kwargs))
+            return _observe_provider(load_provider_snapshot(config.source_path, **kwargs))
         except ValueError as exc:
             if unconfigured_provider_error is None:
                 raise
@@ -451,9 +448,7 @@ def _run_gateway(
 
     agent = AgentLoop.from_config(
         config, bus,
-        provider=provider_snapshot.provider,
-        model=provider_snapshot.model,
-        context_window_tokens=provider_snapshot.context_window_tokens,
+        provider_snapshot=provider_snapshot,
         cron_service=cron,
         session_manager=session_manager,
         image_generation_provider_configs=image_gen_provider_configs(config),
@@ -461,7 +456,6 @@ def _run_gateway(
         preset_catalog_loader=load_model_preset_catalog,
         runtime_events=runtime_events,
         turn_delivery_factory=turn_delivery_factory,
-        provider_signature=provider_snapshot.signature,
         local_trigger_store=trigger_store,
         hooks=[_MCPReadinessHook(mcp_provider)],
         hook_factories=[create_file_edit_activity_hook],

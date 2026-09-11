@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import replace
 from pathlib import Path
 
 from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.providers.base import LLMProvider
-from nanobot.providers.factory import ProviderSnapshot, build_provider_snapshot
 
-PresetSnapshotLoader = Callable[[str], ProviderSnapshot]
 PresetCatalogLoader = Callable[[], Mapping[str, ModelPresetConfig]]
 
 
@@ -37,43 +33,6 @@ def load_model_preset_catalog(
             config_path=config_path,
         ),
     )
-
-
-def make_preset_snapshot_loader(
-    config: Config,
-    provider_snapshot_loader: Callable[..., ProviderSnapshot] | None,
-) -> PresetSnapshotLoader:
-    if provider_snapshot_loader is not None:
-        return lambda name: provider_snapshot_loader(preset_name=name)
-    return lambda name: build_provider_snapshot(config, preset_name=name)
-
-
-def build_static_preset_snapshot(
-    provider: LLMProvider,
-    name: str,
-    preset: ModelPresetConfig,
-) -> ProviderSnapshot:
-    return ProviderSnapshot(
-        provider=provider,
-        model=preset.model,
-        context_window_tokens=preset.context_window_tokens,
-        signature=("model_preset", name, preset.model_dump_json()),
-        generation=preset.to_generation_settings(),
-        model_preset=name,
-        supports_vision=preset.supports_vision,
-    )
-
-
-def build_runtime_preset_snapshot(
-    *,
-    name: str,
-    presets: dict[str, ModelPresetConfig],
-    provider: LLMProvider,
-    loader: PresetSnapshotLoader | None,
-) -> ProviderSnapshot:
-    if loader is not None:
-        return replace(loader(name), model_preset=name)
-    return build_static_preset_snapshot(provider, name, presets[name])
 
 
 def normalize_preset_name(name: str | None, presets: dict[str, ModelPresetConfig]) -> str:

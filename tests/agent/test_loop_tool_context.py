@@ -17,7 +17,8 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.turn_continuation import INTERNAL_CONTINUATION_META
 
 
@@ -95,10 +96,17 @@ def test_loop_from_config_requires_caller_owned_registry(tmp_path: Path) -> None
 
 def test_loop_from_config_uses_caller_owned_registry(tmp_path: Path) -> None:
     registry = ToolRegistry()
+    provider = _provider_for_loop()
     loop = AgentLoop.from_config(
         _config_for_loop(tmp_path),
         tool_registry=registry,
-        provider=_provider_for_loop(),
+        provider_snapshot=ProviderSnapshot(
+            provider=provider,
+            model="test-model",
+            context_window_tokens=200_000,
+            signature=("test-model",),
+            generation=GenerationSettings(max_tokens=4096),
+        ),
     )
 
     assert loop.tools is registry

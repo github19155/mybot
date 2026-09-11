@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,9 +18,13 @@ from nanobot.agent.dream import (
     build_dream_tools,
     parse_dream_result,
 )
+from nanobot.agent.dream_worker import run_dream_worker
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.model_management import ModelManagement
 from nanobot.agent.permissions import PermissionManager
+from nanobot.bus.events import InboundMessage
+from nanobot.command.dream_commands import cmd_dream
+from nanobot.command.router import CommandContext
 from nanobot.config.schema import Config, DreamConfig
 from nanobot.model_fleet import ModelAdmissionController, ModelFleetManager
 
@@ -179,6 +185,122 @@ def test_parse_dream_result_routes_high_impact_to_user_approval() -> None:
         "operational_authority": "main",
         "high_impact_authority": "user",
     }
+
+
+async def _cancel_worker_sleep(_seconds: float) -> None:
+    raise asyncio.CancelledError
+
+
+def _worker_agent(tmp_path: Path, config: Config, memory: MemoryStore) -> SimpleNamespace:
+    runtime = SimpleNamespace(
+        model="dream-test-model",
+        model_preset="dream-test",
+        provider=SimpleNamespace(provider_name="test"),
+    )
+    process_direct = AsyncMock(
+        return_value=SimpleNamespace(
+            content=json.dumps(
+                {
+                    "summary": "Validated Dream result.",
+                    "findings": [],
+                    "proposals": [],
+                }
+            ),
+            metadata={"_stop_reason": "completed"},
+        )
+    )
+    management = SimpleNamespace(
+        config_snapshot=lambda: config,
+        resolve_dream_runtime=AsyncMock(return_value=runtime),
+    )
+    return SimpleNamespace(
+        workspace=tmp_path,
+        model_management=management,
+        permissions=PermissionManager(lambda: config),
+        context=SimpleNamespace(memory=memory),
+        process_direct=process_direct,
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_worker_executes_read_only_dream_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Config()
+    config.agents.defaults.dream.pressure_entries = 1
+    config.agents.defaults.dream.idle_minutes = 0
+    memory = MemoryStore(tmp_path)
+    memory.write_memory("canonical memory")
+    revision = memory.append_history("background evidence")
+    agent = _worker_agent(tmp_path, config, memory)
+    monkeypatch.setattr(
+        "nanobot.agent.dream_worker.asyncio.sleep",
+        _cancel_worker_sleep,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_dream_worker(agent)
+
+    assert memory.get_last_dream_cursor() == revision
+    assert memory.read_memory() == "canonical memory"
+    call = agent.process_direct.await_args
+    assert call is not None
+    assert call.kwargs["channel"] == "dream"
+    assert call.kwargs["tools"].tool_names == ["read_file"]
+    row = json.loads(
+        (tmp_path / "memory" / "dream_results.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[-1]
+    )
+    assert row["metadata"]["side_effects"] == "none"
+    assert row["metadata"]["operational_authority"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_manual_dream_request_is_consumed_by_same_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Config()
+    config.agents.defaults.dream.pressure_entries = 500
+    config.agents.defaults.dream.idle_minutes = 24 * 60
+    memory = MemoryStore(tmp_path)
+    revision = memory.append_history("manual evidence")
+    agent = _worker_agent(tmp_path, config, memory)
+    msg = InboundMessage(
+        channel="cli",
+        sender_id="u1",
+        chat_id="direct",
+        content="/dream",
+    )
+    ctx = CommandContext(
+        msg=msg,
+        session=None,
+        key=msg.session_key,
+        raw="/dream",
+        args="",
+        loop=agent,
+    )
+
+    queued = await cmd_dream(ctx)
+    assert "request queued" in queued.content.lower()
+    assert (tmp_path / "memory" / ".dream_request.json").exists()
+
+    monkeypatch.setattr(
+        "nanobot.agent.dream_worker.asyncio.sleep",
+        _cancel_worker_sleep,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await run_dream_worker(agent)
+
+    assert agent.process_direct.await_count == 1
+    assert memory.get_last_dream_cursor() == revision
+    assert not (tmp_path / "memory" / ".dream_request.json").exists()
+    state = json.loads(
+        (tmp_path / "memory" / ".dream_state.json").read_text(encoding="utf-8")
+    )
+    assert state["last_reason"] == "manual"
 
 
 @pytest.mark.asyncio

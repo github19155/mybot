@@ -356,7 +356,6 @@ async def test_start_creates_separate_pools_with_proxy(monkeypatch) -> None:
     assert any(cmd.command == "skill" for cmd in app.bot.commands)
     assert any(cmd.command == "dream" for cmd in app.bot.commands)
     assert any(cmd.command == "dream_log" for cmd in app.bot.commands)
-    assert any(cmd.command == "dream_restore" for cmd in app.bot.commands)
     assert any(cmd.command == "dream_prompt" for cmd in app.bot.commands)
 
 
@@ -2052,14 +2051,6 @@ async def test_forward_command_normalizes_telegram_safe_dream_aliases() -> None:
         handled.append(kwargs)
 
     channel._handle_message = capture_handle
-    update = _make_telegram_update(text="/dream_restore@nanobot_test deadbeef", reply_to_message=None)
-
-    await channel._forward_command(update, None)
-
-    assert len(handled) == 1
-    assert handled[0]["content"] == "/dream-restore deadbeef"
-
-    handled.clear()
     update = _make_telegram_update(text="/dream_prompt@nanobot_test init", reply_to_message=None)
 
     await channel._forward_command(update, None)
@@ -2084,7 +2075,6 @@ def test_telegram_bus_slash_command_regex_matches_agent_loop_commands() -> None:
     assert pat.fullmatch("/goal@nanobot_bot refine objective")
     assert pat.fullmatch("/trigger@nanobot_bot CI summary")
     assert pat.fullmatch("/dream-log deadbeef") is None
-    assert pat.fullmatch("/dream-restore deadbeef") is None
     assert pat.fullmatch("/dream-prompt init") is None
 
 
@@ -2111,7 +2101,7 @@ async def test_on_help_includes_restart_command() -> None:
     assert "/trigger" in help_text
     assert "/pairing" in help_text
     assert "/model" in help_text
-    assert "/dream-restore" in help_text
+    assert "/dream-restore" not in help_text
 
 
 @pytest.mark.asyncio

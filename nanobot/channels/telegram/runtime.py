@@ -480,10 +480,9 @@ class TelegramChannel(BaseChannel):
         BotCommand("pairing", "Manage DM pairing (approve/deny/list)"),
         BotCommand("model", "Switch runtime model preset"),
         BotCommand("skill", "List enabled skills"),
-        BotCommand("dream", "Run Dream memory consolidation now"),
-        BotCommand("dream_log", "Show the latest Dream memory change"),
-        BotCommand("dream_restore", "Restore Dream memory to an earlier version"),
-        BotCommand("dream_prompt", "Tell Dream how to organize memory"),
+        BotCommand("dream", "Queue Dream background cognition"),
+        BotCommand("dream_log", "Show validated Dream findings and proposals"),
+        BotCommand("dream_prompt", "Customize the Dream analysis prompt"),
         BotCommand("help", "Show available commands"),
     ]
 
@@ -549,8 +548,6 @@ class TelegramChannel(BaseChannel):
             return content
         if content == "/dream_log" or content.startswith("/dream_log "):
             return content.replace("/dream_log", "/dream-log", 1)
-        if content == "/dream_restore" or content.startswith("/dream_restore "):
-            return content.replace("/dream_restore", "/dream-restore", 1)
         if content == "/dream_prompt" or content.startswith("/dream_prompt "):
             return content.replace("/dream_prompt", "/dream-prompt", 1)
         return content
@@ -650,7 +647,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(
             MessageHandler(
                 filters.Regex(
-                    r"^/(dream-log|dream_log|dream-restore|dream_restore|dream-prompt|dream_prompt)(?:@\w+)?(?:\s+.*)?$"
+                    r"^/(dream-log|dream_log|dream-prompt|dream_prompt)(?:@\w+)?(?:\s+.*)?$"
                 ),
                 self._forward_command,
             )

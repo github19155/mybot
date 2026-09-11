@@ -18,6 +18,7 @@ from nanobot.agent.dream import (
 )
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.model_management import ModelManagement
+from nanobot.agent.permissions import PermissionManager
 from nanobot.config.schema import Config, DreamConfig
 from nanobot.model_fleet import ModelAdmissionController, ModelFleetManager
 
@@ -47,7 +48,7 @@ def test_dream_config_is_single_bounded_policy_source() -> None:
 
 
 def test_trigger_controller_pressure_idle_and_cooldown(tmp_path: Path) -> None:
-    controller = DreamTriggerController(tmp_path, _config())
+    controller = DreamTriggerController(tmp_path, _config(), PermissionManager(Config()))
     now = 2_000_000_000
 
     active = controller.decide(
@@ -77,7 +78,7 @@ def test_trigger_controller_pressure_idle_and_cooldown(tmp_path: Path) -> None:
 
 
 def test_manual_request_selects_workload_and_is_consumed(tmp_path: Path) -> None:
-    controller = DreamTriggerController(tmp_path, _config())
+    controller = DreamTriggerController(tmp_path, _config(), PermissionManager(Config()))
     controller.request(DREAM_GOVERNANCE)
 
     decision = controller.decide(
@@ -94,7 +95,7 @@ def test_manual_request_selects_workload_and_is_consumed(tmp_path: Path) -> None
 
 
 def test_runtime_dream_tools_are_read_only(tmp_path: Path) -> None:
-    tools = build_dream_tools(tmp_path)
+    tools = build_dream_tools(tmp_path, PermissionManager(Config()))
 
     assert tools.tool_names == ["read_file"]
     tool, _params, error = tools.prepare_call(
@@ -110,7 +111,7 @@ def test_prepare_is_trigger_gated_and_does_not_advance_cursor(tmp_path: Path) ->
     for index in range(1, 4):
         store.append_history(f"item {index}")
 
-    controller = DreamTriggerController(tmp_path, _config())
+    controller = DreamTriggerController(tmp_path, _config(), PermissionManager(Config()))
     controller.request(DREAM_CONSOLIDATION)
     batch = controller.prepare(store)
 
@@ -146,7 +147,7 @@ def test_parse_dream_result_routes_high_impact_to_user_approval() -> None:
             "reversible": False,
             "proposed_action": {"name": "ci-maintainer"},
         }],
-    }), run=run)
+    }), run=run, permissions=PermissionManager(Config()))
 
     proposal = result["proposals"][0]
     assert proposal["state"] == "awaiting_user_approval"

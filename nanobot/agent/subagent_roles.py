@@ -31,41 +31,14 @@ BUILTIN_SUBAGENT_ROLE_NAMES = (
 )
 
 SUBAGENT_ROLES: dict[str, dict[str, str]] = {
-    "general": {
-        "description": (
-            "General-purpose worker for mixed, cross-domain, or uncategorized tasks. "
-            "It is the permanent capable fallback when no specialist clearly fits."
-        ),
-        "permissions": "read-write-exec",
-    },
-    "researcher": {
-        "description": "Find and compare evidence; cite sources and distinguish facts from inference.",
-        "permissions": "read-only",
-    },
-    "planner": {
-        "description": "Inspect the task and propose a concrete plan, dependencies, and acceptance checks.",
-        "permissions": "read-only",
-    },
-    "coder": {
-        "description": "Implement assigned changes using existing project conventions.",
-        "permissions": "read-write-exec",
-    },
-    "debugger": {
-        "description": "Reproduce failures, identify root causes, and apply focused fixes.",
-        "permissions": "read-write-exec",
-    },
-    "tester": {
-        "description": "Exercise assigned behavior and report reproducible failures and evidence.",
-        "permissions": "read-write-exec",
-    },
-    "writer": {
-        "description": "Read source material and write clear, accurate documentation or prose.",
-        "permissions": "read-write",
-    },
-    "analyst": {
-        "description": "Analyze code or data, check assumptions, and report evidence-backed conclusions.",
-        "permissions": "read-write-exec",
-    },
+    "general": {"description": "General-purpose worker for mixed, cross-domain, or uncategorized tasks."},
+    "researcher": {"description": "Find and compare evidence; cite sources and distinguish facts from inference."},
+    "planner": {"description": "Inspect the task and propose a concrete plan, dependencies, and acceptance checks."},
+    "coder": {"description": "Implement assigned changes using existing project conventions."},
+    "debugger": {"description": "Reproduce failures, identify root causes, and apply focused fixes."},
+    "tester": {"description": "Exercise assigned behavior and report reproducible failures and evidence."},
+    "writer": {"description": "Read source material and write clear, accurate documentation or prose."},
+    "analyst": {"description": "Analyze code or data, check assumptions, and report evidence-backed conclusions."},
 }
 
 _READ_TOOLS = {
@@ -105,17 +78,8 @@ _BROWSER_TOOLS = {
 }
 _EXEC_TOOLS = {**_EXEC_BASE_TOOLS, **_BROWSER_TOOLS}
 
-ROLE_TOOL_MODULES = {
-    "read-only": _READ_TOOLS,
-    "read-write": _WRITE_TOOLS,
-    "read-write-exec": _EXEC_TOOLS,
-}
-_DEFAULT_TOOL_MODULES = {
-    "read-only": _READ_TOOLS,
-    "read-write": _WRITE_TOOLS,
-    "read-write-exec": _EXEC_BASE_TOOLS,
-}
-ALL_SUBAGENT_TOOL_NAMES = frozenset(_EXEC_TOOLS)
+TOOL_MODULES = _EXEC_TOOLS
+ALL_SUBAGENT_TOOL_NAMES = frozenset(TOOL_MODULES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +98,7 @@ class ResolvedSubagentRole:
     context: str
     disabled: bool
     builtin: bool
-    permissions: str
+    capabilities: tuple[str, ...]
     category: str = "specialist"
     source: str = "config"
     usage: dict[str, Any] = field(default_factory=dict)
@@ -153,31 +117,12 @@ class ResolvedSubagentRole:
             "context": self.context,
             "disabled": self.disabled,
             "builtin": self.builtin,
-            "permissions": self.permissions,
+            "capabilities": list(self.capabilities),
             "category": self.category,
             "source": self.source,
             "usage": dict(self.usage),
         }
 
-
-def _default_tools(permissions: str) -> tuple[str, ...]:
-    return tuple(_DEFAULT_TOOL_MODULES[permissions])
-
-
-def _default_tools_for_role(name: str, permissions: str) -> tuple[str, ...]:
-    tools = _default_tools(permissions)
-    if name == "general" and permissions == "read-write-exec":
-        return (*tools, *_BROWSER_TOOLS)
-    return tools
-
-
-def _permissions_for_custom_tools(tools: tuple[str, ...]) -> str:
-    names = set(tools)
-    if names & (set(_EXEC_TOOLS) - set(_WRITE_TOOLS)):
-        return "read-write-exec"
-    if names & (set(_WRITE_TOOLS) - set(_READ_TOOLS)):
-        return "read-write"
-    return "read-only"
 
 
 def _validate_role_tools(role: "SubagentRoleConfig") -> None:
@@ -218,18 +163,22 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         source = "builtin" if builtin is not None else "config"
         _validate_role_config(config, override) if config is not None else None
 
-    base_permissions = builtin["permissions"] if builtin else "read-only"
     description = (override.description or (builtin or {}).get("description") or "").strip()
     system_prompt = (override.system_prompt or description).strip()
     if normalized == "general":
-        tools = _default_tools_for_role(normalized, base_permissions)
+        requested_tools = tuple(TOOL_MODULES)
     else:
-        tools = tuple(
-            override.tools
-            if override.tools is not None
-            else _default_tools_for_role(normalized, base_permissions)
-        )
-    permissions = base_permissions if builtin else _permissions_for_custom_tools(tools)
+        requested_tools = tuple(override.tools) if override.tools is not None else tuple(TOOL_MODULES)
+    capabilities: tuple[str, ...] = ()
+    if config is not None:
+        from nanobot.agent.permissions import PermissionManager
+
+        permission_manager = PermissionManager(config)
+        subject = permission_manager.specialist_subject(normalized)
+        tools = tuple(name for name in requested_tools if permission_manager.tool_allowed(subject, name))
+        capabilities = tuple(sorted(permission_manager.effective_capabilities(subject)))
+    else:
+        tools = requested_tools
     workspace = workspace_from_config(config)
     usage = role_usage(workspace, normalized) if workspace is not None else {}
 
@@ -246,7 +195,7 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         context=override.context or "fresh",
         disabled=False if normalized == "general" else override.disabled,
         builtin=builtin is not None,
-        permissions=permissions,
+        capabilities=capabilities,
         category="general" if normalized == "general" else "specialist",
         source=source,
         usage=usage,

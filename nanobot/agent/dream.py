@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from loguru import logger
 
+from nanobot.agent.permissions import DREAM_SUBJECT, PermissionManager
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.agent.tools.registry import ToolRegistry
 
@@ -136,9 +137,15 @@ class DreamTriggerController:
     explicit manual requests are stored under ``memory/``.
     """
 
-    def __init__(self, workspace: Path, config: "DreamConfig") -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        config: "DreamConfig",
+        permissions: PermissionManager,
+    ) -> None:
         self.workspace = workspace
         self.config = config
+        self.permissions = permissions
         memory_dir = workspace / "memory"
         self.state_path = memory_dir / ".dream_state.json"
         self.request_path = memory_dir / ".dream_request.json"
@@ -306,7 +313,7 @@ class DreamTriggerController:
         run: DreamRunContext,
         runtime: "LLMRuntime",
     ) -> dict[str, object]:
-        result = parse_dream_result(content, run=run)
+        result = parse_dream_result(content, run=run, permissions=self.permissions)
         result["metadata"] = {
             **cast(dict[str, object], result["metadata"]),
             "model": runtime.model,
@@ -341,18 +348,27 @@ class DreamTriggerController:
             logger.exception("Dream failed to compact result history")
 
 
-def build_dream_tools(workspace: Path) -> ToolRegistry:
-    """Return the complete Dream tool surface: workspace read only."""
-    registry = ToolRegistry()
-    registry.register(ReadFileTool(
-        workspace=workspace,
-        allowed_dir=workspace,
-        restrict_to_workspace=True,
-    ))
+def build_dream_tools(workspace: Path, permissions: PermissionManager) -> ToolRegistry:
+    """Build Dream tools from canonical permission policy."""
+    registry = ToolRegistry(
+        permission_manager=permissions,
+        permission_subject=DREAM_SUBJECT,
+    )
+    if permissions.tool_allowed(DREAM_SUBJECT, "read_file"):
+        registry.register(ReadFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            restrict_to_workspace=True,
+        ))
     return registry
 
 
-def parse_dream_result(content: str, *, run: DreamRunContext) -> dict[str, object]:
+def parse_dream_result(
+    content: str,
+    *,
+    run: DreamRunContext,
+    permissions: PermissionManager,
+) -> dict[str, object]:
     """Validate model output before it becomes a durable Dream audit record."""
     text = content.strip()
     if text.startswith("```"):
@@ -398,10 +414,14 @@ def parse_dream_result(content: str, *, run: DreamRunContext) -> dict[str, objec
                 continue
             impact = _impact(item.get("impact_level"))
             reversible = bool(item.get("reversible", False))
-            requires_user_approval = impact == "high"
             proposed_action = item.get("proposed_action")
             if proposed_action is not None and not isinstance(proposed_action, dict):
                 proposed_action = {"description": str(proposed_action)[:4000]}
+            requires_user_approval = permissions.proposal_requires_user_approval(
+                kind,
+                impact=impact,
+                proposed_action=proposed_action,
+            )
             proposals.append({
                 "proposal_id": uuid.uuid4().hex,
                 "state": "awaiting_user_approval" if requires_user_approval else "pending",

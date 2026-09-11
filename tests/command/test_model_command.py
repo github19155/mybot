@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.goal_permission import goal_mutation_allowed
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.permissions import current_permission_allowed
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command.builtin import (
@@ -16,6 +16,7 @@ from nanobot.command.builtin import (
 )
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.config.schema import ModelPresetConfig
+from nanobot.permission_types import GOAL_MUTATE
 from nanobot.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
@@ -282,8 +283,8 @@ async def test_goal_command_marks_turn_and_preserves_explicit_request(tmp_path) 
     assert isinstance(ctx.msg.metadata.get("goal_started_at"), int | float)
     assert len(ctx.turn_scopes) == 1
     with ctx.turn_scopes[0]:
-        assert goal_mutation_allowed() is True
-    assert goal_mutation_allowed() is False
+        assert current_permission_allowed(GOAL_MUTATE) is True
+    assert current_permission_allowed(GOAL_MUTATE) is False
 
 
 @pytest.mark.asyncio
@@ -297,8 +298,8 @@ async def test_goal_command_registered_on_router(tmp_path) -> None:
     assert "ship it" in ctx.msg.content
     assert len(ctx.turn_scopes) == 1
     with ctx.turn_scopes[0]:
-        assert goal_mutation_allowed() is True
-    assert goal_mutation_allowed() is False
+        assert current_permission_allowed(GOAL_MUTATE) is True
+    assert current_permission_allowed(GOAL_MUTATE) is False
 
 
 @pytest.mark.asyncio

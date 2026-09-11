@@ -8,14 +8,12 @@ from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nanobot.agent.goal_permission import (
-    goal_mutation_allowed,
-    revoke_goal_mutation_permission,
-)
+from nanobot.agent.permissions import current_permission_allowed, revoke_current_permission
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import RequestContext, ToolContext, current_request_context
 from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
 from nanobot.bus.runtime_events import GoalStateChanged, RuntimeEventBus, RuntimeEventContext
+from nanobot.permission_types import GOAL_MUTATE
 from nanobot.runtime_context import RuntimeContextBlock, wrap_runtime_context_lines
 from nanobot.session.goal_state import (
     GOAL_STATE_KEY,
@@ -69,8 +67,8 @@ class _GoalToolsMixin:
             return None
         return self._sessions.get_or_create(key)
 
-    def _goal_mutation_allowed(self) -> bool:
-        return current_request_context() is not None and goal_mutation_allowed()
+    def _goal_change_authorized(self) -> bool:
+        return current_request_context() is not None and current_permission_allowed(GOAL_MUTATE)
 
     def _save_goal_state(
         self,
@@ -202,7 +200,7 @@ class CreateGoalTool(Tool, _GoalToolsMixin):
             return ToolResult.error(
                 "Error: create_goal requires an active chat session (missing routing context)."
             )
-        if not self._goal_mutation_allowed():
+        if not self._goal_change_authorized():
             return ToolResult.error(_CREATE_UNAVAILABLE_ERROR)
         prior = parse_goal_state(goal_state_raw(sess.metadata))
         if isinstance(prior, dict) and prior.get("status") == "active":
@@ -319,7 +317,7 @@ class UpdateGoalTool(Tool, _GoalToolsMixin):
             )
 
         if normalized == "replace":
-            if not self._goal_mutation_allowed():
+            if not self._goal_change_authorized():
                 return ToolResult.error(_REPLACE_UNAVAILABLE_ERROR)
             objective_text = (objective or "").strip()
             if not objective_text:
@@ -360,8 +358,8 @@ class UpdateGoalTool(Tool, _GoalToolsMixin):
         if normalized == "complete":
             blob["completed_at"] = ended
         self._save_goal_state(sess, blob)
-        revoke_goal_mutation_permission()
         await self._publish_goal_state_changed(sess.metadata)
+        revoke_current_permission(GOAL_MUTATE)
 
         tail = (recap or "").strip()
         label = {

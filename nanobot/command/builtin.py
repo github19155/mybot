@@ -873,7 +873,7 @@ async def cmd_history(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
     """Mark this turn as an explicit sustained-goal request."""
-    from nanobot.agent.goal_permission import goal_mutation_permission
+    from nanobot.permission_types import GOAL_MUTATE, MAIN_SUBJECT
 
     goal = ctx.args.strip()
     if not goal:
@@ -901,7 +901,16 @@ async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
             metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
         )
 
-    ctx.turn_scopes.append(goal_mutation_permission(True))
+    if ctx.loop.permissions is None:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Goal mode requires permission management.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    ctx.turn_scopes.append(
+        ctx.loop.permissions.grant_scope(MAIN_SUBJECT, (GOAL_MUTATE,))
+    )
     ctx.msg.metadata = {
         **dict(ctx.msg.metadata or {}),
         "original_command": "/goal",

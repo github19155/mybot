@@ -15,8 +15,10 @@ if TYPE_CHECKING:
 def _controller(ctx: CommandContext) -> DreamTriggerController:
     from nanobot.agent.dream import DreamTriggerController
 
+    if ctx.loop.model_management is None or ctx.loop.permissions is None:
+        raise RuntimeError("Dream commands require runtime and permission management")
     config = ctx.loop.model_management.config_snapshot().agents.defaults.dream
-    return DreamTriggerController(ctx.loop.workspace, config)
+    return DreamTriggerController(ctx.loop.workspace, config, ctx.loop.permissions)
 
 
 def _metadata(ctx: CommandContext) -> dict[str, Any]:

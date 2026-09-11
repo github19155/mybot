@@ -32,6 +32,7 @@ from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.model_management import ModelManagement
 from nanobot.agent.model_runtime import ModelRuntimeResolver
+from nanobot.agent.permissions import MAIN_SUBJECT, PermissionManager
 from nanobot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
     AgentRunner,
@@ -56,7 +57,7 @@ from nanobot.bus.outbound_events import StreamedResponseEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeEventBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
-from nanobot.config.schema import AgentDefaults, ModelPresetConfig
+from nanobot.config.schema import AgentDefaults, Config, ModelPresetConfig
 from nanobot.llm_usage.context import source_from_request
 from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState
 from nanobot.providers.factory import ProviderSnapshot
@@ -405,6 +406,12 @@ class AgentLoop:
             ModelManagement(model_management_config, invalidate=self.invalidate_runtime_config)
             if model_management_config is not None else None
         )
+        self.permissions = PermissionManager(
+            self.model_management.config_snapshot
+            if self.model_management is not None
+            else Config()
+        )
+        self.tools.bind_permissions(self.permissions, MAIN_SUBJECT)
         self.subagents = SubagentManager(
             workspace=workspace,
             bus=bus,
@@ -416,6 +423,7 @@ class AgentLoop:
             max_concurrent_subagents=max_concurrent_subagents,
             llm_wall_timeout_for_session=lambda sk: runner_wall_llm_timeout_s(self.sessions, sk),
             model_management=self.model_management,
+            permission_manager=self.permissions,
         )
         self._unified_session = unified_session
         self._running = False

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.permissions import PermissionManager, current_permission_allowed
 from nanobot.agent.tools.context import (
     RequestContext,
     current_request_context,
@@ -22,6 +23,8 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.outbound_events import GoalStateSyncEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeEventBus
+from nanobot.config.schema import Config
+from nanobot.permission_types import GOAL_MUTATE, MAIN_SUBJECT
 from nanobot.session.goal_state import GOAL_STATE_KEY, MAX_GOAL_OBJECTIVE_CHARS
 from nanobot.session.manager import SessionManager
 from nanobot.session.turn_continuation import should_finalize_on_max_iterations
@@ -63,8 +66,19 @@ def _tools(
     return create, update, rc
 
 
+def _permission_scope():
+    permissions = PermissionManager(Config())
+    return permissions.grant_scope(MAIN_SUBJECT, (GOAL_MUTATE,))
+
+
 async def _execute(tool, ctx: RequestContext, *, allowed: bool = True, **kwargs):
-    with request_context(ctx), goal_mutation_permission(allowed):
+    permissions = PermissionManager(Config())
+    scope = (
+        permissions.grant_scope(MAIN_SUBJECT, (GOAL_MUTATE,))
+        if allowed
+        else nullcontext()
+    )
+    with request_context(ctx), scope:
         return await tool.execute(**kwargs)
 
 
@@ -124,11 +138,12 @@ async def test_update_goal_complete_closes_active_goal(tmp_path):
     sm = SessionManager(tmp_path)
     create, update, ctx = _tools(sm)
 
-    with request_context(ctx), goal_mutation_permission(True):
+    permissions = PermissionManager(Config())
+    with request_context(ctx), permissions.grant_scope(MAIN_SUBJECT, (GOAL_MUTATE,)):
         await create.execute(objective="X")
         out = await update.execute(action="complete", recap="Done.")
         denied = await create.execute(objective="Another")
-        assert goal_mutation_allowed() is False
+        assert current_permission_allowed(GOAL_MUTATE) is False
 
     assert "marked complete" in out
     assert "create_goal is unavailable for this turn" in str(denied)
@@ -259,11 +274,11 @@ async def test_active_goal_create_failure_preserves_permission_for_replace(tmp_p
     assert "Goal recorded" in await _execute(create, initial_context, objective="Old")
 
     replacement_context = _request_context()
-    with request_context(replacement_context), goal_mutation_permission(True):
+    with request_context(replacement_context), _permission_scope():
         create_out = await create.execute(objective="New")
-        assert goal_mutation_allowed() is True
+        assert current_permission_allowed(GOAL_MUTATE) is True
         replace_out = await update.execute(action="replace", objective="New")
-        assert goal_mutation_allowed() is True
+        assert current_permission_allowed(GOAL_MUTATE) is True
 
     assert "already active" in str(create_out)
     assert "Goal replaced" in replace_out
@@ -289,10 +304,10 @@ async def test_update_goal_replace_requires_explicit_goal_permission(tmp_path):
     assert sm.get_or_create("websocket:c1").metadata[GOAL_STATE_KEY]["objective"] == "Old"
     replace_context = _request_context()
 
-    with request_context(replace_context), goal_mutation_permission(True):
+    with request_context(replace_context), _permission_scope():
         assert "Goal replaced" in await update.execute(action="replace", objective="New")
         reused = await update.execute(action="replace", objective="Another")
-        assert goal_mutation_allowed() is True
+        assert current_permission_allowed(GOAL_MUTATE) is True
 
     assert "Goal replaced" in reused
     assert sm.get_or_create("websocket:c1").metadata[GOAL_STATE_KEY]["objective"] == "Another"
@@ -326,15 +341,15 @@ async def test_goal_tools_keep_request_context_per_task(tmp_path):
     a_revoked = asyncio.Event()
 
     async def complete_a() -> None:
-        with request_context(ctx_a), goal_mutation_permission(True):
+        with request_context(ctx_a), _permission_scope():
             await update.execute(action="complete", recap="Done A")
-            assert goal_mutation_allowed() is False
+            assert current_permission_allowed(GOAL_MUTATE) is False
             a_revoked.set()
 
     async def replace_b() -> None:
-        with request_context(ctx_b), goal_mutation_permission(True):
+        with request_context(ctx_b), _permission_scope():
             await a_revoked.wait()
-            assert goal_mutation_allowed() is True
+            assert current_permission_allowed(GOAL_MUTATE) is True
             await update.execute(action="replace", objective="Goal B2")
 
     await asyncio.gather(complete_a(), replace_b())
@@ -356,14 +371,15 @@ async def test_registry_does_not_reuse_goal_context_after_request_scope(tmp_path
     sm.save(sess)
     ctx = _request_context()
 
-    with request_context(ctx), goal_mutation_permission(True):
+    permissions = PermissionManager(Config())
+    with request_context(ctx), permissions.grant_scope(MAIN_SUBJECT, (GOAL_MUTATE,)):
         create_out = await registry.execute("create_goal", {"objective": "New"})
         complete_out = await registry.execute(
             "update_goal",
             {"action": "complete", "recap": "Old goal done."},
         )
         denied_out = await registry.execute("create_goal", {"objective": "Denied"})
-        assert goal_mutation_allowed() is False
+        assert current_permission_allowed(GOAL_MUTATE) is False
 
     assert "already active" in str(create_out)
     assert "marked complete" in str(complete_out)

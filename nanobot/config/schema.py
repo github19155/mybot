@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nanobot.config.timezone import detect_system_timezone
 from nanobot.config_base import Base
+from nanobot.permission_config import PermissionConfig
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.cli_apps import CliAppsToolConfig
@@ -511,6 +512,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    permissions: PermissionConfig = Field(default_factory=PermissionConfig)
     model_fleet: ModelFleetConfig = Field(
         default_factory=ModelFleetConfig,
         validation_alias=AliasChoices("modelFleet", "model_fleet"),

@@ -64,7 +64,7 @@ def build_work_role_definition(
         context="fresh",
         disabled=False,
         builtin=False,
-        permissions="read-write-exec",
+        capabilities=(),
         category="work",
         source="ephemeral",
         usage={},

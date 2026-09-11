@@ -8,10 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nanobot.agent.context import TranscriptInput
-from nanobot.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
+from nanobot.agent.permissions import current_permission_allowed
 from nanobot.agent.tools.context import RequestContext
 from nanobot.bus.outbound_events import StreamedResponseEvent
 from nanobot.config.schema import AgentDefaults
+from nanobot.permission_types import GOAL_MUTATE, MAIN_SUBJECT
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_INPUT_META,
@@ -49,7 +50,7 @@ async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path):
     loop = _make_loop(tmp_path)
 
     async def chat_with_retry(**_kwargs):
-        assert goal_mutation_allowed() is True
+        assert current_permission_allowed(GOAL_MUTATE) is True
         return LLMResponse(content="done", tool_calls=[], usage=None)
 
     loop.provider.chat_with_retry = AsyncMock(side_effect=chat_with_retry)
@@ -59,10 +60,10 @@ async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path):
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
         ephemeral=True,
-        turn_scopes=[goal_mutation_permission(True)],
+        turn_scopes=[loop.permissions.grant_scope(MAIN_SUBJECT, (GOAL_MUTATE,))],
     )
 
-    assert goal_mutation_allowed() is False
+    assert current_permission_allowed(GOAL_MUTATE) is False
 
 
 @pytest.mark.asyncio
@@ -127,7 +128,7 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
 
     assert result is not None
     assert result.content == "done"
-    assert goal_mutation_allowed() is False
+    assert current_permission_allowed(GOAL_MUTATE) is False
     assert session.metadata[GOAL_STATE_KEY]["status"] == "completed"
     first_request = provider.chat_with_retry.await_args_list[0].kwargs["messages"]
     assert "staged migration plan" in str(first_request)

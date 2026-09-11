@@ -9,6 +9,7 @@ from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import ContextAware, current_request_context
 
 if TYPE_CHECKING:
+    from nanobot.agent.permissions import PermissionManager
     from nanobot.runtime_context import RuntimeContextProvider
 
 
@@ -23,9 +24,37 @@ class ToolRegistry:
     Allows dynamic registration and execution of tools.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        permission_manager: "PermissionManager | None" = None,
+        permission_subject: str | None = None,
+    ):
         self._tools: dict[str, Tool] = {}
         self._cached_definitions: list[dict[str, Any]] | None = None
+        self.permission_manager = permission_manager
+        self.permission_subject = permission_subject
+
+    def bind_permissions(self, manager: "PermissionManager", subject: str) -> None:
+        self.permission_manager = manager
+        self.permission_subject = subject
+        self._cached_definitions = None
+
+    def _tool_allowed(self, name: str) -> bool:
+        manager = self.permission_manager
+        subject = self.permission_subject
+        return manager is None or subject is None or manager.tool_allowed(subject, name)
+
+    def _permission_error(self, name: str) -> str | None:
+        if self._tool_allowed(name):
+            return None
+        assert self.permission_manager is not None
+        assert self.permission_subject is not None
+        capability = self.permission_manager.tool_capability(name)
+        return str(ToolResult.error(
+            f"Error: permission denied for tool {name!r} "
+            f"(subject={self.permission_subject!r}, capability={capability!r})"
+        ))
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""
@@ -91,7 +120,11 @@ class ToolRegistry:
         register/unregister call.
         """
         if self._cached_definitions is None:
-            definitions = [tool.to_schema() for tool in self._tools.values()]
+            definitions = [
+                tool.to_schema()
+                for name, tool in self._tools.items()
+                if self._tool_allowed(name)
+            ]
             builtins: list[dict[str, Any]] = []
             mcp_tools: list[dict[str, Any]] = []
             for schema in definitions:
@@ -113,6 +146,9 @@ class ToolRegistry:
         params: Any,
     ) -> tuple[Tool | None, Any, str | None]:
         """Resolve, cast, and validate one tool call."""
+        permission_error = self._permission_error(name)
+        if permission_error:
+            return None, params, permission_error
         tool = self.get(name)
         if not tool:
             suggestion = self._suggest_name(str(name))

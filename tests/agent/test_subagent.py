@@ -288,8 +288,10 @@ async def test_builtin_role_tool_override_cannot_escalate_permissions(tmp_path, 
 @pytest.mark.asyncio
 async def test_custom_role_keeps_explicit_tools(tmp_path):
     """Custom roles keep their explicitly configured tools."""
+    from nanobot.agent.permissions import PermissionManager
     from nanobot.agent.subagent_roles import resolve_role
     from nanobot.config.schema import Config
+    from nanobot.permission_config import PermissionPolicyConfig
 
     config = Config(subagentRoles={
         "implementation": {
@@ -298,8 +300,15 @@ async def test_custom_role_keeps_explicit_tools(tmp_path):
             "tools": ["read_file", "write_file", "exec"],
         },
     })
+    config.permissions.specialists["implementation"] = PermissionPolicyConfig(
+        capabilities=["workspace.read", "workspace.write", "exec"],
+        ceiling=["workspace.read", "workspace.write", "exec"],
+    )
     manager = SubagentManager(
-        workspace=tmp_path, bus=MessageBus(), max_tool_result_chars=16_000,
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        permission_manager=PermissionManager(config),
     )
 
     tools = manager._build_tools(

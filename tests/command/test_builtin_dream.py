@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from nanobot.agent.memory import MemoryStore
+from nanobot.agent.permissions import PermissionManager
 from nanobot.bus.events import InboundMessage
 from nanobot.command import register_builtin_commands
 from nanobot.command.builtin import (
@@ -36,6 +37,7 @@ def _make_control_ctx(
     loop = SimpleNamespace(
         workspace=tmp_path,
         model_management=SimpleNamespace(config_snapshot=lambda: config),
+        permissions=PermissionManager(lambda: config),
     )
     return CommandContext(
         msg=msg,

@@ -13,6 +13,7 @@ from nanobot.agent.tools.context import RequestContext, bind_request_context, re
 from nanobot.agent.tools.subagent import SubagentTool
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config
+from nanobot.permission_config import PermissionPolicyConfig
 
 
 def _config(tmp_path, *, roles: dict[str, object] | None = None) -> Config:
@@ -32,7 +33,8 @@ def test_config_registers_general_as_builtin_role() -> None:
 
 
 def test_general_is_permanent_all_capability_fallback() -> None:
-    general = resolve_role(None, "general")
+    default_config = Config()
+    general = resolve_role(default_config, "general")
     disabled_override = resolve_role(
         Config(subagentRoles={"general": {"disabled": True}}),
         "general",
@@ -41,11 +43,16 @@ def test_general_is_permanent_all_capability_fallback() -> None:
         Config(subagentRoles={"general": {"tools": ["read_file"]}}),
         "general",
     )
-    coder = resolve_role(None, "coder")
+    coder = resolve_role(default_config, "coder")
 
     assert general.category == "general"
     assert general.source == "builtin"
-    assert general.permissions == "read-write-exec"
+    assert {
+        "workspace.read",
+        "workspace.write",
+        "exec",
+        "browser.control",
+    }.issubset(general.capabilities)
     assert general.disabled is False
     assert disabled_override.disabled is False
     assert set(narrow_override.tools) == set(general.tools)
@@ -74,8 +81,11 @@ def test_custom_specialist_is_resolved_only_from_config(tmp_path) -> None:
 
     assert role.source == "config"
     assert role.category == "specialist"
-    assert role.permissions == "read-write-exec"
-    assert {"read_file", "exec", "browser_status"}.issubset(role.tools)
+    assert set(role.tools) == {"read_file"}
+    assert {"workspace.read", "web"}.issubset(role.capabilities)
+    assert config.subagent_roles["release-triage"].tools == [
+        "read_file", "exec", "browser_status"
+    ]
     assert {"general", "release-triage"}.issubset(names)
     assert not hasattr(role, "created_by")
     assert not hasattr(role, "version")
@@ -118,7 +128,8 @@ def test_role_store_is_single_persistent_specialist_authority(tmp_path) -> None:
         "tools": ["read_file", "exec"],
     })
     assert updated["source"] == "config"
-    assert "exec" in updated["tools"]
+    assert config.subagent_roles["release-triage"].tools == ["read_file", "exec"]
+    assert updated["tools"] == ["read_file"]
 
     deleted = store.delete("release-triage")
     assert deleted == {"name": "release-triage", "deleted": True}
@@ -199,6 +210,10 @@ async def test_config_specialist_can_receive_browser_capability(tmp_path, monkey
             "tools": ["read_file", "browser_status", "browser_snapshot"],
         },
     })
+    config.permissions.specialists["ui-checker"] = PermissionPolicyConfig(
+        capabilities=["workspace.read", "browser.control"],
+        ceiling=["workspace.read", "browser.control"],
+    )
     manager = SubagentManager(
         workspace=tmp_path,
         bus=MessageBus(),

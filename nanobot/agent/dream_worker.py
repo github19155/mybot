@@ -30,8 +30,8 @@ async def run_dream_worker(agent: "AgentLoop") -> None:
     Main can tune ordinary runtime parameters without restarting the gateway.
     Dream failures are isolated and never stop foreground operation.
     """
-    if agent.model_management is None:
-        logger.info("Dream disabled: model management is unavailable")
+    if agent.model_management is None or agent.permissions is None:
+        logger.info("Dream disabled: runtime management is unavailable")
         return
 
     while True:
@@ -41,7 +41,7 @@ async def run_dream_worker(agent: "AgentLoop") -> None:
 
         try:
             if dream_config.enabled:
-                controller = DreamTriggerController(agent.workspace, dream_config)
+                controller = DreamTriggerController(agent.workspace, dream_config, agent.permissions)
                 batch = controller.prepare(agent.context.memory)
                 if batch is not None:
                     runtime = await agent.model_management.resolve_dream_runtime(
@@ -53,7 +53,7 @@ async def run_dream_worker(agent: "AgentLoop") -> None:
                             session_key=f"dream:{batch.run.run_id}",
                             channel="dream",
                             ephemeral=True,
-                            tools=build_dream_tools(agent.workspace),
+                            tools=build_dream_tools(agent.workspace, agent.permissions),
                             on_progress=_silent_progress,
                             runtime=runtime,
                         )

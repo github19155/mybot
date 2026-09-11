@@ -21,6 +21,7 @@ from loguru import logger
 from nanobot.agent.permissions import DREAM_SUBJECT, PermissionManager
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.permission_types import CONFIG_WRITE, MODEL_MANAGE, SPECIALIST_MANAGE, WORKSPACE_WRITE
 
 if TYPE_CHECKING:
     from nanobot.agent.memory import MemoryStore
@@ -71,6 +72,17 @@ _ALLOWED_PROPOSAL_KINDS = frozenset({
     "archive_candidate",
     "deletion_candidate",
 })
+
+_PROPOSAL_CAPABILITIES = {
+    "memory_write": WORKSPACE_WRITE,
+    "optimization": CONFIG_WRITE,
+    "specialist_candidate": SPECIALIST_MANAGE,
+    "model_evaluation_profile": MODEL_MANAGE,
+    "model_pool_change": MODEL_MANAGE,
+    "archive_candidate": WORKSPACE_WRITE,
+    "deletion_candidate": WORKSPACE_WRITE,
+    "deprecation_candidate": CONFIG_WRITE,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +140,23 @@ def _impact(value: object) -> DreamImpact:
     if normalized in {"low", "medium", "high"}:
         return cast(DreamImpact, normalized)
     return "medium"
+
+
+def _proposal_requires_user_approval(
+    permissions: PermissionManager,
+    kind: str,
+    *,
+    impact: str,
+    proposed_action: object = None,
+) -> bool:
+    capability = _PROPOSAL_CAPABILITIES.get(str(kind or "").strip().lower())
+    if capability is not None and permissions.requires_user_approval((capability,)):
+        return True
+    if isinstance(proposed_action, dict):
+        requested = proposed_action.get("capabilities")
+        if isinstance(requested, list) and permissions.requires_user_approval(requested):
+            return True
+    return str(impact or "").strip().lower() == "high"
 
 
 class DreamTriggerController:
@@ -354,12 +383,11 @@ def build_dream_tools(workspace: Path, permissions: PermissionManager) -> ToolRe
         permission_manager=permissions,
         permission_subject=DREAM_SUBJECT,
     )
-    if permissions.tool_allowed(DREAM_SUBJECT, "read_file"):
-        registry.register(ReadFileTool(
-            workspace=workspace,
-            allowed_dir=workspace,
-            restrict_to_workspace=True,
-        ))
+    registry.register(ReadFileTool(
+        workspace=workspace,
+        allowed_dir=workspace,
+        restrict_to_workspace=True,
+    ))
     return registry
 
 
@@ -417,7 +445,8 @@ def parse_dream_result(
             proposed_action = item.get("proposed_action")
             if proposed_action is not None and not isinstance(proposed_action, dict):
                 proposed_action = {"description": str(proposed_action)[:4000]}
-            requires_user_approval = permissions.proposal_requires_user_approval(
+            requires_user_approval = _proposal_requires_user_approval(
+                permissions,
                 kind,
                 impact=impact,
                 proposed_action=proposed_action,

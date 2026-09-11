@@ -14,11 +14,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent import SubagentManager, SubagentStatus
 from nanobot.agent.tools.search import FindFilesTool, GrepTool
 from nanobot.agent.tools.web import WebSearchTool
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import WebSearchConfig
+from nanobot.config.schema import Config, WebSearchConfig
 from nanobot.providers.base import GenerationSettings
 from nanobot.security.workspace_access import (
     bind_workspace_scope,
@@ -747,6 +748,7 @@ async def test_subagent_registers_grep(tmp_path: Path) -> None:
         workspace=tmp_path,
         bus=bus,
         max_tool_result_chars=4096,
+        permission_manager=PermissionManager(Config()),
     )
     captured: dict[str, list[str]] = {}
 
@@ -789,6 +791,7 @@ def test_subagent_prompt_respects_disabled_skills(tmp_path: Path) -> None:
         bus=bus,
         max_tool_result_chars=4096,
         disabled_skills=["alpha"],
+        permission_manager=PermissionManager(Config()),
     )
 
     prompt = mgr._build_subagent_prompt()

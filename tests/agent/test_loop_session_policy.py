@@ -10,6 +10,8 @@ from nanobot.bus.events import (
     InboundMessage,
 )
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import Config
+from nanobot.permission_types import WORKSPACE_WRITE
 from nanobot.providers.base import GenerationSettings, LLMResponse
 from nanobot.session.keys import UNIFIED_SESSION_KEY
 
@@ -179,3 +181,22 @@ async def test_session_discard_control_cancels_active_turn(tmp_path, monkeypatch
     loop.stop()
     await loop.bus.publish_inbound(_message(key, "wake"))
     await asyncio.wait_for(run_task, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_session_disabled_tools_preserve_main_permission_authority(tmp_path) -> None:
+    config = Config()
+    config.permissions.main.capabilities.remove(WORKSPACE_WRITE)
+    loop = _loop(tmp_path, ["answer"], model_management_config=config)
+    key = "websocket:permission-subset"
+    loop.sessions.get_or_create_transient(key, disabled_tools={"subagent"})
+
+    await loop._process_message(_message(key, "question"))
+
+    schemas = loop.provider.chat_with_retry.await_args.kwargs["tools"]
+    names = {item["function"]["name"] for item in schemas}
+    assert "subagent" not in names
+    assert "write_file" not in names
+    assert "edit_file" not in names
+    assert "apply_patch" not in names
+

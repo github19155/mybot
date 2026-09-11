@@ -9,6 +9,7 @@ import pytest
 
 from nanobot.agent import SubagentManager
 from nanobot.agent.hook import AgentHookContext
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.subagent import (
     SubagentStatus,
@@ -16,6 +17,7 @@ from nanobot.agent.subagent import (
 )
 from nanobot.agent.tools.context import current_request_context
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMUsage
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -28,6 +30,7 @@ def _manager(tmp_path: Path, **kw) -> SubagentManager:
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=PermissionManager(Config()),
     )
     defaults.update(kw)
     return SubagentManager(**defaults)
@@ -128,6 +131,7 @@ class TestLegacyCompatibility:
                 MessageBus(),
                 16_000,
                 "legacy-model",
+                permission_manager=PermissionManager(Config()),
             )
 
         assert sm.workspace == tmp_path
@@ -146,6 +150,7 @@ class TestLegacyCompatibility:
                 bus=MessageBus(),
                 max_tool_result_chars=16_000,
                 model="legacy-model",
+                permission_manager=PermissionManager(Config()),
             )
         sm.runner.run = AsyncMock(return_value=AgentRunResult(
             final_content="done", messages=[], stop_reason="completed",

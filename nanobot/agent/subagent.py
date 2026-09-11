@@ -38,7 +38,7 @@ from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import AgentDefaults, Config, ToolsConfig
+from nanobot.config.schema import AgentDefaults, ToolsConfig
 from nanobot.llm_usage.context import LLMUsageSource, current_llm_usage_source
 from nanobot.providers.base import LLMProvider, LLMUsage
 from nanobot.security.workspace_access import (
@@ -163,7 +163,8 @@ class SubagentManager:
         max_concurrent_subagents: int | None = None,
         llm_wall_timeout_for_session: Callable[[str | None], float | None] | None = None,
         model_management: "ModelManagement | None" = None,
-        permission_manager: PermissionManager | None = None,
+        *,
+        permission_manager: PermissionManager,
     ):
         if workspace is None:
             raise TypeError("SubagentManager.__init__() missing required argument: 'workspace'")
@@ -213,9 +214,7 @@ class SubagentManager:
         self._exec_session_manager = ExecSessionManager()
         self._llm_wall_timeout_for_session = llm_wall_timeout_for_session
         self.model_management = model_management
-        self.permissions = permission_manager or PermissionManager(
-            model_management.config_snapshot if model_management is not None else Config()
-        )
+        self.permissions = permission_manager
         self._running_tasks: dict[str, asyncio.Task[str]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
@@ -383,7 +382,7 @@ class SubagentManager:
         )
         registry = ToolRegistry(
             permission_manager=self.permissions,
-            permission_subject=subject if self.permissions is not None else None,
+            permission_subject=subject,
         )
         cfg = tools_config if tools_config is not None else self._subagent_tools_config()
         ctx = ToolContext(
@@ -399,8 +398,6 @@ class SubagentManager:
         ToolLoader().load(ctx, registry, scope="subagent")
         allowed = TOOL_MODULES
         allowed_names = set(role_definition.tools)
-        if self.permissions is not None:
-            allowed_names = {name for name in allowed_names if self.permissions.tool_allowed(subject, name)}
         if allowed_tools is not None:
             allowed_names.intersection_update(allowed_tools)
         allowed_names.discard("subagent")
@@ -1017,7 +1014,6 @@ class SubagentManager:
             role=role,
             role_description=role_definition.description,
             role_system_prompt=role_definition.system_prompt,
-            permissions=", ".join(role_definition.capabilities) or "none",
             workspace=str(project_workspace),
             agent_workspace=str(agent_workspace),
             history_log=history_log,

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent_role_storage import record_role_use, role_usage
 from nanobot.agent.subagent_roles import SubagentRoleStore, list_roles, resolve_role
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
@@ -23,6 +24,10 @@ def _config(tmp_path, *, roles: dict[str, object] | None = None) -> Config:
     )
 
 
+def _exposed_tool_names(registry) -> set[str]:
+    return {item["function"]["name"] for item in registry.get_definitions()}
+
+
 def test_config_registers_general_as_builtin_role() -> None:
     config = Config()
     partial = Config(subagentRoles={"general": {"thinking": "high"}})
@@ -32,7 +37,7 @@ def test_config_registers_general_as_builtin_role() -> None:
     assert partial.subagent_roles["general"].thinking == "high"
 
 
-def test_general_is_permanent_all_capability_fallback() -> None:
+def test_general_is_permanent_full_tool_fallback() -> None:
     default_config = Config()
     general = resolve_role(default_config, "general")
     disabled_override = resolve_role(
@@ -47,12 +52,6 @@ def test_general_is_permanent_all_capability_fallback() -> None:
 
     assert general.category == "general"
     assert general.source == "builtin"
-    assert {
-        "workspace.read",
-        "workspace.write",
-        "exec",
-        "browser.control",
-    }.issubset(general.capabilities)
     assert general.disabled is False
     assert disabled_override.disabled is False
     assert set(narrow_override.tools) == set(general.tools)
@@ -64,7 +63,7 @@ def test_general_is_permanent_all_capability_fallback() -> None:
         "browser_open",
         "browser_status",
     }.issubset(general.tools)
-    assert "browser_status" not in coder.tools
+    assert coder.category == "specialist"
 
 
 def test_custom_specialist_is_resolved_only_from_config(tmp_path) -> None:
@@ -81,8 +80,7 @@ def test_custom_specialist_is_resolved_only_from_config(tmp_path) -> None:
 
     assert role.source == "config"
     assert role.category == "specialist"
-    assert set(role.tools) == {"read_file"}
-    assert {"workspace.read", "web"}.issubset(role.capabilities)
+    assert set(role.tools) == {"read_file", "exec", "browser_status"}
     assert config.subagent_roles["release-triage"].tools == [
         "read_file", "exec", "browser_status"
     ]
@@ -90,6 +88,7 @@ def test_custom_specialist_is_resolved_only_from_config(tmp_path) -> None:
     assert not hasattr(role, "created_by")
     assert not hasattr(role, "version")
     assert not hasattr(role, "status")
+    assert not hasattr(role, "capabilities")
 
 
 def test_role_usage_is_advisory_and_separate_from_role_definition(tmp_path) -> None:
@@ -129,7 +128,7 @@ def test_role_store_is_single_persistent_specialist_authority(tmp_path) -> None:
     })
     assert updated["source"] == "config"
     assert config.subagent_roles["release-triage"].tools == ["read_file", "exec"]
-    assert updated["tools"] == ["read_file"]
+    assert updated["tools"] == ["read_file", "exec"]
 
     deleted = store.delete("release-triage")
     assert deleted == {"name": "release-triage", "deleted": True}
@@ -180,15 +179,18 @@ async def test_general_worker_can_load_browser_capability(tmp_path, monkeypatch)
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=PermissionManager(Config()),
     )
     try:
         general_tools = manager._build_tools(role="general")
         coder_tools = manager._build_tools(role="coder")
+        general_exposed = _exposed_tool_names(general_tools)
+        coder_exposed = _exposed_tool_names(coder_tools)
 
         assert {"browser_open", "browser_status", "browser_handoff"}.issubset(
-            general_tools.tool_names
+            general_exposed
         )
-        assert "browser_status" not in coder_tools.tool_names
+        assert "browser_status" not in coder_exposed
         assert (
             type(general_tools.get("browser_status")).__module__
             == "nanobot.agent.tools.subagent_browser"
@@ -214,16 +216,19 @@ async def test_config_specialist_can_receive_browser_capability(tmp_path, monkey
         capabilities=["workspace.read", "browser.control"],
         ceiling=["workspace.read", "browser.control"],
     )
+    management = ModelManagement(config)
+    permissions = PermissionManager(management.config_snapshot)
     manager = SubagentManager(
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
-        model_management=ModelManagement(config),
+        model_management=management,
+        permission_manager=permissions,
     )
     try:
         tools = manager._build_tools(role="ui-checker")
         assert {"read_file", "browser_status", "browser_snapshot"}.issubset(
-            tools.tool_names
+            _exposed_tool_names(tools)
         )
     finally:
         await manager.close()

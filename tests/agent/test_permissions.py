@@ -115,22 +115,26 @@ def test_tool_registry_hides_and_blocks_denied_capability() -> None:
     assert "permission denied" in error
 
 
-def test_dream_specialist_proposal_uses_central_approval_policy() -> None:
+def test_capability_approval_policy_is_config_driven() -> None:
     permissions = PermissionManager(Config())
 
     assert permissions.requires_user_approval((SPECIALIST_MANAGE,))
-    assert permissions.proposal_requires_user_approval(
-        "specialist_candidate",
-        impact="low",
-        proposed_action={"description": "candidate"},
-    )
-    assert not permissions.proposal_requires_user_approval(
-        "memory_write",
-        impact="low",
-        proposed_action={"description": "note"},
-    )
-    assert permissions.proposal_requires_user_approval(
-        "unknown_future_kind",
-        impact="high",
-        proposed_action=None,
-    )
+    assert not permissions.requires_user_approval((WORKSPACE_WRITE,))
+
+
+def test_registry_subset_preserves_permission_authority() -> None:
+    config = Config()
+    config.permissions.main.capabilities.remove(WORKSPACE_WRITE)
+    permissions = PermissionManager(config)
+    registry = ToolRegistry(permission_manager=permissions, permission_subject=MAIN_SUBJECT)
+    registry.register(_ReadTool())
+    registry.register(_WriteTool())
+
+    subset = registry.without(("read_file",))
+
+    assert subset.permission_manager is permissions
+    assert subset.permission_subject == MAIN_SUBJECT
+    assert subset.get_definitions() == []
+    _tool, _params, error = subset.prepare_call("write_file", {})
+    assert error is not None and "permission denied" in error
+

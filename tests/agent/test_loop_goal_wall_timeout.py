@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.subagent import SubagentManager, SubagentStatus
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -22,6 +24,7 @@ async def test_subagent_forwards_resolver_to_agent_run_spec(tmp_path: Path) -> N
         bus=MessageBus(),
         max_tool_result_chars=64,
         llm_wall_timeout_for_session=lambda sk: 0.0 if sk == "cli:direct" else None,
+        permission_manager=PermissionManager(Config()),
     )
 
     mgr.runner.run = AsyncMock(

@@ -12,7 +12,6 @@ import time
 import weakref
 from collections.abc import Coroutine, Iterable, Mapping
 from contextlib import AbstractContextManager, ExitStack, nullcontext, suppress
-from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -668,14 +667,7 @@ class AgentLoop:
             or not tools.has("image_analyze")
         ):
             return tools
-        filtered = copy(tools)
-        filtered._tools = {
-            name: tool
-            for name, tool in tools._tools.items()
-            if name != "image_analyze"
-        }
-        filtered._cached_definitions = None
-        return filtered
+        return tools.without(("image_analyze",))
 
     def _register_default_tools(
         self,
@@ -1820,12 +1812,7 @@ class AgentLoop:
         ctx.ephemeral = ctx.ephemeral or not session.policy.persist
         tools = ctx.tools or self.tools
         if session.policy.disabled_tools:
-            restricted = ToolRegistry()
-            for name in tools.tool_names:
-                tool = tools.get(name)
-                if name not in session.policy.disabled_tools and tool:
-                    restricted.register(tool)
-            tools = restricted
+            tools = tools.without(session.policy.disabled_tools)
         ctx.tools = tools
 
         if ctx.kind is TurnKind.SYSTEM:

@@ -6,11 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.subagent import SubagentManager, SubagentStatus
 from nanobot.agent.tools.filesystem import FileToolsConfig
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ToolsConfig
+from nanobot.config.schema import Config, ToolsConfig
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.security.workspace_access import build_workspace_scope
@@ -22,6 +23,10 @@ def _runtime(provider: LLMProvider) -> LLMRuntime:
     return LLMRuntime.capture(provider, "test", context_window_tokens=128_000)
 
 
+def _permissions(config: Config | None = None) -> PermissionManager:
+    return PermissionManager(config or Config())
+
+
 @pytest.mark.asyncio
 async def test_subagent_uses_tool_loader():
     """Verify subagent registers tools via ToolLoader, not hard-coded imports."""
@@ -31,6 +36,7 @@ async def test_subagent_uses_tool_loader():
         workspace=Path("/tmp"),
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
     tools = sm._build_tools()
     assert tools.has("read_file")
@@ -49,6 +55,7 @@ async def test_subagent_build_tools_isolates_file_read_state(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
 
     first_read = sm._build_tools().get("read_file")
@@ -69,6 +76,7 @@ def test_subagent_respects_file_tool_toggle(tmp_path):
         bus=MessageBus(),
         max_tool_result_chars=16_000,
         tools_config=ToolsConfig(file=FileToolsConfig(enable=False)),
+        permission_manager=_permissions(),
     )
 
     tools = sm._build_tools()
@@ -98,6 +106,7 @@ def test_subagent_prompt_keeps_agent_paths_for_selected_project(tmp_path):
         workspace=agent_workspace,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
 
     prompt = manager._build_subagent_prompt(workspace=project)
@@ -119,6 +128,7 @@ def test_subagent_prompt_uses_relative_paths_in_agent_workspace(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
 
     prompt = manager._build_subagent_prompt()
@@ -140,6 +150,7 @@ async def test_subagent_keeps_project_runtime_scope_with_agent_owned_tools(tmp_p
         workspace=agent_workspace,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
     manager.runner.run = AsyncMock(
         return_value=AgentRunResult(final_content="ok", messages=[], stop_reason="completed")
@@ -188,6 +199,7 @@ async def test_subagent_recovers_from_tool_error_in_same_run(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
 
     result = await sm.run_inline(
@@ -208,6 +220,7 @@ async def test_spawned_subagent_inherits_llm_usage_source(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
     sm.runner.run = AsyncMock(
         return_value=AgentRunResult(final_content="ok", messages=[], stop_reason="completed")
@@ -244,7 +257,10 @@ async def test_role_registry_enforces_permissions(tmp_path, role, can_write, can
     from nanobot.agent.tools.registry import is_tool_error_result
 
     manager = SubagentManager(
-        workspace=tmp_path, bus=MessageBus(), max_tool_result_chars=16_000,
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
     (tmp_path / "source.txt").write_text("source", encoding="utf-8")
     tools = manager._build_tools(role=role)
@@ -267,11 +283,13 @@ async def test_role_registry_enforces_permissions(tmp_path, role, can_write, can
 async def test_builtin_role_tool_override_cannot_escalate_permissions(tmp_path, role):
     """A builtin read-only role cannot gain execution tools through an override."""
     from nanobot.agent.subagent_roles import resolve_role
-    from nanobot.config.schema import Config
 
     config = Config(subagentRoles={role: {"tools": ["read_file", "exec"]}})
     manager = SubagentManager(
-        workspace=tmp_path, bus=MessageBus(), max_tool_result_chars=16_000,
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        permission_manager=_permissions(config),
     )
 
     tools = manager._build_tools(
@@ -279,18 +297,17 @@ async def test_builtin_role_tool_override_cannot_escalate_permissions(tmp_path, 
         role_definition=resolve_role(config, role),
     )
 
-    assert "read_file" in tools.tool_names
-    assert "exec" not in tools.tool_names
-    assert "exec_session" not in tools.tool_names
+    exposed = {item["function"]["name"] for item in tools.get_definitions()}
+    assert "read_file" in exposed
+    assert "exec" not in exposed
+    assert "exec_session" not in exposed
     await manager.close()
 
 
 @pytest.mark.asyncio
 async def test_custom_role_keeps_explicit_tools(tmp_path):
     """Custom roles keep their explicitly configured tools."""
-    from nanobot.agent.permissions import PermissionManager
     from nanobot.agent.subagent_roles import resolve_role
-    from nanobot.config.schema import Config
     from nanobot.permission_config import PermissionPolicyConfig
 
     config = Config(subagentRoles={
@@ -308,7 +325,7 @@ async def test_custom_role_keeps_explicit_tools(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
-        permission_manager=PermissionManager(config),
+        permission_manager=_permissions(config),
     )
 
     tools = manager._build_tools(
@@ -340,7 +357,10 @@ async def test_read_only_role_rejects_plugin_using_allowed_name(tmp_path, monkey
         lambda self, ctx, registry, **kwargs: registry.register(_LegacyErrorPrefixTool(Plugin())),
     )
     manager = SubagentManager(
-        workspace=tmp_path, bus=MessageBus(), max_tool_result_chars=16_000,
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        permission_manager=_permissions(),
     )
     tools = manager._build_tools(role="researcher")
     assert is_tool_error_result(await tools.execute("read_file", {}))

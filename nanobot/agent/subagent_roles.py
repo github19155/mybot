@@ -98,7 +98,6 @@ class ResolvedSubagentRole:
     context: str
     disabled: bool
     builtin: bool
-    capabilities: tuple[str, ...]
     category: str = "specialist"
     source: str = "config"
     usage: dict[str, Any] = field(default_factory=dict)
@@ -117,7 +116,6 @@ class ResolvedSubagentRole:
             "context": self.context,
             "disabled": self.disabled,
             "builtin": self.builtin,
-            "capabilities": list(self.capabilities),
             "category": self.category,
             "source": self.source,
             "usage": dict(self.usage),
@@ -169,16 +167,7 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         requested_tools = tuple(TOOL_MODULES)
     else:
         requested_tools = tuple(override.tools) if override.tools is not None else tuple(TOOL_MODULES)
-    capabilities: tuple[str, ...] = ()
-    if config is not None:
-        from nanobot.agent.permissions import PermissionManager
-
-        permission_manager = PermissionManager(config)
-        subject = permission_manager.specialist_subject(normalized)
-        tools = tuple(name for name in requested_tools if permission_manager.tool_allowed(subject, name))
-        capabilities = tuple(sorted(permission_manager.effective_capabilities(subject)))
-    else:
-        tools = requested_tools
+    tools = requested_tools
     workspace = workspace_from_config(config)
     usage = role_usage(workspace, normalized) if workspace is not None else {}
 
@@ -195,7 +184,6 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         context=override.context or "fresh",
         disabled=False if normalized == "general" else override.disabled,
         builtin=builtin is not None,
-        capabilities=capabilities,
         category="general" if normalized == "general" else "specialist",
         source=source,
         usage=usage,

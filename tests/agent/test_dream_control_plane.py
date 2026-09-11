@@ -122,6 +122,27 @@ def test_prepare_is_trigger_gated_and_does_not_advance_cursor(tmp_path: Path) ->
     assert store.get_last_dream_cursor() == 0
 
 
+def test_parse_dream_result_maps_proposal_capability_to_approval_policy() -> None:
+    run = DreamRunContext(
+        run_id="run-approval",
+        workload=DREAM_CONSOLIDATION,
+        source_revision=1,
+        started_at_ms=1,
+    )
+    result = parse_dream_result(json.dumps({
+        "summary": "proposal check",
+        "proposals": [
+            {"kind": "specialist_candidate", "summary": "candidate", "impact_level": "low"},
+            {"kind": "memory_write", "summary": "note", "impact_level": "low"},
+        ],
+    }), run=run, permissions=PermissionManager(Config()))
+
+    assert result["proposals"][0]["requires_user_approval"] is True
+    assert result["proposals"][0]["state"] == "awaiting_user_approval"
+    assert result["proposals"][1]["requires_user_approval"] is False
+    assert result["proposals"][1]["state"] == "pending"
+
+
 def test_parse_dream_result_routes_high_impact_to_user_approval() -> None:
     run = DreamRunContext(
         run_id="run-1",

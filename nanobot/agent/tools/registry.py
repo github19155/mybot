@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
+from copy import copy
 from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult
@@ -39,6 +41,18 @@ class ToolRegistry:
         self.permission_manager = manager
         self.permission_subject = subject
         self._cached_definitions = None
+
+    def without(self, names: Iterable[str]) -> "ToolRegistry":
+        """Return a filtered registry while preserving its bound runtime context."""
+        excluded = set(names)
+        if not excluded.intersection(self._tools):
+            return self
+        registry = copy(self)
+        registry._tools = {
+            name: tool for name, tool in self._tools.items() if name not in excluded
+        }
+        registry._cached_definitions = None
+        return registry
 
     def _tool_allowed(self, name: str) -> bool:
         manager = self.permission_manager

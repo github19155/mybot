@@ -619,8 +619,10 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
 
 @pytest.mark.asyncio
 async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, monkeypatch):
+    from nanobot.agent.permissions import PermissionManager
     from nanobot.agent.subagent import SubagentManager, SubagentStatus
     from nanobot.bus.queue import MessageBus
+    from nanobot.config.schema import Config
 
     bus = MessageBus()
     provider = MagicMock()
@@ -634,6 +636,7 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
         bus=bus,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         max_iterations=2,
+        permission_manager=PermissionManager(Config()),
     )
     mgr._announce_result = AsyncMock()
 

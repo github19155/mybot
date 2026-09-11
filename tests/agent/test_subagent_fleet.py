@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nanobot.agent import SubagentManager
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent import SubagentStatus
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMUsage
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -20,6 +22,7 @@ def _manager(tmp_path: Path, **kw) -> SubagentManager:
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
+        permission_manager=PermissionManager(Config()),
     )
     defaults.update(kw)
     return SubagentManager(**defaults)

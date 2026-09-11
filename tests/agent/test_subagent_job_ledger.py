@@ -4,8 +4,10 @@ import time
 from types import SimpleNamespace
 
 from nanobot.agent.durable_subagent import DurableSubagentManager
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent_job_ledger import SubagentJobLedger
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import Config
 
 
 def _status(*, task_id: str = "task-1", state: str = "running") -> SimpleNamespace:
@@ -35,6 +37,15 @@ def _status(*, task_id: str = "task-1", state: str = "running") -> SimpleNamespa
         final_output=None,
         usage=None,
         tool_events=[],
+    )
+
+
+def _manager(tmp_path) -> DurableSubagentManager:
+    return DurableSubagentManager(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=1000,
+        permission_manager=PermissionManager(Config()),
     )
 
 
@@ -70,18 +81,10 @@ def test_terminal_history_is_cleaned_after_retention_window(tmp_path) -> None:
 
 
 def test_durable_manager_restores_interrupted_job_into_existing_status_view(tmp_path) -> None:
-    manager = DurableSubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=1000,
-    )
+    manager = _manager(tmp_path)
     manager._job_ledger.persist(_status(task_id="restart-me"))
 
-    restarted = DurableSubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=1000,
-    )
+    restarted = _manager(tmp_path)
 
     snapshots = restarted.status_snapshot("cli:direct", "restart-me")
     assert len(snapshots) == 1
@@ -91,10 +94,6 @@ def test_durable_manager_restores_interrupted_job_into_existing_status_view(tmp_
 
 
 def test_durable_manager_keeps_live_runtime_authoritative(tmp_path) -> None:
-    manager = DurableSubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=1000,
-    )
+    manager = _manager(tmp_path)
     assert manager.get_running_count() == 0
     assert manager.status_snapshot("cli:direct") == []

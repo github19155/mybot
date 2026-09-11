@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Callable, Iterable, Iterator
 from nanobot.permission_types import (
     AUTOMATION_MANAGE,
     BROWSER_CONTROL,
-    CONFIG_WRITE,
     CONTEXT_MANAGE,
     DREAM_SUBJECT,
     EXEC,
@@ -24,7 +23,6 @@ from nanobot.permission_types import (
     KNOWN_CAPABILITIES,
     MAIN_SUBJECT,
     MODEL_MANAGE,
-    SPECIALIST_MANAGE,
     SPECIALIST_PREFIX,
     SUBAGENT_MANAGE,
     TOOL_USE,
@@ -74,25 +72,12 @@ _TOOL_CAPABILITIES = {
     "cron": AUTOMATION_MANAGE,
 }
 
-_PROPOSAL_CAPABILITIES = {
-    "memory_write": WORKSPACE_WRITE,
-    "optimization": CONFIG_WRITE,
-    "specialist_candidate": SPECIALIST_MANAGE,
-    "model_evaluation_profile": MODEL_MANAGE,
-    "model_pool_change": MODEL_MANAGE,
-    "archive_candidate": WORKSPACE_WRITE,
-    "deletion_candidate": WORKSPACE_WRITE,
-    "deprecation_candidate": CONFIG_WRITE,
-}
-
-
 @dataclass(frozen=True, slots=True)
 class PermissionDecision:
     subject: str
     capability: str
     allowed: bool
     within_ceiling: bool
-    requires_user_approval: bool
     reason: str
 
 
@@ -147,22 +132,19 @@ class PermissionManager:
         normalized = str(capability or "").strip().lower()
         if normalized not in KNOWN_CAPABILITIES:
             return PermissionDecision(
-                subject, normalized, False, False, False, "unknown_capability"
+                subject, normalized, False, False, "unknown_capability"
             )
-        config = self.config
         policy = self._policy(subject)
         granted = set(policy.capabilities) | set(self._scoped_grants(subject))
         ceiling = set(policy.ceiling)
         within_ceiling = normalized in ceiling
         allowed = normalized in granted and within_ceiling
-        approval = normalized in set(config.permissions.require_user_approval)
         reason = "allowed" if allowed else ("ceiling" if not within_ceiling else "not_granted")
         return PermissionDecision(
             subject=subject,
             capability=normalized,
             allowed=allowed,
             within_ceiling=within_ceiling,
-            requires_user_approval=approval,
             reason=reason,
         )
 
@@ -190,24 +172,6 @@ class PermissionManager:
         required = set(self.config.permissions.require_user_approval)
         normalized = {str(item).strip().lower() for item in capabilities}
         return bool(normalized & required)
-
-    def proposal_requires_user_approval(
-        self,
-        kind: str,
-        *,
-        impact: str,
-        proposed_action: object = None,
-    ) -> bool:
-        """Return the centralized governance decision for one Dream proposal."""
-        normalized_kind = str(kind or "").strip().lower()
-        capability = _PROPOSAL_CAPABILITIES.get(normalized_kind)
-        if capability is not None and self.requires_user_approval((capability,)):
-            return True
-        if isinstance(proposed_action, dict):
-            requested = proposed_action.get("capabilities")
-            if isinstance(requested, list) and self.requires_user_approval(requested):
-                return True
-        return str(impact or "").strip().lower() == "high"
 
     def validate_policy(self, policy: "PermissionPolicyConfig") -> None:
         capabilities = set(policy.capabilities)

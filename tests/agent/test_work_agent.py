@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.subagent_role_storage import role_usage
 from nanobot.agent.tools.base import ToolResult
@@ -14,6 +15,7 @@ from nanobot.agent.tools.context import RequestContext, bind_request_context, re
 from nanobot.agent.tools.subagent import SubagentTool
 from nanobot.agent.work_agent import build_work_role_definition, run_work_agent
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -26,6 +28,17 @@ def _runtime(*, prefix: str | None = None) -> LLMRuntime:
         "test/model",
         context_window_tokens=32_000,
         system_prompt_prefix=prefix,
+    )
+
+
+def _manager(tmp_path, **kwargs) -> SubagentManager:
+    permissions = PermissionManager(Config())
+    return SubagentManager(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        permission_manager=permissions,
+        **kwargs,
     )
 
 
@@ -45,11 +58,7 @@ def _request(runtime: LLMRuntime | None = None) -> RequestContext:
 
 @pytest.mark.asyncio
 async def test_subagent_tool_dispatches_non_persistent_work_agent(tmp_path, monkeypatch) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     launch = AsyncMock(return_value="WorkAgent queued (id: task-1).")
     monkeypatch.setattr("nanobot.agent.tools.subagent.run_work_agent", launch)
     tool = SubagentTool(manager)
@@ -93,11 +102,7 @@ async def test_subagent_tool_dispatches_non_persistent_work_agent(tmp_path, monk
 async def test_any_runtime_override_without_role_dispatches_work_agent(
     tmp_path, monkeypatch, override
 ) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     launch = AsyncMock(return_value="WorkAgent queued (id: task-1).")
     monkeypatch.setattr("nanobot.agent.tools.subagent.run_work_agent", launch)
     tool = SubagentTool(manager)
@@ -138,11 +143,7 @@ async def test_no_role_and_no_override_remains_general(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_work_agent_identity_overrides_cannot_mix_with_persistent_role(tmp_path) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     tool = SubagentTool(manager)
     token = bind_request_context(_request())
     try:
@@ -163,11 +164,7 @@ async def test_work_agent_identity_overrides_cannot_mix_with_persistent_role(tmp
 
 @pytest.mark.asyncio
 async def test_work_agent_tools_remain_parent_bounded_and_non_recursive(tmp_path) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     try:
         role_definition = build_work_role_definition(
             _general_payload(manager),
@@ -226,11 +223,7 @@ def test_work_agent_snapshot_does_not_inherit_general_runtime_tuning() -> None:
 async def test_run_work_agent_reuses_manager_inline_lifecycle_and_keeps_prefix(
     tmp_path, monkeypatch
 ) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     role_definition = build_work_role_definition(
         _general_payload(manager),
         description="One-off analyst",
@@ -269,11 +262,7 @@ async def test_run_work_agent_reuses_manager_inline_lifecycle_and_keeps_prefix(
 
 @pytest.mark.asyncio
 async def test_work_agent_background_uses_manager_spawn_lifecycle(tmp_path, monkeypatch) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     role_definition = build_work_role_definition(_general_payload(manager), tools=["read_file"])
     run = AsyncMock(return_value="done")
     monkeypatch.setattr(manager, "_run_subagent", run)
@@ -303,12 +292,7 @@ async def test_work_agent_background_uses_manager_spawn_lifecycle(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_inline_work_agents_can_launch_concurrently(tmp_path, monkeypatch) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-        max_concurrent_subagents=2,
-    )
+    manager = _manager(tmp_path, max_concurrent_subagents=2)
     role_definition = build_work_role_definition(_general_payload(manager), tools=["read_file"])
     both_started = asyncio.Event()
     release = asyncio.Event()

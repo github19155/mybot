@@ -8,12 +8,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nanobot.agent.context import TranscriptInput
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.tools.context import RequestContext
-from nanobot.config.schema import AgentDefaults
+from nanobot.config.schema import AgentDefaults, Config
 from nanobot.providers.base import GenerationSettings
 from nanobot.utils.llm_runtime import LLMRuntime
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
+
+
+def _permission_manager() -> PermissionManager:
+    return PermissionManager(Config())
 
 
 def _runtime(provider: MagicMock, model: str = "test-model") -> LLMRuntime:
@@ -32,6 +37,7 @@ async def test_run_inline_returns_result_without_announcement(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        permission_manager=_permission_manager(),
     )
     manager.runner.run = AsyncMock(return_value=SimpleNamespace(
         stop_reason="done",
@@ -65,6 +71,7 @@ async def test_run_inline_returns_structured_error(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        permission_manager=_permission_manager(),
     )
     manager.runner.run = AsyncMock(return_value=SimpleNamespace(
         stop_reason="error",
@@ -101,6 +108,7 @@ async def test_subagent_exec_tool_receives_allowed_env_keys(tmp_path):
         bus=bus,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         tools_config=ToolsConfig(exec=ExecToolConfig(allowed_env_keys=["GOPATH", "JAVA_HOME"])),
+        permission_manager=_permission_manager(),
     )
     mgr._announce_result = AsyncMock()
 
@@ -146,6 +154,7 @@ async def test_subagent_uses_configured_max_iterations(tmp_path):
         bus=bus,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         max_iterations=37,
+        permission_manager=_permission_manager(),
     )
     mgr._announce_result = AsyncMock()
 
@@ -188,6 +197,7 @@ async def test_spawn_forwards_temperature_to_run_spec(tmp_path):
         workspace=tmp_path,
         bus=bus,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        permission_manager=_permission_manager(),
     )
     mgr._announce_result = AsyncMock()
 
@@ -226,6 +236,7 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
         bus=bus,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         max_concurrent_subagents=1,
+        permission_manager=_permission_manager(),
     )
     mgr._announce_result = AsyncMock()
 
@@ -326,6 +337,7 @@ async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
         bus=MessageBus(),
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         max_concurrent_subagents=1,
+        permission_manager=_permission_manager(),
     )
     first_entered = asyncio.Event()
     second_entered = asyncio.Event()
@@ -391,6 +403,7 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
         bus=MessageBus(),
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         max_concurrent_subagents=2,
+        permission_manager=_permission_manager(),
     )
     both_entered = asyncio.Event()
     release = asyncio.Event()
@@ -459,6 +472,7 @@ async def test_cancel_by_session_cancels_inline_subagent(tmp_path):
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        permission_manager=_permission_manager(),
     )
     entered = asyncio.Event()
 
@@ -492,6 +506,7 @@ def test_subagent_default_max_concurrent_matches_agent_defaults(tmp_path):
         workspace=tmp_path,
         bus=bus,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        permission_manager=_permission_manager(),
     )
 
     assert AgentDefaults().max_concurrent_subagents == 16
@@ -508,6 +523,7 @@ def test_subagent_default_max_iterations_matches_agent_defaults(tmp_path):
         workspace=tmp_path,
         bus=bus,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        permission_manager=_permission_manager(),
     )
 
     assert mgr.max_iterations == AgentDefaults().max_tool_iterations
@@ -743,5 +759,3 @@ async def test_terminal_drain_refills_excess_messages(tmp_path):
     items = await asyncio.wait_for(terminal_injection_callback(), timeout=1.0)
     assert len(items) == 3
     assert pending_queue.qsize() == 2
-
-

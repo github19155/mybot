@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from nanobot.bus.queue import MessageBus
@@ -20,6 +21,16 @@ def _runtime() -> LLMRuntime:
     provider.get_default_model.return_value = "parent/model"
     provider.generation = GenerationSettings(temperature=0.2, max_tokens=1024)
     return LLMRuntime.capture(provider, "parent/model", context_window_tokens=32_000)
+
+
+def _manager(tmp_path, **kwargs) -> SubagentManager:
+    return SubagentManager(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        permission_manager=PermissionManager(Config()),
+        **kwargs,
+    )
 
 
 def test_config_accepts_custom_role_and_full_role_defaults() -> None:
@@ -114,11 +125,7 @@ def test_role_store_uses_atomic_file_backing(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_session_budget_queues_instead_of_rejecting(tmp_path) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     manager.max_concurrent_per_session = 1
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -152,11 +159,7 @@ async def test_session_budget_queues_instead_of_rejecting(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_run_snapshots_thinking_and_fork_context(tmp_path) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     seen = {}
 
     async def run(spec):
@@ -218,12 +221,7 @@ def test_run_model_preset_overrides_role_model(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_global_budget_is_sixteen_and_queues_the_seventeenth(tmp_path) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-        max_concurrent_subagents=16,
-    )
+    manager = _manager(tmp_path, max_concurrent_subagents=16)
     manager._announce_result = AsyncMock()
     entered = 0
     entered_event = asyncio.Event()
@@ -257,11 +255,7 @@ async def test_global_budget_is_sixteen_and_queues_the_seventeenth(tmp_path) -> 
 
 @pytest.mark.asyncio
 async def test_stop_running_task_marks_stopped_and_terminates_only_its_exec_owner(tmp_path) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     manager._announce_result = AsyncMock()
     entered = asyncio.Event()
 
@@ -289,11 +283,7 @@ async def test_stop_running_task_marks_stopped_and_terminates_only_its_exec_owne
 
 @pytest.mark.asyncio
 async def test_stop_does_not_relabel_completed_task_during_notification(tmp_path) -> None:
-    manager = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
+    manager = _manager(tmp_path)
     notification_started = asyncio.Event()
     release_notification = asyncio.Event()
 

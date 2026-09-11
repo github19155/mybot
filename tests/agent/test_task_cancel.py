@@ -9,12 +9,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.config.schema import AgentDefaults
+from nanobot.agent.permissions import PermissionManager
+from nanobot.config.schema import AgentDefaults, Config
 from nanobot.providers.base import GenerationSettings
 from nanobot.session.keys import UNIFIED_SESSION_KEY
 from nanobot.utils.llm_runtime import LLMRuntime
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
+
+
+def _permission_manager() -> PermissionManager:
+    return PermissionManager(Config())
 
 
 def _runtime(provider: MagicMock | None = None) -> LLMRuntime:
@@ -355,6 +360,7 @@ class TestSubagentCancellation:
             workspace=MagicMock(),
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            permission_manager=_permission_manager(),
         )
 
         cancelled = asyncio.Event()
@@ -385,6 +391,7 @@ class TestSubagentCancellation:
             workspace=MagicMock(),
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            permission_manager=_permission_manager(),
         )
         assert await mgr.cancel_by_session("nonexistent") == 0
 
@@ -399,6 +406,7 @@ class TestSubagentCancellation:
             workspace=MagicMock(),
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            permission_manager=_permission_manager(),
         )
         # Replace the real exec session manager with a mock
         mock_exec_mgr = AsyncMock(spec=ExecSessionManager)
@@ -439,6 +447,7 @@ class TestSubagentCancellation:
             workspace=tmp_path,
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            permission_manager=_permission_manager(),
         )
 
         async def fake_execute(self, **kwargs):
@@ -480,6 +489,7 @@ class TestSubagentCancellation:
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
             tools_config=ToolsConfig(exec=ExecToolConfig(enable=False)),
+            permission_manager=_permission_manager(),
         )
         mgr._announce_result = AsyncMock()
 
@@ -538,6 +548,7 @@ class TestSubagentCancellation:
             workspace=tmp_path,
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            permission_manager=_permission_manager(),
         )
         mgr._announce_result = AsyncMock()
 
@@ -586,6 +597,7 @@ class TestSubagentCancellation:
             workspace=tmp_path,
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            permission_manager=_permission_manager(),
         )
         mgr._announce_result = AsyncMock()
 
@@ -635,6 +647,7 @@ class TestSubagentAnnounceSessionKey:
             workspace=MagicMock(),
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            permission_manager=_permission_manager(),
         )
         return mgr, bus
 

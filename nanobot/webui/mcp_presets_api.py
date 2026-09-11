@@ -35,7 +35,7 @@ from nanobot.utils.helpers import ensure_dir
 QueryParams = dict[str, list[str]]
 
 if TYPE_CHECKING:
-    from nanobot.webui.settings_services import WebUISettingsConfig
+    from nanobot.config.store import ConfigStore
 
 _MCP_PRESET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$", re.IGNORECASE)
 _SECRET_QUERY_RE = re.compile(
@@ -1630,7 +1630,7 @@ async def mcp_presets_settings_action(
     *,
     reload_mcp: McpReload | None = None,
     mcp_runtime_status: McpRuntimeStatus | None = None,
-    config: WebUISettingsConfig | None = None,
+    config: ConfigStore | None = None,
 ) -> dict[str, Any]:
     """Run a WebUI MCP preset action and hot-reload the agent when config changes."""
     config_path = config.path if config is not None else None

@@ -13,10 +13,10 @@ from nanobot.agent.subagent_role_storage import (
     role_usage,
     workspace_from_config,
 )
+from nanobot.config.store import ConfigStore
 
 if TYPE_CHECKING:
     from nanobot.config.schema import Config, SubagentRoleConfig
-    from nanobot.webui.settings_services import WebUISettingsConfig
 
 
 BUILTIN_SUBAGENT_ROLE_NAMES = (
@@ -122,7 +122,6 @@ class ResolvedSubagentRole:
         }
 
 
-
 def _validate_role_tools(role: "SubagentRoleConfig") -> None:
     requested = set(role.tools or ())
     unknown = requested - ALL_SUBAGENT_TOOL_NAMES
@@ -202,11 +201,9 @@ class SubagentRoleStore:
 
     def __init__(self, config: "Config") -> None:
         self.config = config
-        self._store: WebUISettingsConfig | None = None
+        self._store: ConfigStore | None = None
         if config.source_path is not None:
-            from nanobot.webui.settings_services import WebUISettingsConfig
-
-            self._store = WebUISettingsConfig(config.source_path)
+            self._store = ConfigStore(config.source_path)
 
     @property
     def workspace(self) -> Path:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from nanobot.config.schema import Config
 from nanobot.config.store import ConfigStore
 
 
@@ -21,8 +22,8 @@ def test_store_uses_explicit_path_and_creates_parent(tmp_path: Path) -> None:
 def test_update_persists_mutation_and_returns_result(tmp_path: Path) -> None:
     store = ConfigStore(tmp_path / "config.json")
 
-    def mutate(config: object) -> str:
-        config.gateway.port = 19001  # type: ignore[attr-defined]
+    def mutate(config: Config) -> str:
+        config.gateway.port = 19001
         return "updated"
 
     assert store.update(mutate) == "updated"

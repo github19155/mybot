@@ -16,6 +16,7 @@ If you are an AI agent, maintainer, or contributor changing runtime behavior, st
 | Browser sidecar and human takeover | [Browser Runtime](./browser.md) |
 | Browser connectivity failures | [Browser Runtime Troubleshooting](./troubleshooting/browser-runtime.md) |
 | Runtime installs and persistence | [Runtime Storage and Persistence](./runtime-storage.md) |
+| Linux host-admin / container-root installation | [Linux Installation](./linux-install.md) |
 | Container root behavior | [Container Root Mode](./container-root.md) |
 
 The core project mental model is: **Main Agent = conversation + orchestration; subagents = background execution; tools = capabilities; docs = project knowledge.** Diagnose the intended architecture before replacing it with an ad hoc workaround.
@@ -26,6 +27,7 @@ The core project mental model is: **Main Agent = conversation + orchestration; s
 |---|---|---|
 | Terminals, Python, or API keys are new to you | [Beginner walkthrough](./start-without-technical-background.md) | The browser can send `Hello!` and receive a reply |
 | You are comfortable running commands | [Install and Quick Start](./quick-start.md) | `nanobot status` is healthy and the WebUI or CLI can get one reply |
+| You are installing this repository on a Linux server with host or container root | [Linux Installation](./linux-install.md) | You can identify the exact source commit, runtime identity, data path, and maintenance procedure |
 | Something already failed | [Troubleshooting](./troubleshooting.md) | You have isolated the problem to install, config, model, gateway, channel, or tool access |
 
 The recommended first-run path is:
@@ -54,6 +56,7 @@ Pick the row that matches what you want to accomplish next:
 | Schedule work or create a local trigger | [Automations](./automations.md) |
 | Understand and manage long-term memory | [Memory](./memory.md) |
 | Run nanobot continuously | [Deployment](./deployment.md) |
+| Install Linux host-admin or container-root mode | [Linux Installation](./linux-install.md) |
 | Run separate bots or workspaces | [Multiple Instances](./multiple-instances.md) |
 | Call nanobot from Python | [Python SDK](./python-sdk.md) |
 | Expose an OpenAI-compatible endpoint | [OpenAI-Compatible API](./openai-api.md) |

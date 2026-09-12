@@ -1,86 +1,91 @@
 # Container root mode
 
-nanobot normally starts the gateway as root only long enough to fix mounted-data ownership, then drops privileges to the `nanobot` user. For deployments where the agent is intentionally allowed to administer its own container (for example installing temporary packages with `apt`), an explicit root-mode overlay is available.
+The primary Linux `container-root` path is documented in [Linux installation: host-admin or container-root](./linux-install.md#b-container-root-root-inside-the-container-only).
 
-Read [`runtime-storage.md`](./runtime-storage.md) before deciding where runtime-installed assets should live.
+This mode is an explicit opt-in for cases where the Agent must administer the gateway container itself (for example, installing a temporary package with `apt`). It is **not** host-admin mode: container UID 0 does not become host UID 0 authority unless an operator separately grants dangerous host integration.
 
-## Enable it
+## Build the traceable image
 
-Without the browser sidecar:
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.root.yml \
-  up -d --build nanobot-gateway
-```
-
-With the browser sidecar:
+From a clean checkout of `https://github.com/github19155/mybot.git`:
 
 ```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.browser.yml \
-  -f docker-compose.root.yml \
-  up -d --build nanobot-browser nanobot-gateway
+./scripts/install-linux.sh --mode container-root --dry-run
+./scripts/install-linux.sh --mode container-root
 ```
 
-Verify the gateway identity:
+The installer validates the merged Compose configuration and builds `nanobot-gateway` and `nanobot-cli` from the current checkout. It passes the current commit into OCI image labels and never falls back to the PyPI `nanobot-ai` package or another repository. It does not start or restart containers.
+
+## Initialize and run with the same identity
+
+Use both Compose files for initialization, CLI operations, and the gateway:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.root.yml \
+  run --rm nanobot-cli onboard --wizard
+
+docker compose -f docker-compose.yml -f docker-compose.root.yml \
+  up -d nanobot-gateway
+```
+
+The root overlay applies `user: "0:0"` plus `NANOBOT_RUN_AS_ROOT=true` to the gateway and CLI only. Both use the dedicated `mybot-container-root-data` volume at `/home/nanobot/.nanobot`, so initialization and runtime do not alternate between root and the normal UID 1000 path. The browser sidecar is not changed to root.
+
+Verify the running identity and final Compose policy rather than trusting one YAML fragment:
 
 ```bash
 docker exec nanobot-gateway id
+docker compose -f docker-compose.yml -f docker-compose.root.yml config
+docker inspect nanobot-gateway --format '{{json .Mounts}}'
+docker port nanobot-gateway
+docker inspect nanobot-gateway --format '{{index .Config.Labels "org.opencontainers.image.source"}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 
-Expected output begins with:
+## Isolation boundary
 
-```text
-uid=0(root) gid=0(root)
-```
+The supplied root overlay intentionally does not configure:
 
-Commands invoked by the agent's `exec` tool inherit the gateway process identity, so they also run as container root.
+- `privileged: true`;
+- a mount of the host root filesystem;
+- the Docker/containerd management socket;
+- host PID or host network namespaces;
+- host devices or SSH administration keys;
+- `SYS_ADMIN` or an unconfined seccomp/AppArmor profile.
 
-## What changes
+It restores Docker's normal default capability set for a root container because the base deployment drops almost all capabilities for the ordinary non-root mode. The base `no-new-privileges:true` option remains enabled, and Docker's normal seccomp/AppArmor defaults remain in force.
 
-The root overlay only changes `nanobot-gateway`:
+The default host-side port mappings for the gateway health endpoint and WebUI/WebSocket are loopback-only. Listeners inside the container still need to use `0.0.0.0` when they must be reached through Docker port forwarding; keep WebSocket authentication configured and use an explicit authenticated remote-access layer if remote administration is needed.
 
-- sets `user: "0:0"`;
-- sets `NANOBOT_RUN_AS_ROOT=true`, so `entrypoint.sh` does not drop privileges;
-- clears the base Compose `cap_drop: ALL` restriction;
-- clears the base `no-new-privileges` security option;
-- restores Docker's normal default capability set for a root container.
-
-It deliberately does **not**:
-
-- set `privileged: true`;
-- mount `/` from the host;
-- mount `/var/run/docker.sock`;
-- grant host PID/network namespaces;
-- give the container direct root access to the Linux host.
-
-This means the agent can administer the gateway container (including ordinary `apt`/`dpkg` package installation), but it remains inside Docker's normal container isolation unless the deployment separately adds host-level access.
+Ordinary Docker isolation reduces host exposure but is not an absolute security boundary. Do not describe container root as host root, and do not add host mounts or management sockets merely to work around an application configuration problem.
 
 ## Persistence
 
-Packages installed interactively with `apt` modify the running container filesystem. They survive a normal container restart, but they are lost when the image/container is recreated.
+The named volume is durable across ordinary container recreation unless it is explicitly deleted. Interactive changes to the container filesystem, including `apt` installs, are different: they can survive a simple restart but disappear when the container is recreated from the image.
 
 Use these rules:
 
-- stable system packages required for normal operation -> add them to the Dockerfile/build layer;
-- reusable downloaded assets or tool caches -> place them in an intentional persistent path such as `/home/nanobot/.nanobot/cache/<tool>` or a mounted project workspace when genuinely project-scoped;
-- one-off diagnostic installs -> container filesystem is acceptable;
-- browser binaries for the standard browser capability -> use the `nanobot-browser` sidecar instead of installing a second Chromium in the gateway.
+- stable system packages needed for normal operation -> add them to the Dockerfile/build layer;
+- config, sessions, memory, agent workspace, and reusable agent-owned caches -> keep them under `/home/nanobot/.nanobot`;
+- one-off diagnostic installs -> the replaceable container filesystem is acceptable;
+- standard browser binaries/profile -> use the optional browser sidecar rather than installing another browser in the gateway.
 
-The base Compose setup persists `~/.nanobot` at `/home/nanobot/.nanobot`, so data stored intentionally beneath that tree survives gateway recreation. Project workspaces may also be persistent when mounted by the deployment.
-
-## Disable root mode
-
-Restart without the root overlay:
+Stop the deployment without deleting the named data volume:
 
 ```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.browser.yml \
-  up -d --build nanobot-browser nanobot-gateway
+docker compose -f docker-compose.yml -f docker-compose.root.yml down
 ```
 
-The normal entrypoint will again drop privileges to the `nanobot` user.
+Do not add `-v` when you intend to retain data. See the Linux installation guide for update, rollback, provenance checks, and the distinction between image rollback and data restoration.
+
+## Migrating between host-admin and container-root
+
+The two modes intentionally use different active data locations. Do not make host-admin and container-root write the same live `.nanobot` directory, and do not solve migration by bind-mounting the host-admin data directory into the root container.
+
+For either direction:
+
+1. stop the source-mode gateway so the backup is consistent;
+2. record the source commit and back up the complete source-mode `.nanobot` data before copying anything;
+3. initialize the destination mode separately and confirm its runtime identity and destination path/volume;
+4. copy only as an explicit migration step, then inspect ownership with `stat` on the host and `id`/`stat` inside the container as applicable;
+5. adjust ownership only on the destination copy to match the destination runtime identity; rootless Docker or user-namespace remapping can make container UID 0 map to a different host UID;
+6. start only the destination mode and verify sessions/config before retiring the source copy.
+
+A source-code rollback and a data restore are still separate decisions. Do not assume that data written by a newer version is compatible with an older commit.

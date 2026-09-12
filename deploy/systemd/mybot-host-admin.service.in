@@ -1,0 +1,19 @@
+[Unit]
+Description=mybot host-admin nanobot gateway
+Documentation=https://github.com/github19155/mybot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=@WORKDIR@
+Environment=HOME=@HOME@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@PYTHON@ -I -m nanobot gateway --config @CONFIG@
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

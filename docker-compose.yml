@@ -5,6 +5,7 @@ x-common-config: &common-config
     args:
       NANOBOT_CHANNELS: ${NANOBOT_CHANNELS:-whatsapp}
       NANOBOT_EXTRAS: ${NANOBOT_EXTRAS:-}
+      MYBOT_SOURCE_COMMIT: ${MYBOT_SOURCE_COMMIT:-unknown}
   volumes:
     - ~/.nanobot:/home/nanobot/.nanobot
   cap_drop:
@@ -27,7 +28,7 @@ services:
     restart: unless-stopped
     ports:
       - 127.0.0.1:18790:18790
-      - 8765:8765
+      - 127.0.0.1:8765:8765
     deploy:
       resources:
         limits:

@@ -163,3 +163,14 @@ def test_merged_container_root_compose_when_available() -> None:
     published = {str(p.get("published")): p.get("host_ip") for p in ports}
     assert published["18790"] == "127.0.0.1"
     assert published["8765"] == "127.0.0.1"
+
+
+def test_linux_docs_keep_source_and_mode_data_unambiguous() -> None:
+    linux = (ROOT / "docs/linux-install.md").read_text()
+    migration = (ROOT / "docs/container-root.md").read_text()
+    assert "https://github.com/github19155/mybot.git" in linux
+    assert "git clone https://github.com/HKUDS/nanobot.git" not in linux
+    assert "different active data locations" in migration
+    assert "stop the source-mode gateway" in migration
+    assert "back up the complete source-mode `.nanobot` data" in migration
+    assert "adjust ownership only on the destination copy" in migration

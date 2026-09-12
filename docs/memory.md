@@ -1,8 +1,7 @@
 # AI Agent Memory in nanobot
 
 This page explains how nanobot implements long-term AI agent memory: session
-history, compressed archives, durable knowledge files, Dream consolidation, and
-Git-backed memory changes.
+history, compressed archives, durable knowledge files, and Dream analysis.
 
 nanobot's memory is built on a simple belief: memory should feel alive, but it should not feel chaotic.
 
@@ -19,7 +18,7 @@ It separates memory into layers, because different kinds of remembering deserve 
 - `session.messages` holds the living short-term conversation.
 - `memory/history.jsonl` is the running archive of compressed past turns.
 - `SOUL.md`, `USER.md`, and `memory/MEMORY.md` are the durable knowledge files.
-- `GitStore` records how those durable files change over time.
+- Dream is a read-only cognition layer that can analyze this state and propose changes without applying them.
 
 This keeps the system light in the moment, but reflective over time.
 
@@ -43,22 +42,15 @@ Each line is a JSON object:
 {"cursor": 42, "timestamp": "2026-04-03 00:02", "content": "- User prefers dark mode\n- Decided to use PostgreSQL"}
 ```
 
-It is not the final memory. It is the material from which final memory is shaped.
+It is not the final memory. It is durable history that Dream and normal runtime code can inspect.
 
 ### Stage 2: Dream
 
-`Dream` is the slower, more thoughtful layer. It runs on a cron schedule by default and can also be triggered manually.
+Dream is the slower background cognition layer. It consumes new history plus permitted read-only views of the current `SOUL.md`, `USER.md`, and `memory/MEMORY.md`, then emits validated findings and proposals.
 
-Dream reads:
+Dream does **not** edit or restore those canonical files. It has no mutation authority over memory, profile, Specialist definitions, configuration, tools, or external systems. Its durable output is a runtime-owned audit record of the validated Dream result; any later canonical change must be handled outside Dream under the normal runtime and permission boundaries.
 
-- new entries from `memory/history.jsonl`
-- the current `SOUL.md`
-- the current `USER.md`
-- the current `memory/MEMORY.md`
-
-Then it edits the long-term files surgically in a single pass — not by rewriting everything, but by making the smallest honest change that keeps memory coherent.
-
-This is why nanobot's memory is not just archival. It is interpretive.
+This keeps reflection separate from authority: Dream may identify what could be worth changing, but it does not make that proposal true by itself.
 
 ## The Files
 
@@ -71,15 +63,12 @@ working directory; it does not relocate the files below.
 workspace/
 ├── SOUL.md              # The bot's long-term voice and communication style
 ├── USER.md              # Stable knowledge about the user
-├── prompts/
-│   ├── README.md        # Notes for memory guidance files
-│   └── dream.md         # Optional instructions for how Dream organizes memory
 └── memory/
     ├── MEMORY.md        # Project facts, decisions, and durable context
     ├── history.jsonl    # Append-only history summaries
+    ├── dream_results.jsonl # Validated Dream findings/proposals audit records
     ├── .cursor          # Consolidator write cursor
-    ├── .dream_cursor    # Dream consumption cursor
-    └── .git/            # Version history for long-term memory files
+    └── .dream_cursor    # Dream consumption cursor
 ```
 
 A selected project may provide its own `AGENTS.md`, but project-local `SOUL.md`,
@@ -89,10 +78,11 @@ separate configured agent workspace when identity or memory must be isolated.
 
 These files play different roles:
 
-- `SOUL.md` remembers how nanobot should sound.
-- `USER.md` remembers who the user is and what they prefer.
-- `MEMORY.md` remembers what remains true about the work itself.
-- `history.jsonl` remembers what happened on the way there.
+- `SOUL.md` stores durable agent behavior/profile state.
+- `USER.md` stores stable knowledge about the user.
+- `MEMORY.md` stores durable project facts, decisions, and context.
+- `history.jsonl` stores what happened on the way there.
+- `dream_results.jsonl` stores Dream's validated findings and proposals, not applied mutations.
 
 ## Why `history.jsonl`
 
@@ -102,9 +92,8 @@ The old `HISTORY.md` format was pleasant for casual reading, but it was too frag
 
 - stable incremental cursors
 - safer machine parsing
-- easier batching
-- cleaner migration and compaction
-- a better boundary between raw history and curated knowledge
+- easier batching and compaction
+- a clear boundary between durable history and canonical profile/memory state
 
 You can still search it with familiar tools:
 
@@ -121,95 +110,29 @@ python -c "import json; [print(json.loads(l).get('content','')) for l in open('m
 
 The difference is philosophical as much as technical:
 
-- `history.jsonl` is for structure
-- `SOUL.md`, `USER.md`, and `MEMORY.md` are for meaning
+- `history.jsonl` is for structured history
+- `SOUL.md`, `USER.md`, and `MEMORY.md` are canonical durable state
+- Dream results are analysis/proposals, not automatic writes to that state
 
-## Commands
+## Dream Authority
 
-Memory is not hidden behind the curtain. Users can inspect and guide it.
+Dream execution and persistence are runtime-owned. The Dream worker may read the state exposed to it and create findings or proposals under canonical capability policy, but it cannot use a proposal as authority to mutate or restore `SOUL.md`, `USER.md`, or `memory/MEMORY.md`.
 
-| Command | What it does |
-|---------|--------------|
-| `/dream` | Run Dream immediately |
-| `/dream-log` | Show the latest Dream memory change |
-| `/dream-log <sha>` | Show a specific Dream change |
-| `/dream-restore` | List recent Dream memory versions |
-| `/dream-restore <sha>` | Restore memory to the state before a specific change |
-| `/dream-prompt` | Show how Dream is being guided for memory |
-| `/dream-prompt init` | Create an editable Dream memory guide at `prompts/dream.md` |
+`PermissionManager` remains the runtime authority for capabilities. Dream's read-only prompt contract is an additional invariant, not a replacement for capability enforcement.
 
-These commands exist for a reason: automatic memory is powerful, but users should always retain the right to inspect, understand, and restore it.
+## Dream Model Selection
 
-## Versioned Memory
+Dream model policy lives under `agents.defaults.dream`. It may select an explicit Dream model preset, choose a preset recommended from a configured Dream pool, or use the configured Dream fallback preset. `ModelManagement` owns that selection policy and delegates the selected preset to `ModelRuntimeResolver`, which is the only component that turns the selection into `LLMRuntime`.
 
-After Dream changes long-term memory files, nanobot can record that change with `GitStore`.
-
-This gives memory a history of its own:
-
-- you can inspect what changed
-- you can compare versions
-- you can restore a previous state
-
-That turns memory from a silent mutation into an auditable process.
-
-## Guiding Dream
-
-Dream decides what to keep, update, or forget using nanobot's built-in memory instructions. Most users can leave this alone.
-
-If one workspace needs a different memory style, create an editable guide:
-
-```text
-/dream-prompt init
-```
-
-This creates:
-
-```text
-workspace/prompts/dream.md
-```
-
-Edit that file in plain Markdown. When it has content, Dream follows it for this workspace before reading the latest conversation history. You do not need to paste history into the file; Dream adds the current `## Conversation History` block automatically.
-
-To return to nanobot's default behavior, delete `prompts/dream.md` or leave it empty.
-
-Each workspace has its own guide. Changing this file does not affect other nanobot workspaces.
-
-## Configuration
-
-Dream is configured under `agents.defaults.dream`:
-
-```json
-{
-  "agents": {
-    "defaults": {
-      "dream": {
-        "intervalH": 2,
-        "modelOverride": null
-      }
-    }
-  }
-}
-```
-
-| Field | Meaning |
-|-------|---------|
-| `intervalH` | How often Dream runs, in hours |
-| `cron` | Cron expression override (takes precedence over `intervalH`) |
-| `modelOverride` | Optional model preset name used for Dream |
-
-In practical terms:
-
-- `intervalH` is the normal way to configure Dream frequency. Internally it runs as an `every` schedule.
-- `cron` overrides `intervalH` when set, allowing precise cron expressions (e.g. `0 */4 * * *`).
-- `modelOverride` selects a named entry from `model_presets` for Dream. It accepts preset names only; raw model identifiers are not supported. If omitted, Dream uses the main agent's selected runtime.
+Dream does not inherit an ad hoc runtime construction path, and `ModelFleet` recommendations do not construct the runtime.
 
 ## In Practice
 
 What this means in daily use is simple:
 
 - conversations can stay fast without carrying infinite context
-- durable facts can become clearer over time instead of noisier
-- the user can inspect and restore memory when needed
+- durable history can be analyzed separately from canonical memory mutation
+- Dream can surface useful proposals without silently rewriting identity or memory
 
 Memory should not feel like a dump. It should feel like continuity.
 

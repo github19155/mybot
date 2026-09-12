@@ -73,24 +73,32 @@ Defaults:
 | install provenance | `/opt/mybot/INSTALL-METADATA` |
 | logs | systemd journal for `mybot-host-admin.service` |
 
+Custom `--install-prefix` and `--data-dir` values must be dedicated absolute directories. The
+installer validates them before any host write: `.`/`..` path components, paths that resolve through
+symbolic links, shared system directories such as `/` or `/etc`, and existing non-mybot directories
+are rejected. A successful existing installation remains reusable, and the default paths above are
+accepted.
+
 The installer clones/fetches only this repository, checks out the commit from the clean source
-checkout in detached mode, creates a dedicated venv, and verifies that `import nanobot` resolves
-under `/opt/mybot/source`. Dependency installation failure is fatal; there is no package/repository
-fallback. Re-running the installer preserves an existing config and never generates replacement
-credentials. It updates the managed code/venv/unit but deliberately does not enable, start, or
-restart the service. If the service is already running, the installer refuses to replace the source
-until you stop it explicitly.
+checkout in detached mode, creates a dedicated venv, and verifies in Python isolated mode (`-I`) that
+`import nanobot` resolves under `/opt/mybot/source`. This prevents the administrator checkout, current
+working directory, or `PYTHONPATH` from masquerading as the managed installation. Dependency
+installation failure is fatal; there is no package/repository fallback. Re-running the installer
+preserves an existing config and never generates replacement credentials. It updates the managed
+code/venv/unit but deliberately does not enable, start, or restart the service. If the service is
+already running, the installer refuses to replace the source until you stop it explicitly.
 
 The installer does **not** configure passwordless sudo, change SSH root-login policy, disable a
 firewall, or expose ports publicly.
 
 ### Initialize configuration
 
-For a first install only:
+For a first install only, use the managed interpreter in isolated mode so the administrator's current
+checkout or `PYTHONPATH` cannot supply a different `nanobot` package:
 
 ```bash
 sudo env HOME=/var/lib/mybot-host-admin \
-  /opt/mybot/venv/bin/python -m nanobot onboard \
+  /opt/mybot/venv/bin/python -I -m nanobot onboard \
   --config /var/lib/mybot-host-admin/.nanobot/config.json \
   --workspace /var/lib/mybot-host-admin/.nanobot/workspace \
   --wizard
@@ -101,7 +109,7 @@ existing values, use the repository's non-destructive refresh path:
 
 ```bash
 sudo env HOME=/var/lib/mybot-host-admin \
-  /opt/mybot/venv/bin/python -m nanobot onboard \
+  /opt/mybot/venv/bin/python -I -m nanobot onboard \
   --config /var/lib/mybot-host-admin/.nanobot/config.json \
   --workspace /var/lib/mybot-host-admin/.nanobot/workspace \
   --refresh
@@ -147,13 +155,15 @@ sudo systemctl status mybot-host-admin.service
 sudo journalctl -u mybot-host-admin.service -f
 ```
 
-Confirm the service definition and the actual Python/source it uses:
+Confirm the service definition and the actual Python/source it uses. The import check uses `-I` for
+the same reason as installation: it must prove the managed venv relationship, not whichever checkout
+happens to be the shell's current directory.
 
 ```bash
 sudo systemctl show mybot-host-admin.service -p User -p Group -p ExecStart -p WorkingDirectory -p Environment
 cat /opt/mybot/INSTALL-METADATA
 git -C /opt/mybot/source rev-parse HEAD
-/opt/mybot/venv/bin/python -c 'import nanobot,sys; print(sys.executable); print(nanobot.__file__)'
+/opt/mybot/venv/bin/python -I -c 'import nanobot,sys; print(sys.executable); print(nanobot.__file__)'
 ```
 
 A running systemd process proves process startup, not a working model call. Provider/model success is a

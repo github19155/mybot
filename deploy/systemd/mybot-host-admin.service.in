@@ -11,7 +11,7 @@ Group=root
 WorkingDirectory=@WORKDIR@
 Environment=HOME=@HOME@
 Environment=PYTHONUNBUFFERED=1
-ExecStart=@PYTHON@ -m nanobot gateway --config @CONFIG@
+ExecStart=@PYTHON@ -I -m nanobot gateway --config @CONFIG@
 Restart=on-failure
 RestartSec=5s
 

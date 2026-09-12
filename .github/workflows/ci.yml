@@ -3,30 +3,8 @@ name: Test Suite
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - docs/**
-      - .agent/**
-      - .github/ISSUE_TEMPLATE/**
-      - AGENTS.md
-      - CLAUDE.md
-      - COMMUNICATION.md
-      - CONTRIBUTING.md
-      - README.md
-      - SECURITY.md
-      - webui/README.md
   pull_request:
     branches: [main]
-    paths-ignore:
-      - docs/**
-      - .agent/**
-      - .github/ISSUE_TEMPLATE/**
-      - AGENTS.md
-      - CLAUDE.md
-      - COMMUNICATION.md
-      - CONTRIBUTING.md
-      - README.md
-      - SECURITY.md
-      - webui/README.md
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,8 +14,76 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      webui: ${{ steps.filter.outputs.webui }}
+      docker: ${{ steps.filter.outputs.docker }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect affected jobs
+        id: filter
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          python=false
+          webui=false
+          docker=false
+
+          if [[ -z "${BASE_SHA:-}" || "$BASE_SHA" =~ ^0+$ ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "Unable to resolve base commit; running all CI jobs."
+            python=true
+            webui=true
+            docker=true
+          else
+            mapfile -t changed_files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+
+            echo "Changed files:"
+            printf '  %s\n' "${changed_files[@]}"
+
+            for path in "${changed_files[@]}"; do
+              case "$path" in
+                nanobot/*|tests/*|scripts/*.py|conftest.py|pyproject.toml|uv.lock|hatch_build.py|.github/workflows/ci.yml)
+                  python=true
+                  ;;
+              esac
+
+              case "$path" in
+                webui/README.md)
+                  ;;
+                webui/*|.github/workflows/ci.yml)
+                  webui=true
+                  ;;
+              esac
+
+              case "$path" in
+                Dockerfile|.dockerignore|docker/*|docker-compose*.yml|pyproject.toml|hatch_build.py|entrypoint.sh|render-config.json|scripts/install_channel_dependencies.py|webui/package.json|webui/package-lock.json|.github/workflows/ci.yml)
+                  docker=true
+                  ;;
+              esac
+            done
+          fi
+
+          {
+            echo "python=$python"
+            echo "webui=$webui"
+            echo "docker=$docker"
+          } >> "$GITHUB_OUTPUT"
+
   python:
     name: Python 3.12
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -69,6 +115,8 @@ jobs:
 
   webui:
     name: WebUI
+    needs: changes
+    if: needs.changes.outputs.webui == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -98,6 +146,8 @@ jobs:
 
   docker:
     name: Docker build
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

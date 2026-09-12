@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,3 +106,60 @@ def test_default_container_mode_still_drops_root() -> None:
     assert "NANOBOT_RUN_AS_ROOT" not in base
     assert "dropping privileges to nanobot via setpriv" in entrypoint
     assert "refusing to run as root" in entrypoint
+
+
+def test_merged_container_root_compose_when_available() -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("Docker is not available in this environment")
+    probe = subprocess.run(
+        ["docker", "compose", "version"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("Docker Compose v2 is not available in this environment")
+
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "-f",
+            "docker-compose.root.yml",
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+        env={**os.environ, "MYBOT_SOURCE_COMMIT": "test-revision"},
+    )
+    assert result.returncode == 0, result.stderr
+    config = json.loads(result.stdout)
+
+    for name in ("nanobot-gateway", "nanobot-cli"):
+        service = config["services"][name]
+        assert service.get("user") == "0:0"
+        assert service.get("privileged") is not True
+        assert service.get("network_mode") != "host"
+        assert service.get("pid") != "host"
+        assert "SYS_ADMIN" not in (service.get("cap_add") or [])
+        assert "no-new-privileges:true" in (service.get("security_opt") or [])
+        mounts = service.get("volumes") or []
+        data_mounts = [m for m in mounts if m.get("target") == "/home/nanobot/.nanobot"]
+        assert len(data_mounts) == 1
+        assert data_mounts[0].get("type") == "volume"
+        assert data_mounts[0].get("source") == "mybot-container-root-data"
+        assert all("docker.sock" not in str(m) for m in mounts)
+
+    ports = config["services"]["nanobot-gateway"].get("ports") or []
+    published = {str(p.get("published")): p.get("host_ip") for p in ports}
+    assert published["18790"] == "127.0.0.1"
+    assert published["8765"] == "127.0.0.1"

@@ -51,18 +51,6 @@ is_canonical_remote() {
   return 1
 }
 
-require_simple_absolute_path() {
-  label="$1"
-  value="$2"
-  case "$value" in
-    /*) ;;
-    *) fail "$label must be an absolute path" ;;
-  esac
-  case "$value" in
-    *[!A-Za-z0-9_./-]*) fail "$label contains unsupported characters: $value" ;;
-  esac
-}
-
 find_python() {
   if [ -n "${PYTHON:-}" ]; then
     command -v "$PYTHON" >/dev/null 2>&1 || fail "PYTHON=$PYTHON was not found"
@@ -71,7 +59,7 @@ find_python() {
   fi
   for candidate in python3 python; do
     if command -v "$candidate" >/dev/null 2>&1; then
-      if "$candidate" - <<'PY' >/dev/null 2>&1
+      if "$candidate" -I - <<'PY' >/dev/null 2>&1
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
@@ -82,6 +70,91 @@ PY
     fi
   done
   fail "Python 3.11 or newer was not found"
+}
+
+validate_managed_path() {
+  label="$1"
+  value="$2"
+  kind="$3"
+  case "$value" in
+    /*) ;;
+    *) fail "$label must be an absolute path" ;;
+  esac
+  case "$value" in
+    *[!A-Za-z0-9_./-]*) fail "$label contains unsupported characters: $value" ;;
+  esac
+
+  "$python_bin" -I - "$label" "$value" "$kind" <<'PY'
+import os
+import sys
+
+label, raw, kind = sys.argv[1:]
+parts = raw.split("/")
+if any(part in {".", ".."} for part in parts):
+    raise SystemExit(f"Error: {label} must not contain '.' or '..' path components: {raw}")
+
+normalized = os.path.normpath(raw)
+resolved = os.path.realpath(normalized)
+if resolved != normalized:
+    raise SystemExit(f"Error: {label} must not resolve through symbolic links: {raw} -> {resolved}")
+
+protected = {
+    "/",
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/home",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/media",
+    "/mnt",
+    "/opt",
+    "/proc",
+    "/root",
+    "/run",
+    "/sbin",
+    "/srv",
+    "/sys",
+    "/tmp",
+    "/usr",
+    "/usr/local",
+    "/var",
+    "/var/cache",
+    "/var/lib",
+    "/var/local",
+    "/var/log",
+    "/var/tmp",
+}
+if resolved in protected:
+    raise SystemExit(
+        f"Error: {label} must be a dedicated subdirectory, not shared system directory {resolved}"
+    )
+
+if os.path.lexists(resolved):
+    if not os.path.isdir(resolved):
+        raise SystemExit(f"Error: {label} exists but is not a directory: {resolved}")
+    entries = list(os.scandir(resolved))
+    marker = os.path.join(resolved, "INSTALL-METADATA" if kind == "prefix" else ".nanobot")
+    if entries and not os.path.exists(marker):
+        raise SystemExit(
+            f"Error: {label} already contains unrelated data and is not a recognized "
+            f"mybot {kind} directory: {resolved}"
+        )
+
+    managed_children = (
+        ("source", "venv", "INSTALL-METADATA") if kind == "prefix" else (".nanobot",)
+    )
+    for child in managed_children:
+        child_path = os.path.join(resolved, child)
+        if os.path.islink(child_path):
+            raise SystemExit(
+                f"Error: {label} contains managed path through a symbolic link: {child_path}"
+            )
+
+print(resolved)
+PY
 }
 
 while [ "$#" -gt 0 ]; do
@@ -178,13 +251,13 @@ if [ "$mode" = "container-root" ]; then
   exit 0
 fi
 
-require_simple_absolute_path "--install-prefix" "$prefix"
-require_simple_absolute_path "--data-dir" "$data_dir"
 python_bin=$(find_python)
-"$python_bin" - <<'PY' >/dev/null 2>&1 || fail "nanobot requires Python 3.11 or newer"
+"$python_bin" -I - <<'PY' >/dev/null 2>&1 || fail "nanobot requires Python 3.11 or newer"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
+prefix=$(validate_managed_path "--install-prefix" "$prefix" "prefix")
+data_dir=$(validate_managed_path "--data-dir" "$data_dir" "data")
 
 source_checkout="$prefix/source"
 venv_dir="$prefix/venv"
@@ -226,6 +299,7 @@ mkdir -p "$prefix" "$config_dir"
 chmod 700 "$data_dir" "$config_dir" || fail "could not secure $data_dir"
 
 if [ -e "$source_checkout" ]; then
+  [ ! -L "$source_checkout" ] || fail "$source_checkout must not be a symbolic link"
   git -C "$source_checkout" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
     fail "$source_checkout exists but is not a git checkout"
   deployed_origin=$(git -C "$source_checkout" remote get-url origin 2>/dev/null || true)
@@ -242,16 +316,19 @@ fi
 git -C "$source_checkout" checkout --detach "$commit"
 [ "$(git -C "$source_checkout" rev-parse HEAD)" = "$commit" ] || fail "deployed checkout did not resolve to $commit"
 
+if [ -e "$venv_dir" ]; then
+  [ ! -L "$venv_dir" ] || fail "$venv_dir must not be a symbolic link"
+fi
 if [ ! -x "$venv_python" ]; then
   "$python_bin" -m venv "$venv_dir"
 fi
-"$venv_python" - <<'PY' >/dev/null 2>&1 || fail "managed venv uses Python older than 3.11"
+"$venv_python" -I - <<'PY' >/dev/null 2>&1 || fail "managed venv uses Python older than 3.11"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
-NANOBOT_SKIP_WEBUI_BUILD=1 "$venv_python" -m pip install --upgrade --editable "$source_checkout"
+NANOBOT_SKIP_WEBUI_BUILD=1 "$venv_python" -I -m pip install --upgrade --editable "$source_checkout"
 
-"$venv_python" - "$source_checkout" <<'PY'
+"$venv_python" -I - "$source_checkout" <<'PY'
 from pathlib import Path
 import nanobot
 import sys

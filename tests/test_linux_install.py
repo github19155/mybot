@@ -85,3 +85,11 @@ def test_image_records_source_revision_label() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert 'org.opencontainers.image.source="https://github.com/github19155/mybot"' in dockerfile
     assert 'org.opencontainers.image.revision="$MYBOT_SOURCE_COMMIT"' in dockerfile
+
+
+def test_systemd_unit_uses_supported_gateway_command() -> None:
+    unit = (ROOT / "deploy/systemd/mybot-host-admin.service.in").read_text()
+    assert "User=root" in unit
+    assert "Group=root" in unit
+    assert "ExecStart=@PYTHON@ -m nanobot gateway --config @CONFIG@" in unit
+    assert "--foreground" not in unit

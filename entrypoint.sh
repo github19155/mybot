@@ -26,8 +26,8 @@ fi
 # Explicit opt-in container-root mode. This only affects the identity inside the
 # container; Docker's namespace isolation still separates the process from the
 # Linux host unless the deployment separately grants host mounts/capabilities.
-# The root compose overlay also restores Docker's normal root capability set and
-# removes no-new-privileges for the gateway service.
+# The root compose overlay restores Docker's normal root capability set while
+# retaining the base no-new-privileges setting and default seccomp/AppArmor.
 if [ "$(id -u)" = "0" ] && [ "${NANOBOT_RUN_AS_ROOT:-false}" = "true" ]; then
     mkdir -p "$dir" || {
         echo "[entrypoint] error: cannot create $dir for root mode" >&2

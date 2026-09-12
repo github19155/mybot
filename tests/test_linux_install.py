@@ -93,3 +93,12 @@ def test_systemd_unit_uses_supported_gateway_command() -> None:
     assert "Group=root" in unit
     assert "ExecStart=@PYTHON@ -m nanobot gateway --config @CONFIG@" in unit
     assert "--foreground" not in unit
+
+
+def test_default_container_mode_still_drops_root() -> None:
+    base = (ROOT / "docker-compose.yml").read_text()
+    entrypoint = (ROOT / "entrypoint.sh").read_text()
+    assert 'user: "0:0"' not in base
+    assert "NANOBOT_RUN_AS_ROOT" not in base
+    assert "dropping privileges to nanobot via setpriv" in entrypoint
+    assert "refusing to run as root" in entrypoint

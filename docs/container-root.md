@@ -74,3 +74,18 @@ docker compose -f docker-compose.yml -f docker-compose.root.yml down
 ```
 
 Do not add `-v` when you intend to retain data. See the Linux installation guide for update, rollback, provenance checks, and the distinction between image rollback and data restoration.
+
+## Migrating between host-admin and container-root
+
+The two modes intentionally use different active data locations. Do not make host-admin and container-root write the same live `.nanobot` directory, and do not solve migration by bind-mounting the host-admin data directory into the root container.
+
+For either direction:
+
+1. stop the source-mode gateway so the backup is consistent;
+2. record the source commit and back up the complete source-mode `.nanobot` data before copying anything;
+3. initialize the destination mode separately and confirm its runtime identity and destination path/volume;
+4. copy only as an explicit migration step, then inspect ownership with `stat` on the host and `id`/`stat` inside the container as applicable;
+5. adjust ownership only on the destination copy to match the destination runtime identity; rootless Docker or user-namespace remapping can make container UID 0 map to a different host UID;
+6. start only the destination mode and verify sessions/config before retiring the source copy.
+
+A source-code rollback and a data restore are still separate decisions. Do not assume that data written by a newer version is compatible with an older commit.

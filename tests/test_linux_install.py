@@ -162,6 +162,8 @@ def test_merged_container_root_compose_when_available() -> None:
             "docker-compose.yml",
             "-f",
             "docker-compose.root.yml",
+            "--profile",
+            "cli",
             "config",
             "--format",
             "json",

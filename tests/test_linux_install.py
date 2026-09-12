@@ -10,12 +10,32 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-linux.sh"
+CANONICAL_REPO = "https://github.com/github19155/mybot.git"
 
 
-def run_installer(*args: str) -> subprocess.CompletedProcess[str]:
+def prepare_clean_checkout(tmp_path: Path) -> Path:
+    checkout = tmp_path / "repo"
+    subprocess.run(
+        ["git", "clone", "--quiet", str(ROOT), str(checkout)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(checkout), "remote", "set-url", "origin", CANONICAL_REPO],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return checkout
+
+
+def run_installer(*args: str, root: Path = ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["sh", str(INSTALLER), *args],
-        cwd=ROOT,
+        ["sh", str(root / "scripts" / "install-linux.sh"), *args],
+        cwd=root,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -38,19 +58,23 @@ def test_mode_is_required() -> None:
     assert "--mode is required" in result.stdout
 
 
-def test_host_admin_dry_run_does_not_require_confirmation() -> None:
-    result = run_installer("--mode", "host-admin", "--dry-run")
+def test_host_admin_dry_run_does_not_require_confirmation(tmp_path: Path) -> None:
+    checkout = prepare_clean_checkout(tmp_path)
+    result = run_installer("--mode", "host-admin", "--dry-run", root=checkout)
     assert result.returncode == 0, result.stdout
     assert "would require root and --confirm-host-admin" in result.stdout
     assert "would NOT enable, start, or restart" in result.stdout
     assert "no changes made" in result.stdout.lower()
 
 
-def test_container_root_dry_run_uses_current_repo_source() -> None:
-    result = run_installer("--mode", "container-root", "--dry-run")
+def test_container_root_dry_run_uses_current_repo_source(tmp_path: Path) -> None:
+    checkout = prepare_clean_checkout(tmp_path)
+    result = run_installer("--mode", "container-root", "--dry-run", root=checkout)
     assert result.returncode == 0, result.stdout
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    assert "https://github.com/github19155/mybot.git" in result.stdout
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
+    ).strip()
+    assert CANONICAL_REPO in result.stdout
     assert f"Source commit: {commit}" in result.stdout
     assert f"MYBOT_SOURCE_COMMIT={commit}" in result.stdout
     assert "docker-compose.root.yml" in result.stdout
@@ -60,13 +84,22 @@ def test_installer_has_no_pypi_fallback() -> None:
     text = INSTALLER.read_text()
     assert "nanobot-ai" not in text
     assert "pip install --upgrade nanobot-ai" not in text
-    assert 'CANONICAL_REPO="https://github.com/github19155/mybot.git"' in text
+    assert f'CANONICAL_REPO="{CANONICAL_REPO}"' in text
 
 
-def test_host_admin_requires_explicit_confirmation_before_changes() -> None:
-    result = run_installer("--mode", "host-admin")
+def test_host_admin_requires_explicit_confirmation_before_changes(tmp_path: Path) -> None:
+    checkout = prepare_clean_checkout(tmp_path)
+    result = run_installer("--mode", "host-admin", root=checkout)
     assert result.returncode != 0
     assert "requires --confirm-host-admin" in result.stdout
+
+
+def test_installer_rejects_dirty_source(tmp_path: Path) -> None:
+    checkout = prepare_clean_checkout(tmp_path)
+    (checkout / "untracked-test-file").write_text("dirty\n")
+    result = run_installer("--mode", "host-admin", "--dry-run", root=checkout)
+    assert result.returncode != 0
+    assert "source checkout is dirty" in result.stdout
 
 
 def test_container_root_overlay_keeps_host_isolation_defaults() -> None:
@@ -155,8 +188,11 @@ def test_merged_container_root_compose_when_available() -> None:
         data_mounts = [m for m in mounts if m.get("target") == "/home/nanobot/.nanobot"]
         assert len(data_mounts) == 1
         assert data_mounts[0].get("type") == "volume"
-        assert data_mounts[0].get("source") == "mybot-container-root-data"
+        assert data_mounts[0].get("source") == "nanobot-container-root-data"
         assert all("docker.sock" not in str(m) for m in mounts)
+
+    volume = config["volumes"]["nanobot-container-root-data"]
+    assert volume.get("name") == "mybot-container-root-data"
 
     ports = config["services"]["nanobot-gateway"].get("ports") or []
     published = {str(p.get("published")): p.get("host_ip") for p in ports}
@@ -167,7 +203,7 @@ def test_merged_container_root_compose_when_available() -> None:
 def test_linux_docs_keep_source_and_mode_data_unambiguous() -> None:
     linux = (ROOT / "docs/linux-install.md").read_text()
     migration = (ROOT / "docs/container-root.md").read_text()
-    assert "https://github.com/github19155/mybot.git" in linux
+    assert CANONICAL_REPO in linux
     assert "git clone https://github.com/HKUDS/nanobot.git" not in linux
     assert "different active data locations" in migration
     assert "stop the source-mode gateway" in migration

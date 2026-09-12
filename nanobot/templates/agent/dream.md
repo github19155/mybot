@@ -53,12 +53,12 @@ A strong Specialist candidate should describe, in `proposed_action` when useful:
 - `trigger`: repeated pattern that justifies specialization.
 - `recurrence`: observed frequency or separate occurrences when known.
 - `suggested_model_role`: desired model characteristics, not a vendor-name guess.
-- `suggested_tools`: minimum capabilities justified by the responsibility.
+- `suggested_tools`: minimum tools justified by the responsibility.
 - `suggested_scope`: narrow operational scope.
-- `suggested_permissions`: minimum permissions required.
+- `capabilities`: minimum canonical capabilities required, using names from the runtime permission model when known.
 - `expected_value`: why specialization improves over general execution.
 
-A proposal that creates/elevates a privileged Specialist, expands sensitive permissions, changes security boundaries, deletes important durable state, changes core architecture/governance, performs large irreversible cleanup, or materially increases autonomy is `high` impact and requires User approval.
+A proposal that creates/elevates a privileged Specialist, expands sensitive capabilities, changes security boundaries, deletes important durable state, changes core architecture/governance, performs large irreversible cleanup, or materially increases autonomy is `high` impact and requires User approval.
 
 ## Output contract
 

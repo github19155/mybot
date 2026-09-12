@@ -31,7 +31,11 @@ Main files:
 | Provider/tool conversation loop | `nanobot/agent/runner.py` |
 | Context construction | `nanobot/agent/context.py` |
 | Session storage and compaction | `nanobot/session/manager.py` |
-| Long-term memory and Dream | `nanobot/agent/memory.py` |
+| Runtime resolution | `nanobot/agent/model_runtime.py` |
+| Model management and Fleet policy | `nanobot/agent/model_management.py`, `nanobot/model_fleet.py` |
+| Capability policy | `nanobot/agent/permissions.py` |
+| Dream cognition | `nanobot/agent/dream.py`, `nanobot/agent/dream_worker.py` |
+| Long-term memory | `nanobot/agent/memory.py` |
 
 ## Agent Loop vs Agent Runner
 
@@ -59,6 +63,14 @@ that lifecycle. `AgentLoop.from_config()` therefore requires a caller-owned
 `MCPProvider`.
 
 Keep this split in mind when debugging. If a problem is about channel routing, session keys, workspace selection, or outbound delivery, start in `agent/loop.py`. If it is about provider calls, tool calls, streaming, or iteration limits, start in `agent/runner.py`.
+
+## Runtime Resolution and Capability Authority
+
+`ModelRuntimeResolver` is the single selection-to-`LLMRuntime` authority for Main, Subagent, and Dream execution. Those callers may decide which model or preset should be selected, but they delegate construction of the resulting runtime to the resolver. The resolver also owns the shared `ProviderSnapshot` → `LLMRuntime` conversion path.
+
+`ModelManagement` owns model/provider administration and Dream selection policy. `ModelFleet` may rank or recommend configured offerings and enforce physical-request admission, but it does not construct `LLMRuntime` objects. Likewise, `SubagentManager` owns worker lifecycle/admission and chooses the applicable role or per-run override; it does not own runtime resolution after Phase 3B.
+
+`PermissionManager` is the canonical runtime authority for capabilities. Role names, prompts, requested tools, and old permission tiers are not independent authorization sources; tool visibility and execution are constrained by the current capability policy.
 
 ## Providers
 
@@ -185,7 +197,7 @@ Session history is the near-term conversation replay. Memory is the longer-term 
 | Consolidation source history | `<workspace>/memory/history.jsonl` |
 | Bootstrap identity files | `<workspace>/SOUL.md`, `<workspace>/USER.md`, templates under `nanobot/templates/` |
 
-Dream is implemented in `nanobot/agent/memory.py` and scheduled by the runtime when enabled.
+Dream is a read-only background cognition layer implemented in `nanobot/agent/dream.py` and `nanobot/agent/dream_worker.py`. It may analyze history and canonical profile/memory state and emit validated findings or proposals, but it does not modify or restore `SOUL.md`, `USER.md`, or `memory/MEMORY.md` itself.
 
 ## Security Boundaries
 
@@ -193,6 +205,7 @@ Security-sensitive code paths include:
 
 | Boundary | Files |
 |---|---|
+| Capability policy | `nanobot/agent/permissions.py`, `nanobot/permission_config.py`, `nanobot/permission_types.py` |
 | Workspace scope | `nanobot/security/workspace_access.py`, `nanobot/security/workspace_policy.py` |
 | Shell sandboxing | `nanobot/agent/tools/shell.py` |
 | SSRF/network checks | `nanobot/security/network.py`, `nanobot/agent/tools/web.py` |

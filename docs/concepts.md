@@ -11,6 +11,7 @@ nanobot has one small core loop and several ways to enter it:
 | Part | What it does |
 |---|---|
 | Agent loop | Builds context, selects the session, calls the provider, runs tools, and publishes replies |
+| Runtime resolver | Turns Main/Subagent/Dream model selections into immutable `LLMRuntime` values |
 | Providers | LLM backends such as OpenRouter, Anthropic, OpenAI, Bedrock, Ollama, vLLM, and other OpenAI-compatible APIs |
 | Channels | User-facing transports such as CLI, WebUI/WebSocket, Telegram, Discord, Slack, Feishu, WeChat, Email, Mattermost, and others |
 | Tools | Capabilities the model may call, including files, shell, web search/fetch, MCP, cron, image generation, and subagents |
@@ -112,6 +113,8 @@ Pin the provider inside the preset when setting up for the first time. It is eas
 }
 ```
 
+At runtime, Main, Subagents, and Dream decide which inherited/default/preset/override selection applies, but `ModelRuntimeResolver` is the single authority that converts that selection into `LLMRuntime`. `ProviderSnapshot` conversion also goes through this resolver path. `ModelFleet` may recommend an eligible configured offering when policy calls for automatic selection, but it does not construct the runtime.
+
 See [`providers.md`](./providers.md) for practical examples and [`configuration.md#providers`](./configuration.md#providers) for the full provider reference.
 
 ## Channels and Sessions
@@ -129,7 +132,7 @@ nanobot uses two related stores:
 | Sessions | `<config-dir>/sessions/<workspace-id>/*.jsonl` | Recent conversation turns replayed into context |
 | Memory | `<workspace>/memory/MEMORY.md` and `<workspace>/memory/history.jsonl` | Long-term facts and consolidated history |
 
-Dream is a periodic consolidation job. It reads accumulated history and updates workspace memory so useful context can survive beyond short session replay.
+Dream is a read-only background cognition layer. It may analyze accumulated history plus canonical `SOUL.md`, `USER.md`, and `memory/MEMORY.md` state and emit findings or proposals, but it does not apply, restore, or otherwise mutate those canonical files itself.
 
 The configured workspace contains a `.nanobot/workspace-id` file. It contains only an
 opaque random identifier—never conversation content or credentials. Keep it with workspace
@@ -171,7 +174,7 @@ Tools are discovered automatically from built-in modules and plugin entry points
 - image generation;
 - subagents and runtime self-inspection.
 
-Security-sensitive controls live in [`configuration.md#security`](./configuration.md#security). For production or shared chat apps, also configure channel access controls such as `allowFrom`, pairing, or WebSocket tokens.
+`PermissionManager` is the canonical runtime authority for capabilities. Roles and tool declarations describe work and availability; they do not grant authority by themselves. Security-sensitive controls live in [`configuration.md#security`](./configuration.md#security). For production or shared chat apps, also configure channel access controls such as `allowFrom`, pairing, or WebSocket tokens.
 
 ## Background Jobs
 

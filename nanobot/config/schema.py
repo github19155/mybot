@@ -144,6 +144,7 @@ class ModelPresetConfig(Base):
     max_tokens: int = 8192
     context_window_tokens: int = 200_000
     supports_vision: bool = False
+    supports_image_generation: bool = False
     temperature: float = 0.1
     reasoning_effort: str | None = None
     # Fleet facts belong to the concrete provider/model route. They describe

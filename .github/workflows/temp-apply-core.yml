@@ -14,16 +14,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Inspect when triggered
+      - name: Apply when triggered
         shell: bash
         run: |
           set -euo pipefail
           message="$(git log -1 --pretty=%B)"
-          if [ "$message" != "chore: inspect remaining fallback" ]; then
-            echo "Not the inspect trigger; skipping."
+          if [ "$message" != "chore: apply remaining fallback removal" ]; then
+            echo "Not the apply trigger; skipping."
             exit 0
           fi
-          echo '=== MODEL FALLBACK RESIDUALS ==='
-          git grep -n -I -E 'fallback_models|fallbackModels|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate|fallback_model_observer|build_webui_fallback_model_observer|fallbackModelName|model_call_order|modelCallOrder|update_model_call_order|onChangeCallOrder|orderSaving|migrationSaving|onMigrate|turn_model_updated' -- . ':!nanobot/web/dist/**' || true
-          echo '=== CALL ORDER REFERENCES ==='
-          git grep -n -I -E 'callOrder|call order|model configuration.*migrat|migrate_model_configurations|migrateModel' -- nanobot webui tests docs README.md || true
+          python scripts/remove_model_fallback_remaining.py
+          git diff --check
+          python -m compileall -q nanobot
+          echo '=== PRODUCT RESIDUALS ==='
+          git grep -n -I -E 'fallback_models|fallbackModels|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate|fallback_model_observer|build_webui_fallback_model_observer|fallbackModelName' -- nanobot webui || true
+          git status --short
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add nanobot webui
+          git commit -m 'refactor: remove remaining model fallback surfaces'
+          git push origin HEAD:refactor/remove-model-fallback

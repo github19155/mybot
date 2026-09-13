@@ -1,4 +1,4 @@
-name: Fallback impact scan
+name: Temporary fallback refactor runner
 
 on:
   push:
@@ -9,21 +9,23 @@ permissions:
   contents: write
 
 jobs:
-  patch-core:
-    if: github.event.head_commit.message == 'chore: run core fallback removal patch 2'
+  patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply core removal
+      - name: Apply core patch
         run: python scripts/remove_model_fallback_core.py
-      - name: Verify patch
+      - name: Commit changed files
+        shell: bash
         run: |
-          git status --short
+          set -euo pipefail
           git diff --check
-      - name: Commit core removal
-        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add nanobot

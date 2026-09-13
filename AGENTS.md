@@ -43,7 +43,7 @@ Messages flow through an async `MessageBus` (`nanobot/bus/queue.py`) that decoup
 - **LLM Providers** (`nanobot/providers/`): Provider implementations (Anthropic, OpenAI-compatible, OpenAI Responses API, Azure, Bedrock, GitHub Copilot, OpenAI Codex, etc.) built on a common base (`base.py`). Includes image generation (`image_generation.py`) and audio transcription (`transcription.py`). `factory.py` and `registry.py` handle instantiation and model discovery.
 - **Channels** (`nanobot/channels/`): Platform integrations (Telegram, Discord, Slack, Feishu, Matrix, WhatsApp, QQ, WeChat, WeCom, DingTalk, Email, MoChat, MS Teams, WebSocket, Mattermost). `manager.py` discovers and coordinates them. Channels are self-contained packages auto-discovered via `pkgutil` scanning.
 - **Tools** (`nanobot/agent/tools/`): Agent capabilities exposed to the LLM: filesystem (read/write/edit/list), shell execution (with sandbox backends), web search/fetch, MCP servers, cron, notebook editing, subagent spawning, long-running tasks / sustained goals (`long_task.py`), image generation, and self-modification. Tools are auto-discovered via `pkgutil` scan + entry-point plugins.
-- **Memory** (`nanobot/agent/memory.py`): Session history persistence with Dream two-phase memory consolidation. Uses atomic writes with fsync for durability.
+- **Memory** (`nanobot/agent/memory.py`): Session history persistence with Dream two-phase memory consolidation. Dream observes history and emits advisory proposals; runtime-owned consolidation validates and applies accepted memory changes. Dream may persist its own cursor/run/proposal state, but does not directly edit formal memory. Uses atomic writes with fsync for durability.
 - **Session Management** (`nanobot/session/`): Per-session history, context compaction, TTL-based auto-compaction (`manager.py`), and sustained goal state tracking (`goal_state.py`).
 - **Config** (`nanobot/config/schema.py`, `loader.py`): Pydantic-based configuration loaded from `~/.nanobot/config.json`. Supports camelCase aliases for JSON compatibility.
 - **WebUI** (`webui/`): Vite-based React SPA that talks to the gateway over a WebSocket multiplex protocol. The dev server proxies `/api`, `/webui`, `/auth`, and WebSocket traffic to the gateway.
@@ -75,7 +75,7 @@ Start with:
 - Runtime persistence: [`docs/runtime-storage.md`](docs/runtime-storage.md)
 - Agent roadmap: [`docs/agent-architecture-roadmap.md`](docs/agent-architecture-roadmap.md)
 
-The project-level agent model is: **Main Agent = conversation + orchestration; subagents = background execution; tools = capabilities; docs = project knowledge.** Prefer diagnosing the intended architecture before replacing it.
+The project-level agent model is: **Main Agent = conversation + orchestration; subagents = background execution; tools = capabilities; docs = project knowledge.** Dream is an observer/advisor: it may save its own run state and proposals, but proposal execution remains under Main/Runtime and user authorization. Prefer diagnosing the intended architecture before replacing it.
 
 ## Contribution Flow
 

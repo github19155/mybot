@@ -5,7 +5,6 @@ import copy
 import json
 import time
 import uuid
-import warnings
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -40,7 +39,7 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import AgentDefaults, ToolsConfig
 from nanobot.llm_usage.context import LLMUsageSource, current_llm_usage_source
-from nanobot.providers.base import LLMProvider, LLMUsage
+from nanobot.providers.base import LLMUsage
 from nanobot.security.workspace_access import (
     WorkspaceScope,
     bind_workspace_scope,
@@ -74,6 +73,7 @@ def _portable_fork_history(history: list[dict[str, Any]] | None) -> list[dict[st
         snapshot.append(clean)
     return snapshot
 
+
 if TYPE_CHECKING:
     from nanobot.agent.model_management import ModelManagement
     from nanobot.agent.model_runtime import ModelRuntimeResolver
@@ -93,8 +93,7 @@ class SubagentStatus:
     task_id: str
     label: str
     task_description: str
-    started_at: float          # time.monotonic()
-    # queued | initializing | awaiting_tools | tools_completed | final_response | done | error
+    started_at: float
     phase: str = "initializing"
     iteration: int = 0
     tool_events: list[dict[str, str]] = field(default_factory=list)
@@ -108,9 +107,8 @@ class SubagentStatus:
     origin_chat_id: str | None = None
     session_key: str | None = None
     origin_message_id: str | None = None
-    started_at_ms: int | None = None   # wall clock ms, for fleet snapshots
+    started_at_ms: int | None = None
     ended_at_ms: int | None = None
-    # queued | running | completed | failed | stopped
     state: str = "queued"
     thinking: str | None = None
     context: str = "fresh"
@@ -152,11 +150,11 @@ class SubagentManager:
 
     def __init__(
         self,
-        provider: LLMProvider | None = None,
-        workspace: Path | None = None,
-        bus: MessageBus | None = None,
-        max_tool_result_chars: int | None = None,
-        model: str | None = None,
+        *,
+        workspace: Path,
+        bus: MessageBus,
+        max_tool_result_chars: int,
+        permission_manager: PermissionManager,
         tools_config: ToolsConfig | None = None,
         restrict_to_workspace: bool = False,
         disabled_skills: list[str] | None = None,
@@ -165,34 +163,8 @@ class SubagentManager:
         llm_wall_timeout_for_session: Callable[[str | None], float | None] | None = None,
         model_management: "ModelManagement | None" = None,
         runtime_resolver: "ModelRuntimeResolver | None" = None,
-        *,
-        permission_manager: PermissionManager,
     ):
-        if workspace is None:
-            raise TypeError("SubagentManager.__init__() missing required argument: 'workspace'")
-        if bus is None:
-            raise TypeError("SubagentManager.__init__() missing required argument: 'bus'")
-        if max_tool_result_chars is None:
-            raise TypeError(
-                "SubagentManager.__init__() missing required argument: 'max_tool_result_chars'"
-            )
-        if model is not None and provider is None:
-            raise TypeError("SubagentManager model compatibility argument requires provider")
-
         defaults = AgentDefaults()
-        self._compat_runtime: LLMRuntime | None = None
-        if provider is not None:
-            warnings.warn(
-                "SubagentManager provider/model constructor arguments are deprecated; "
-                "pass runtime=... to spawn() instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self._compat_runtime = LLMRuntime.capture(
-                provider,
-                model or provider.get_default_model(),
-                context_window_tokens=defaults.context_window_tokens,
-            )
         self.workspace = workspace
         self.bus = bus
         self.tools_config = tools_config or ToolsConfig()
@@ -220,7 +192,7 @@ class SubagentManager:
         self.permissions = permission_manager
         self._running_tasks: dict[str, asyncio.Task[str]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
-        self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        self._session_tasks: dict[str, set[str]] = {}
         self._finished: deque[SubagentStatus] = deque(maxlen=50)
         self._steer_queues: dict[str, asyncio.Queue[str]] = {}
         self._launch_guidance: dict[str, list[str]] = {}
@@ -293,41 +265,6 @@ class SubagentManager:
     def runtime_statuses(self) -> Mapping[str, SubagentStatus]:
         """Return the observable task statuses used by runtime-control snapshots."""
         return self._task_statuses
-
-    def set_provider(self, provider: LLMProvider, model: str) -> None:
-        """Update the deprecated runtime source used by legacy ``spawn`` calls."""
-        warnings.warn(
-            "SubagentManager.set_provider() is deprecated; pass runtime=... to spawn() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        context_window_tokens = (
-            self._compat_runtime.context_window_tokens
-            if self._compat_runtime is not None
-            else AgentDefaults().context_window_tokens
-        )
-        self._compat_runtime = LLMRuntime.capture(
-            provider,
-            model,
-            context_window_tokens=context_window_tokens,
-        )
-
-    def _compat_spawn_runtime(self) -> LLMRuntime:
-        runtime = self._compat_runtime
-        if runtime is None:
-            raise TypeError(
-                "SubagentManager.spawn() missing required keyword-only argument: 'runtime'"
-            )
-        warnings.warn(
-            "SubagentManager.spawn() without runtime is deprecated; pass runtime=... explicitly",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        return LLMRuntime.capture(
-            runtime.provider,
-            runtime.model,
-            context_window_tokens=runtime.context_window_tokens,
-        )
 
     def _resolve_task_runtime(
         self,
@@ -403,7 +340,6 @@ class SubagentManager:
         allowed_names.discard("subagent")
         for name in registry.tool_names:
             tool = registry.get(name)
-            # Names alone are insufficient: a plugin can claim a built-in name.
             if name not in allowed_names or (
                 name in allowed and type(tool).__module__ != f"nanobot.agent.tools.{allowed[name]}"
             ):
@@ -451,7 +387,7 @@ class SubagentManager:
         temperature: float | None = None,
         workspace_scope: WorkspaceScope | None = None,
         *,
-        runtime: LLMRuntime | None = None,
+        runtime: LLMRuntime,
         role: str = "coder",
         model: str | None = None,
         model_preset: str | None = None,
@@ -464,8 +400,6 @@ class SubagentManager:
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         fork_history = _portable_fork_history(fork_history)
-        if runtime is None:
-            runtime = self._compat_spawn_runtime()
         try:
             role_config = role_definition or self._resolve_role(role)
             if thinking is not None and thinking not in _THINKING_VALUES:
@@ -559,9 +493,6 @@ class SubagentManager:
                     del self._session_tasks[session_key]
 
         bg_task.add_done_callback(_cleanup)
-
-        # Let the admission task publish an immediate running/queued snapshot while
-        # still returning before any slow child can complete.
         await asyncio.sleep(0)
         logger.info("Spawned subagent [{}]: {}", task_id, display_label)
         response_state = status.state
@@ -583,7 +514,7 @@ class SubagentManager:
         temperature: float | None = None,
         workspace_scope: WorkspaceScope | None = None,
         *,
-        runtime: LLMRuntime | None = None,
+        runtime: LLMRuntime,
         role: str = "coder",
         model: str | None = None,
         model_preset: str | None = None,
@@ -596,8 +527,6 @@ class SubagentManager:
     ) -> str:
         """Run a subagent synchronously and return its result to the caller."""
         fork_history = _portable_fork_history(fork_history)
-        if runtime is None:
-            runtime = self._compat_spawn_runtime()
         try:
             role_config = role_definition or self._resolve_role(role)
             if thinking is not None and thinking not in _THINKING_VALUES:
@@ -794,7 +723,6 @@ class SubagentManager:
             if workspace_scope is not None:
                 cfg = self._subagent_tools_config()
                 cfg.restrict_to_workspace = workspace_scope.restrict_to_workspace
-            # Construct from the agent workspace; the bound scope below supplies the project cwd.
             tools = self._build_tools(
                 tools_config=cfg,
                 role=status.role,
@@ -818,9 +746,9 @@ class SubagentManager:
             llm_timeout = (
                 status.timeout_seconds
                 or (
-                self._llm_wall_timeout_for_session(sess_key)
-                if self._llm_wall_timeout_for_session
-                else None
+                    self._llm_wall_timeout_for_session(sess_key)
+                    if self._llm_wall_timeout_for_session
+                    else None
                 )
             )
             request_token = bind_request_context(RequestContext(
@@ -961,11 +889,6 @@ class SubagentManager:
             result=result,
         )
 
-        # Inject as system message to trigger main agent.
-        # Use session_key_override to align with the main agent's effective
-        # session key (which accounts for unified sessions) so the result is
-        # routed to the correct pending queue (mid-turn injection) instead of
-        # being dispatched as a competing independent task.
         override = origin.get("session_key") or f"{origin['channel']}:{origin['chat_id']}"
         metadata: dict[str, Any] = {
             "injected_event": "subagent_result",
@@ -983,7 +906,12 @@ class SubagentManager:
         )
 
         await self.bus.publish_inbound(msg)
-        logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
+        logger.debug(
+            "Subagent [{}] announced result to {}:{}",
+            task_id,
+            origin["channel"],
+            origin["chat_id"],
+        )
 
     def _build_subagent_prompt(
         self,
@@ -1080,7 +1008,7 @@ class SubagentManager:
             self._steer_queues[task_id] = new_queue
             queue = new_queue
         if queue.full():
-            queue.get_nowait()  # drop oldest
+            queue.get_nowait()
         queue.put_nowait(message)
         if task.done():
             self._steer_queues.pop(task_id, None)
@@ -1136,7 +1064,11 @@ class SubagentManager:
         ]
 
     def role_get(self, name: str) -> dict[str, Any]:
-        return self._role_store().get(name) if self.model_management else resolve_role(None, name).as_dict()
+        return (
+            self._role_store().get(name)
+            if self.model_management
+            else resolve_role(None, name).as_dict()
+        )
 
     def role_create(self, name: str, values: dict[str, Any]) -> dict[str, Any]:
         return self._role_store().create(name, values)

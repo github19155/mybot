@@ -65,7 +65,7 @@ This distinction matters. Internal registration is not the same as model authori
 
 Main also has a small per-turn orchestration budget: after two valid Main tool calls, model-facing tool definitions are withdrawn for that turn so Main must return a user-visible response. This is intentionally a control-flow limit for Main only; worker registries are not subject to it.
 
-The old `spawn` interface is not part of this architecture. Delegation uses the unified `subagent` tool.
+The old model-facing `spawn` tool is not part of this architecture. Delegation uses the unified `subagent` tool. Internally, `SubagentManager.spawn(runtime=...)` remains the background lifecycle entry point for admission, task state, steering, stopping, and completion delivery.
 
 ## Agent Loop vs Agent Runner
 
@@ -98,7 +98,7 @@ Keep this split in mind when debugging. If a problem is about channel routing, s
 
 `ModelRuntimeResolver` is the single selection-to-`LLMRuntime` authority for Main, Subagent, and Dream execution. Those callers may decide which model or preset should be selected, but they delegate construction of the resulting runtime to the resolver. The resolver also owns the shared `ProviderSnapshot` → `LLMRuntime` conversion path.
 
-`ModelManagement` owns model/provider administration and Dream selection policy. `ModelFleet` may rank or recommend configured offerings and enforce physical-request admission, but it does not construct `LLMRuntime` objects. Likewise, `SubagentManager` owns worker lifecycle/admission and chooses the applicable role or per-run override; it does not own runtime resolution after Phase 3B.
+`ModelManagement` owns model/provider administration and Dream selection policy. `ModelFleet` may rank or recommend configured offerings and enforce physical-request admission, but it does not construct `LLMRuntime` objects. `SubagentManager` receives an explicit parent `LLMRuntime` for every launch. It may request a child runtime for a role or per-run model override through `ModelRuntimeResolver.resolve_selection()`, but it does not store provider/model as a fallback runtime source or reconstruct an `LLMRuntime` when one is missing.
 
 `PermissionManager` is the canonical runtime authority for capabilities. Role names, prompts, requested tools, and old permission tiers are not independent authorization sources; tool visibility and execution are constrained by the current capability policy. The Main-orchestrator model-facing filter is an additional responsibility boundary, not a replacement for permission authority.
 

@@ -72,6 +72,66 @@ PY
   fail "Python 3.11 or newer was not found"
 }
 
+node_is_supported() {
+  command -v node >/dev/null 2>&1 || return 1
+  node_major=$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || printf '0')
+  case "$node_major" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$node_major" -ge 20 ]
+}
+
+ensure_webui_build_runner() {
+  if command -v bun >/dev/null 2>&1; then
+    return
+  fi
+  if command -v npm >/dev/null 2>&1 && node_is_supported; then
+    return
+  fi
+
+  command -v apt-get >/dev/null 2>&1 || \
+    fail "WebUI build requires bun or Node.js 20+ with npm; install one or set NANOBOT_SKIP_WEBUI_BUILD=1"
+
+  info "Installing Node.js/npm for the host-admin WebUI build..."
+  DEBIAN_FRONTEND=noninteractive apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs npm
+
+  command -v npm >/dev/null 2>&1 || fail "npm is still unavailable after apt installation"
+  node_is_supported || \
+    fail "Node.js 20 or newer is required to build the WebUI; install a newer Node.js or set NANOBOT_SKIP_WEBUI_BUILD=1"
+}
+
+build_host_admin_webui() {
+  if [ "${NANOBOT_SKIP_WEBUI_BUILD:-}" = "1" ]; then
+    info "Skipping host-admin WebUI build via NANOBOT_SKIP_WEBUI_BUILD=1."
+    return
+  fi
+
+  webui_dir="$source_checkout/webui"
+  webui_index="$source_checkout/nanobot/web/dist/index.html"
+  [ -f "$webui_dir/package.json" ] || fail "missing WebUI source: $webui_dir/package.json"
+
+  ensure_webui_build_runner
+  if command -v bun >/dev/null 2>&1; then
+    info "Building host-admin WebUI with bun..."
+    if [ -f "$webui_dir/bun.lock" ]; then
+      (cd "$webui_dir" && bun install --frozen-lockfile && bun run build)
+    else
+      (cd "$webui_dir" && bun install && bun run build)
+    fi
+  else
+    info "Building host-admin WebUI with npm..."
+    if [ -f "$webui_dir/package-lock.json" ]; then
+      (cd "$webui_dir" && npm ci && npm run build)
+    else
+      (cd "$webui_dir" && npm install && npm run build)
+    fi
+  fi
+
+  [ -f "$webui_index" ] || fail "WebUI build completed without producing $webui_index"
+  info "Host-admin WebUI ready: $webui_index"
+}
+
 validate_managed_path() {
   label="$1"
   value="$2"
@@ -279,7 +339,13 @@ if [ "$dry_run" = "1" ]; then
   info "Dry run: would require root and --confirm-host-admin for a real install."
   info "Dry run: would clone/fetch only $CANONICAL_REPO and detach at $commit into $source_checkout."
   info "Dry run: would create/reuse venv $venv_dir with $python_bin."
-  info "Dry run: would install editable source with NANOBOT_SKIP_WEBUI_BUILD=1 (no Node required)."
+  if [ "${NANOBOT_SKIP_WEBUI_BUILD:-}" = "1" ]; then
+    info "Dry run: would skip the WebUI build via NANOBOT_SKIP_WEBUI_BUILD=1."
+  else
+    info "Dry run: would build the bundled WebUI into $source_checkout/nanobot/web/dist."
+    info "Dry run: would use bun when available, otherwise Node.js 20+/npm; apt systems may install nodejs/npm if needed."
+  fi
+  info "Dry run: would install editable source after the WebUI build step."
   info "Dry run: would preserve any existing $config_path; no credentials would be generated."
   info "Dry run: would install $unit_path with User=root, HOME=$data_dir, WorkingDirectory=$source_checkout."
   info "Dry run: would run systemctl daemon-reload only; it would NOT enable, start, or restart the service."
@@ -326,6 +392,8 @@ fi
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
+
+build_host_admin_webui
 NANOBOT_SKIP_WEBUI_BUILD=1 "$venv_python" -I -m pip install --upgrade --editable "$source_checkout"
 
 "$venv_python" -I - "$source_checkout" <<'PY'

@@ -18,10 +18,16 @@ not determine source provenance; the commands below verify the repository and co
 
 The installation entrypoint is Linux-only and requires a clean git checkout with a remote pointing
 to `github19155/mybot`. Python **3.11+** is required for host-admin. Debian 13 is the primary Linux
-target for this path. The host-admin installer uses `python -m venv`, `git`, and systemd; it installs
-an editable Python package with `NANOBOT_SKIP_WEBUI_BUILD=1`, so Node/Bun is not required for the
-lightweight gateway path. A bundled WebUI is therefore not guaranteed in host-admin unless you build
-the frontend separately.
+target for this path. The host-admin installer uses `python -m venv`, `git`, and systemd and now builds
+the bundled WebUI by default before installing the editable Python package. It prefers Bun when
+available; otherwise it requires Node.js **20+** with npm. On apt-based systems it may install
+`nodejs` and `npm` automatically when neither supported runner is present, and it fails if the final
+Node.js version is still too old. A successful default build must produce
+`nanobot/web/dist/index.html`.
+
+Set `NANOBOT_SKIP_WEBUI_BUILD=1` only when you intentionally want to skip the frontend build. In that
+explicit opt-out mode the Python/gateway installation can still proceed, but a usable bundled WebUI is
+not guaranteed.
 
 Container-root requires Docker Engine and Docker Compose v2. The Dockerfile builds the WebUI in a
 separate Node stage, so Node is not required on the host. Browser sidecars and extra channels remain
@@ -83,10 +89,19 @@ The installer clones/fetches only this repository, checks out the commit from th
 checkout in detached mode, creates a dedicated venv, and verifies in Python isolated mode (`-I`) that
 `import nanobot` resolves under `/opt/mybot/source`. This prevents the administrator checkout, current
 working directory, or `PYTHONPATH` from masquerading as the managed installation. Dependency
-installation failure is fatal; there is no package/repository fallback. Re-running the installer
-preserves an existing config and never generates replacement credentials. It updates the managed
-code/venv/unit but deliberately does not enable, start, or restart the service. If the service is
-already running, the installer refuses to replace the source until you stop it explicitly.
+installation failure is fatal; there is no package/repository fallback.
+
+Unless `NANOBOT_SKIP_WEBUI_BUILD=1` is set explicitly, the installer then builds the WebUI from the
+managed source checkout, uses lockfile-aware installs (`bun install --frozen-lockfile` or `npm ci`
+when the matching lockfile is present), and refuses to continue if
+`/opt/mybot/source/nanobot/web/dist/index.html` was not produced. The following editable Python install
+sets `NANOBOT_SKIP_WEBUI_BUILD=1` only to avoid rebuilding the same frontend a second time; it does not
+mean the normal host-admin path skips WebUI generation.
+
+Re-running the installer preserves an existing config and never generates replacement credentials. It
+updates the managed code/venv/unit but deliberately does not enable, start, or restart the service. If
+the service is already running, the installer refuses to replace the source until you stop it
+explicitly.
 
 The installer does **not** configure passwordless sudo, change SSH root-login policy, disable a
 firewall, or expose ports publicly.
@@ -164,14 +179,18 @@ sudo systemctl show mybot-host-admin.service -p User -p Group -p ExecStart -p Wo
 cat /opt/mybot/INSTALL-METADATA
 git -C /opt/mybot/source rev-parse HEAD
 /opt/mybot/venv/bin/python -I -c 'import nanobot,sys; print(sys.executable); print(nanobot.__file__)'
+test -f /opt/mybot/source/nanobot/web/dist/index.html && echo "WebUI bundle present"
 ```
 
-A running systemd process proves process startup, not a working model call. Provider/model success is a
-separate check and may incur API cost. The lightweight host-admin install also does not prove that a
-bundled WebUI was built.
+A normal host-admin install already builds and verifies that bundled WebUI asset before the editable
+Python install. If you explicitly installed with `NANOBOT_SKIP_WEBUI_BUILD=1`, the asset check above
+may fail by design. Asset presence still does not prove that WebSocket configuration/authentication or
+browser connectivity works, and a running systemd process does not prove that a provider/model call
+works; those are separate checks and a real model request may incur API cost.
 
-Gateway defaults are loopback-only. Do not change listeners to public interfaces merely to make remote
-access convenient. Prefer an authenticated reverse proxy, VPN, or an SSH tunnel, for example:
+Gateway defaults are loopback-only. The WebUI/WebSocket surface remains on `127.0.0.1:8765` by
+default. Do not change listeners to public interfaces merely to make remote access convenient. Prefer
+an authenticated reverse proxy, VPN, or an SSH tunnel, for example:
 
 ```bash
 ssh -L 18790:127.0.0.1:18790 -L 8765:127.0.0.1:8765 your-server
@@ -329,7 +348,7 @@ Do not add `-v` if your intent is to preserve user data.
 Keep these results separate:
 
 1. installer `--dry-run` succeeds -> argument/source planning only;
-2. Python import or image build succeeds -> installation/source wiring;
+2. Python import plus the default host-admin WebUI asset check, or a container image build -> installation/source and bundled frontend wiring;
 3. systemd/Compose gateway stays running -> local process startup;
 4. WebUI assets and authenticated WebSocket work -> UI transport is available;
 5. a provider/model answers -> real model integration works and may cost money;

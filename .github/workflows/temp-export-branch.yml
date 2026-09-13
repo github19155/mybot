@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Archive branch
-        run: tar -czf branch.tar.gz --exclude=branch.tar.gz .
+        run: git archive --format=tar.gz -o /tmp/branch.tar.gz HEAD
       - uses: actions/upload-artifact@v4
         with:
           name: fallback-branch
-          path: branch.tar.gz
+          path: /tmp/branch.tar.gz
           retention-days: 1

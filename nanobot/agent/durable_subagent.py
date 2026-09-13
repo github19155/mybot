@@ -23,12 +23,9 @@ class DurableSubagentManager(SubagentManager):
     asyncio task dictionaries remain authoritative while the process is alive.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        workspace = kwargs.get("workspace")
-        if workspace is None and len(args) >= 2:
-            workspace = args[1]
-        super().__init__(*args, **kwargs)
-        root = Path(workspace or self.workspace).expanduser().resolve()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        root = Path(self.workspace).expanduser().resolve()
         self._job_ledger = SubagentJobLedger(root / "runtime" / "subagent_jobs.db")
         self._restore_durable_history()
 

@@ -11,12 +11,20 @@ from typing import TYPE_CHECKING, Any, cast
 from nanobot.config.schema import Config, ModelPresetConfig, ProviderConfig
 from nanobot.config.store import ConfigStore
 from nanobot.model_fleet import get_model_fleet, offering_from_config
+from nanobot.model_settings import (
+    ModelSettingsError,
+    create_model_configuration,
+    create_provider_settings,
+    delete_model_configuration,
+    management_catalog,
+    update_model_configuration,
+    update_provider_settings,
+    update_subagent_roles,
+)
 
 if TYPE_CHECKING:
     from nanobot.agent.model_runtime import ModelRuntimeResolver
     from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.webui import settings_models as models
-from nanobot.webui.settings_contracts import WebUISettingsError
 
 _DREAM_MIN_CONTEXT_TOKENS = 16_000
 
@@ -84,7 +92,7 @@ class ModelManagement:
 
     @staticmethod
     def _catalog(config: Config) -> dict[str, Any]:
-        payload = models.model_settings_payload(config, oauth_status=models.oauth_provider_status)
+        payload = management_catalog(config)
         fleet_presets = {
             name: {
                 "offering_id": preset.offering_id,
@@ -97,17 +105,9 @@ class ModelManagement:
             for name, preset in config.model_presets.items()
         }
         return {
-            "status": "ok",
-            "model_presets": payload["model_presets"],
+            **payload,
             "fleet_profiles": fleet_presets,
             "dream": config.agents.defaults.dream.model_dump(),
-            "image_analysis": payload["image_analysis"],
-            "subagent_roles": payload["subagent_roles"],
-            "max_concurrent_subagents": payload["max_concurrent_subagents"],
-            "providers": [
-                {key: row[key] for key in ("name", "display_name", "configured") if key in row}
-                for row in payload["providers"]
-            ],
         }
 
     @staticmethod
@@ -122,12 +122,14 @@ class ModelManagement:
             provider_name = config.get_provider_name(preset.model, preset=preset)
             if not provider_name:
                 continue
-            fleet.bind_offering(offering_from_config(
-                config,
-                preset=preset,
-                preset_name=name,
-                provider_name=provider_name,
-            ))
+            fleet.bind_offering(
+                offering_from_config(
+                    config,
+                    preset=preset,
+                    preset_name=name,
+                    provider_name=provider_name,
+                )
+            )
         return fleet
 
     async def fleet_status(self) -> dict[str, object]:
@@ -199,7 +201,9 @@ class ModelManagement:
         if isinstance(built_in, ProviderConfig):
             return built_in
         for key, value in (config.providers.model_extra or {}).items():
-            if key.replace("-", "_").lower() == normalized.lower() and isinstance(value, ProviderConfig):
+            if key.replace("-", "_").lower() == normalized.lower() and isinstance(
+                value, ProviderConfig
+            ):
                 return value
         return None
 
@@ -207,25 +211,27 @@ class ModelManagement:
     def _update_fleet_profile(config: Config, params: dict[str, Any]) -> None:
         name = str(params.get("name") or "").strip()
         if not name or name == "default" or name not in config.model_presets:
-            raise WebUISettingsError("Unknown named model preset")
+            raise ModelSettingsError("Unknown named model preset")
         current = config.model_presets[name]
         fields = {
-            "offering_id", "fleet_pools", "input_cost_per_million",
-            "output_cost_per_million", "cached_input_cost_per_million",
+            "offering_id",
+            "fleet_pools",
+            "input_cost_per_million",
+            "output_cost_per_million",
+            "cached_input_cost_per_million",
             "max_concurrent_requests",
         }
         updates = {key: params[key] for key in fields if key in params}
-        config.model_presets[name] = ModelPresetConfig.model_validate({
-            **current.model_dump(),
-            **updates,
-        })
+        config.model_presets[name] = ModelPresetConfig.model_validate(
+            {**current.model_dump(), **updates}
+        )
 
     @classmethod
     def _update_fleet_provider(cls, config: Config, params: dict[str, Any]) -> None:
         name = str(params.get("provider") or "").strip()
         current = cls._provider_config(config, name)
         if current is None:
-            raise WebUISettingsError("Unknown provider")
+            raise ModelSettingsError("Unknown provider")
         updates = {
             key: params[key]
             for key in ("max_concurrent_requests", "rate_limit_scope")
@@ -237,11 +243,15 @@ class ModelManagement:
             setattr(config.providers, normalized, validated)
         else:
             matched = next(
-                (key for key in (config.providers.model_extra or {}) if key.replace("-", "_").lower() == normalized.lower()),
+                (
+                    key
+                    for key in (config.providers.model_extra or {})
+                    if key.replace("-", "_").lower() == normalized.lower()
+                ),
                 None,
             )
             if matched is None:
-                raise WebUISettingsError("Unknown provider")
+                raise ModelSettingsError("Unknown provider")
             config.providers.model_extra[matched] = validated
 
     @staticmethod
@@ -263,7 +273,7 @@ class ModelManagement:
         }
         unknown = set(params) - fields
         if unknown:
-            raise WebUISettingsError(f"Unknown Dream setting: {sorted(unknown)[0]}")
+            raise ModelSettingsError(f"Unknown Dream setting: {sorted(unknown)[0]}")
         payload = {**config.agents.defaults.dream.model_dump(), **params}
         config.agents.defaults.dream = type(config.agents.defaults.dream).model_validate(payload)
 
@@ -272,12 +282,12 @@ class ModelManagement:
             if action == "list":
                 return self._catalog(self._load())
             operations = {
-                "roles_update": models.update_subagent_roles,
-                "model_create": models.create_model_configuration,
-                "model_update": models.update_model_configuration,
-                "model_delete": models.delete_model_configuration,
-                "provider_create": models.create_provider_settings,
-                "provider_update": models.update_provider_settings,
+                "roles_update": update_subagent_roles,
+                "model_create": create_model_configuration,
+                "model_update": update_model_configuration,
+                "model_delete": delete_model_configuration,
+                "provider_create": create_provider_settings,
+                "provider_update": update_provider_settings,
             }
             operation = operations.get(action)
             internal_actions = {"fleet_profile_update", "fleet_provider_update", "dream_update"}
@@ -298,7 +308,7 @@ class ModelManagement:
                 elif action in {"model_create", "model_update"}:
                     selected = config.agents.defaults.model_preset
                     fallbacks = list(config.agents.defaults.fallback_models)
-                    cast(Any, operation)(config, query, oauth_status=models.oauth_provider_status)
+                    cast(Any, operation)(config, query)
                     if action == "model_create":
                         config.agents.defaults.model_preset = selected
                         config.agents.defaults.fallback_models = fallbacks
@@ -306,7 +316,11 @@ class ModelManagement:
                     cast(Any, operation)(config, query)
                 return config
 
-            updated = self._store.update(mutate) if self._store is not None else mutate(self.config.model_copy(deep=True))
+            updated = (
+                self._store.update(mutate)
+                if self._store is not None
+                else mutate(self.config.model_copy(deep=True))
+            )
             self.config.model_presets = updated.model_presets
             self.config.providers = updated.providers
             self.config.subagent_roles = updated.subagent_roles
@@ -342,7 +356,7 @@ class ModelManagement:
             )
         try:
             result = await asyncio.to_thread(self._execute, action, params)
-        except WebUISettingsError as exc:
+        except ModelSettingsError as exc:
             message = exc.message if action in {
                 "roles_update",
                 "model_delete",
@@ -352,7 +366,10 @@ class ModelManagement:
             } else "Invalid model/provider settings; check the action fields and provider configuration"
             return {"status": "error", "message": message}
         except Exception:
-            return {"status": "error", "message": "Could not update model settings; check configuration and instance file access"}
+            return {
+                "status": "error",
+                "message": "Could not update model settings; check configuration and instance file access",
+            }
         if action != "list" and result["status"] == "ok" and self._invalidate is not None:
             self._invalidate()
         return result

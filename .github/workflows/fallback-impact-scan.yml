@@ -6,22 +6,113 @@ on:
       - refactor/remove-model-fallback
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  scan:
+  patch-core:
+    if: github.event.head_commit.message == 'chore: run core fallback removal patch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Scan fallback references
+      - name: Remove core model fallback paths
         shell: bash
         run: |
-          set -euo pipefail
-          echo '=== SOURCE / TEST / DOC / WEBUI MATCHES ==='
-          git grep -n -I -E 'fallback|fallback_models|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate' -- . ':!nanobot/web/dist/**' || true
-          echo '=== GENERATED WEB DIST FILES WITH MATCHES ==='
-          git grep -l -I -E 'fallback|fallback_models|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate' -- nanobot/web/dist 2>/dev/null || true
-          echo '=== FALLBACK-NAMED TRACKED PATHS ==='
-          git ls-files | grep -i fallback || true
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+          def span(text, start, end):
+              a = text.index(start)
+              b = text.index(end, a)
+              return text[:a], text[b:]
+
+          # Config schema: remove request-time model fallback configuration.
+          p = 'nanobot/config/schema.py'
+          s = read(p)
+          a, b = span(s, 'class InlineFallbackConfig(Base):', 'class FleetRetentionConfig(Base):')
+          s = a + b
+          s = s.replace('    fallback_models: list[FallbackCandidate] = Field(default_factory=list)\n', '')
+          old = '''        for fallback in self.agents.defaults.fallback_models:\n            if isinstance(fallback, str) and fallback not in self.model_presets:\n                raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")\n'''
+          s = s.replace(old, '')
+          write(p, s)
+
+          # Provider factory: one selected preset -> one provider leaf (Fleet wrapper may remain).
+          p = 'nanobot/providers/factory.py'
+          s = read(p)
+          s = s.replace('from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfig, ProviderConfig\n', 'from nanobot.config.schema import Config, ModelPresetConfig, ProviderConfig\n')
+          s = s.replace('from nanobot.providers.fallback_provider import FallbackProvider\n', '')
+          pre, post = span(s, 'def _inline_fallback_preset(', 'def build_unconfigured_provider_snapshot(')
+          make = '''def make_provider(\n    config: Config,\n    *,\n    preset_name: str | None = None,\n    preset: ModelPresetConfig | None = None,\n    model: str | None = None,\n) -> LLMProvider:\n    """Create the single provider selected by the resolved model runtime."""\n    resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)\n    return _make_provider_core(\n        config,\n        preset=resolved,\n        model=model,\n        preset_name=preset_name,\n    )\n\n\n'''
+          s = pre + make + post
+          start = s.index('def provider_signature(')
+          end = s.index('def build_provider_snapshot(', start)
+          sig = '''def provider_signature(\n    config: Config,\n    *,\n    preset_name: str | None = None,\n    preset: ModelPresetConfig | None = None,\n) -> tuple[object, ...]:\n    """Return config fields that affect the selected provider runtime."""\n    resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)\n    p = config.get_provider(resolved.model, preset=resolved)\n    provider_name = config.get_provider_name(resolved.model, preset=resolved)\n    return (\n        resolved.model,\n        resolved.provider,\n        provider_name,\n        config.get_api_key(resolved.model, preset=resolved),\n        config.get_api_base(resolved.model, preset=resolved),\n        _provider_extra_headers(find_by_name(provider_name) if provider_name else None, p),\n        p.extra_body if p else None,\n        p.api_type if p else "auto",\n        p.extra_query if p else None,\n        getattr(p, "region", None) if p else None,\n        getattr(p, "profile", None) if p else None,\n        resolved.max_tokens,\n        resolved.temperature,\n        resolved.reasoning_effort,\n        resolved.context_window_tokens,\n        resolved.supports_vision,\n        config.system_prompt_for(resolved.model),\n        getattr(p, "proxy", None) if p else None,\n        p.thinking_style if p else None,\n        _fleet_signature(config, resolved, p),\n    )\n\n\n'''
+          s = s[:start] + sig + s[end:]
+          start = s.index('def build_provider_snapshot(')
+          end = s.index('def load_provider_snapshot(', start)
+          snap = '''def build_provider_snapshot(\n    config: Config,\n    *,\n    preset_name: str | None = None,\n    preset: ModelPresetConfig | None = None,\n) -> ProviderSnapshot:\n    resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)\n    selected_preset = config.agents.defaults.model_preset if preset_name is None and preset is None else preset_name\n    return ProviderSnapshot(\n        provider=make_provider(\n            config,\n            preset=resolved,\n            preset_name=selected_preset,\n        ),\n        model=resolved.model,\n        context_window_tokens=resolved.context_window_tokens,\n        signature=provider_signature(config, preset=resolved),\n        generation=resolved.to_generation_settings(),\n        model_preset=selected_preset,\n        supports_vision=resolved.supports_vision,\n        system_prompt_prefix=config.system_prompt_for(resolved.model),\n    )\n\n\n'''
+          s = s[:start] + snap + s[end:]
+          start = s.index('def load_provider_snapshot(')
+          load = '''def load_provider_snapshot(\n    config_path: Path | None = None,\n    *,\n    preset_name: str | None = None,\n    preset: ModelPresetConfig | None = None,\n) -> ProviderSnapshot:\n    from nanobot.config.loader import load_config, resolve_config_env_vars\n\n    return build_provider_snapshot(\n        resolve_config_env_vars(load_config(config_path), config_path=config_path),\n        preset_name=preset_name,\n        preset=preset,\n    )\n'''
+          s = s[:start] + load
+          write(p, s)
+
+          # Runtime resolver: fallback policy disappears from selection API/cache identity.
+          p = 'nanobot/agent/model_runtime.py'
+          s = read(p)
+          s = s.replace('self._resolved_presets: dict[tuple[str, bool], LLMRuntime] = {}', 'self._resolved_presets: dict[str, LLMRuntime] = {}')
+          s = s.replace('        include_fallbacks: bool = True,\n', '')
+          s = s.replace('                include_fallbacks=include_fallbacks,\n', '')
+          s = s.replace('            include_fallbacks=include_fallbacks,\n', '')
+          s = s.replace('        cache_key = (normalized, include_fallbacks)\n', '        cache_key = normalized\n')
+          s = s.replace('        snapshot = self._provider_snapshot_loader(include_fallbacks=True)\n', '        snapshot = self._provider_snapshot_loader()\n')
+          s = s.replace('                include_fallbacks=True,\n', '')
+          write(p, s)
+
+          # Agent loop snapshot construction.
+          p = 'nanobot/agent/loop.py'
+          s = read(p).replace('provider_snapshot_loader(include_fallbacks=True)', 'provider_snapshot_loader()').replace('build_provider_snapshot(config, include_fallbacks=True)', 'build_provider_snapshot(config)')
+          write(p, s)
+
+          # Dream continues choosing a preset before the request; no runtime fallback flag exists.
+          p = 'nanobot/agent/model_management.py'
+          s = read(p)
+          s = s.replace('            include_fallbacks=False,\n', '')
+          s = s.replace('''                elif action in {"model_create", "model_update"}:\n                    selected = config.agents.defaults.model_preset\n                    fallbacks = list(config.agents.defaults.fallback_models)\n                    cast(Any, operation)(config, query)\n                    if action == "model_create":\n                        config.agents.defaults.model_preset = selected\n                        config.agents.defaults.fallback_models = fallbacks\n''', '''                elif action in {"model_create", "model_update"}:\n                    selected = config.agents.defaults.model_preset\n                    cast(Any, operation)(config, query)\n                    if action == "model_create":\n                        config.agents.defaults.model_preset = selected\n''')
+          s = s.replace('            self.config.agents.defaults.fallback_models = updated.agents.defaults.fallback_models\n', '')
+          write(p, s)
+
+          # Gateway: remove transparent fallback observer wiring; usage observer stays on the one provider.
+          p = 'nanobot/cli/gateway_runtime.py'
+          s = read(p)
+          s = s.replace('    from nanobot.providers.fallback_provider import FallbackProvider\n', '')
+          s = s.replace('        build_webui_fallback_model_observer,\n', '')
+          s = s.replace('    fallback_model_observer = build_webui_fallback_model_observer(bus)\n\n', '')
+          s = s.replace('        if isinstance(snapshot.provider, FallbackProvider):\n            snapshot.provider.set_fallback_model_observer(fallback_model_observer)\n', '')
+          write(p, s)
+
+          # CLI wizard: remove fallback model field management.
+          p = 'nanobot/cli/onboard.py'
+          s = read(p)
+          a, b = span(s, 'def _handle_fallback_models_field(', 'def _handle_search_provider_field(')
+          s = a + b
+          s = s.replace('    "fallback_models": _handle_fallback_models_field,\n', '')
+          write(p, s)
+
+          # Fleet wrapper docs no longer imply it sits under FallbackProvider.
+          p = 'nanobot/providers/fleet_controlled_provider.py'
+          s = read(p).replace('    the base retry policy sleeps. FallbackProvider can therefore wrap these\n    leaves and each fallback route keeps its own fleet identity.\n', '    the base provider retry policy sleeps. Runtime selection remains outside\n    this wrapper, so one request stays on one selected provider/model route.\n')
+          write(p, s)
+          PY
+          git status --short
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add nanobot
+          git commit -m 'refactor: remove core model fallback path'
+          git push origin HEAD:refactor/remove-model-fallback

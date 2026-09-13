@@ -36,6 +36,9 @@ def build_work_role_definition(
     description = _nonempty(description, "description")
     system_prompt = _nonempty(system_prompt, "system_prompt")
     requested_tools = tuple(tools if tools is not None else general.get("tools", ()))
+    # Milestone reporting is task transport metadata rather than execution
+    # authority, so it remains available even on a narrowly scoped WorkAgent.
+    requested_tools = tuple(dict.fromkeys((*requested_tools, "report_progress")))
     unknown = set(requested_tools) - ALL_SUBAGENT_TOOL_NAMES
     if "subagent" in requested_tools:
         unknown.add("subagent")

@@ -82,7 +82,7 @@ async def test_subagent_tool_dispatches_non_persistent_work_agent(tmp_path, monk
     assert role_definition.category == "work"
     assert role_definition.source == "ephemeral"
     assert role_definition.system_prompt == "Inspect the assigned failure and return evidence only."
-    assert set(role_definition.tools) == {"read_file", "exec"}
+    assert set(role_definition.tools) == {"read_file", "exec", "report_progress"}
     assert role_usage(tmp_path, "general") == {}
     assert role_usage(tmp_path, "work") == {}
 

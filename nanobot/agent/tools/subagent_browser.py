@@ -2,7 +2,8 @@
 
 The Browser implementation remains in ``browser.py``. This module only exposes
 that same tool family to ToolLoader's ``subagent`` scope and supplies the parent
-message bus so human handoff notifications can reach the originating user.
+message bus so human handoff and progress notifications can reach the originating
+user.
 """
 
 from __future__ import annotations
@@ -40,15 +41,40 @@ def _workspace_key(workspace: str | Path) -> str:
 
 
 def bind_subagent_browser_bus(workspace: str | Path, bus: MessageBus) -> None:
-    """Bind the stable agent workspace to the bus used for handoff notices."""
+    """Bind the stable agent workspace to the bus used for child notifications."""
     _BUSES[_workspace_key(workspace)] = bus
+
+
+def subagent_bus_for_workspace(workspace: str | Path) -> MessageBus | None:
+    """Return the parent bus bound to a subagent workspace, when available."""
+    key = _workspace_key(workspace)
+    if bus := _BUSES.get(key):
+        return bus
+
+    path = Path(key)
+    matches: list[tuple[int, MessageBus]] = []
+    for root, candidate in _BUSES.items():
+        try:
+            path.relative_to(Path(root))
+        except ValueError:
+            continue
+        matches.append((len(root), candidate))
+    if matches:
+        return max(matches, key=lambda item: item[0])[1]
+
+    # One AgentLoop/MessageBus per process is the normal runtime shape. Host-admin
+    # project scopes may point outside the stable agent workspace, so preserve
+    # that route without making multi-bus processes guess between candidates.
+    if len(_BUSES) == 1:
+        return next(iter(_BUSES.values()))
+    return None
 
 
 def _runtime(ctx: ToolContext) -> browser_tools._BrowserRuntime:  # pyright: ignore[reportPrivateUsage]
     return browser_tools._BrowserRuntime(  # pyright: ignore[reportPrivateUsage]
         browser_tools.BrowserRuntimeConfig.from_env(),
         ctx.workspace,
-        ctx.bus or _BUSES.get(_workspace_key(ctx.workspace)),
+        ctx.bus or subagent_bus_for_workspace(ctx.workspace),
     )
 
 

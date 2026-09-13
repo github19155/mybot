@@ -8,19 +8,20 @@ permissions:
   contents: write
 
 jobs:
-  migrate-tests:
+  migrate-docs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply test migration
+      - name: Apply docs migration
         run: |
-          python scripts/update_model_fallback_tests.py
-          python -m compileall -q tests
+          python scripts/update_model_fallback_docs.py
           git diff --check
+          echo '=== CURRENT DOC MODEL-FALLBACK REFERENCES ==='
+          git grep -n -I -E 'fallbackModels|fallback_models|FallbackProvider|model fallback|fallback model|fallback chains|Fallback Models|Fallback Presets' -- README.md docs || true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add tests
-          git commit -m 'test: align coverage with single model runtime'
+          git add README.md docs
+          git commit -m 'docs: remove model fallback configuration'
           git push origin HEAD:refactor/remove-model-fallback

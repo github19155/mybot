@@ -80,7 +80,9 @@ def test_custom_specialist_is_resolved_only_from_config(tmp_path) -> None:
 
     assert role.source == "config"
     assert role.category == "specialist"
-    assert set(role.tools) == {"read_file", "exec", "browser_status"}
+    assert set(role.tools) == {
+        "read_file", "exec", "browser_status", "report_progress"
+    }
     assert config.subagent_roles["release-triage"].tools == [
         "read_file", "exec", "browser_status"
     ]
@@ -120,7 +122,8 @@ def test_role_store_is_single_persistent_specialist_authority(tmp_path) -> None:
         "tools": ["read_file"],
     })
     assert created["source"] == "config"
-    assert created["tools"] == ["read_file"]
+    assert created["tools"] == ["read_file", "report_progress"]
+    assert config.subagent_roles["release-triage"].tools == ["read_file"]
 
     updated = store.update("release-triage", {
         "system_prompt": "Check release readiness and test evidence.",
@@ -128,7 +131,7 @@ def test_role_store_is_single_persistent_specialist_authority(tmp_path) -> None:
     })
     assert updated["source"] == "config"
     assert config.subagent_roles["release-triage"].tools == ["read_file", "exec"]
-    assert updated["tools"] == ["read_file", "exec"]
+    assert updated["tools"] == ["read_file", "exec", "report_progress"]
 
     deleted = store.delete("release-triage")
     assert deleted == {"name": "release-triage", "deleted": True}

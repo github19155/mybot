@@ -22,6 +22,8 @@ from nanobot.permission_types import (
 
 
 class _WriteTool(Tool):
+    _scopes = {"core", "orchestrator"}
+
     @property
     def name(self) -> str:
         return "write_file"
@@ -39,6 +41,8 @@ class _WriteTool(Tool):
 
 
 class _ReadTool(Tool):
+    _scopes = {"core", "orchestrator"}
+
     @property
     def name(self) -> str:
         return "read_file"
@@ -137,4 +141,3 @@ def test_registry_subset_preserves_permission_authority() -> None:
     assert subset.get_definitions() == []
     _tool, _params, error = subset.prepare_call("write_file", {})
     assert error is not None and "permission denied" in error
-

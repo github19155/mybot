@@ -1,5 +1,13 @@
 # Tool Usage Notes
 
+## Main / Subagent Boundary
+
+- Main handles conversation, decisions, delegation, coordination, and final synthesis.
+- Delegate filesystem, shell, web, browser, code changes, builds, and tests to `subagent`.
+- Main does not call worker-only tools directly, even when they exist in the internal registry.
+- Main may make at most two valid orchestration tool calls per user turn.
+- Use `subagent`; the old `spawn` interface is removed.
+
 ## General Tool Contract
 
 - Use the narrowest structured tool that directly matches the task.
@@ -85,7 +93,7 @@
 - Route workers in three lanes: prefer a matching configured Specialist; with `role` omitted, any explicit per-run override means ephemeral WorkAgent; with `role` omitted and no override, use permanent `general`. Use `role.list` to discover persistent roles.
 - WorkAgent is task-scoped only: no role persistence or role-usage telemetry. It reuses the normal Subagent runtime/lifecycle and disappears after the task.
 - WorkAgent does not inherit General's persistent prompt/model/generation tuning; unspecified runtime settings inherit Main. Model-specific Prompt Prefix remains global for Main/General/WorkAgent/Specialist.
-- Use `wait=true` only for short child work needed before the current turn can proceed. Main may execute short interactive work directly.
+- Use `wait=true` only for short child work needed before the current turn can proceed. Main still delegates execution instead of using worker-only tools directly.
 - Persistent Specialists are config-owned. Dream may propose Specialist candidates but cannot create, update, activate, disable, or delete roles.
 - High-impact Specialist creation or capability expansion requires explicit User approval. Permanent `general` cannot be deleted or disabled.
 - Browser is a worker capability, not a Browser Agent. Do not run parallel browser workers against the same persistent Chromium/profile.

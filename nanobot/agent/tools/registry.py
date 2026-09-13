@@ -7,12 +7,16 @@ from collections.abc import Iterable
 from copy import copy
 from typing import TYPE_CHECKING, Any, cast
 
+from nanobot.agent.permissions import MAIN_SUBJECT
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import ContextAware, current_request_context
 
 if TYPE_CHECKING:
     from nanobot.agent.permissions import PermissionManager
     from nanobot.runtime_context import RuntimeContextProvider
+
+_MAIN_TOOL_CALL_BUDGET = 2
+_MAIN_TOOL_CALL_COUNT_ATTR = "_main_orchestrator_tool_calls"
 
 
 def is_tool_error_result(result: Any) -> bool:
@@ -69,6 +73,29 @@ class ToolRegistry:
             f"Error: permission denied for tool {name!r} "
             f"(subject={self.permission_subject!r}, capability={capability!r})"
         ))
+
+    def _main_tool_call_count(self) -> int:
+        if self.permission_subject != MAIN_SUBJECT:
+            return 0
+        request = current_request_context()
+        if request is None:
+            return 0
+        value = request.attributes.get(_MAIN_TOOL_CALL_COUNT_ATTR, 0)
+        return value if isinstance(value, int) and value >= 0 else 0
+
+    def _main_tool_budget_exhausted(self) -> bool:
+        return (
+            self.permission_subject == MAIN_SUBJECT
+            and self._main_tool_call_count() >= _MAIN_TOOL_CALL_BUDGET
+        )
+
+    def _consume_main_tool_call(self) -> None:
+        if self.permission_subject != MAIN_SUBJECT:
+            return
+        request = current_request_context()
+        if request is None:
+            return
+        request.attributes[_MAIN_TOOL_CALL_COUNT_ATTR] = self._main_tool_call_count() + 1
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""
@@ -131,8 +158,11 @@ class ToolRegistry:
 
         Built-in tools are sorted first as a stable prefix, then MCP tools are
         sorted and appended. The result is cached until the next
-        register/unregister call.
+        register/unregister call. Main stops advertising tools after its small
+        per-turn orchestration budget is consumed, forcing a user-visible reply.
         """
+        if self._main_tool_budget_exhausted():
+            return []
         if self._cached_definitions is None:
             definitions = [
                 tool.to_schema()
@@ -194,6 +224,12 @@ class ToolRegistry:
             return tool, cast_params, (
                 ToolResult.error(f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors))
             )
+        if self._main_tool_budget_exhausted():
+            return None, cast_params, str(ToolResult.error(
+                "Error: Main orchestration tool budget exhausted for this turn. "
+                "Respond to the user now; delegate further execution to a subagent on a later turn."
+            ))
+        self._consume_main_tool_call()
         return tool, cast_params, None
 
     @classmethod

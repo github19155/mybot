@@ -29,3 +29,12 @@ def test_subagent_description_reserves_wait_for_near_instant_work() -> None:
     assert "Main is async-first" in tool.description
     assert "normal delegated work should run with wait=false" in tool.description
     assert "wait=true only for trivial near-instant child work" in tool.description
+
+
+def test_subagent_prompt_defines_semantic_milestones() -> None:
+    prompt = Path("nanobot/templates/agent/subagent_system.md").read_text(encoding="utf-8")
+
+    assert "report_progress" in prompt
+    assert "meaningful stages" in prompt
+    assert "no more than three milestones" in prompt
+    assert "final response remains separate" in prompt

@@ -9,69 +9,62 @@ permissions:
 
 jobs:
   apply-final:
-    if: "${{ github.event.head_commit.message == 'fix final targeted fallback checks' }}"
+    if: "${{ github.event.head_commit.message == 'clean final call order remnants' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Fix final targeted checks
+      - name: Remove final call-order remnants
         run: |
           python - <<'PY'
           from pathlib import Path
+          import json
 
-          path = Path('tests/webui/test_settings_api.py')
+          path = Path('webui/src/tests/app-layout.test.tsx')
           text = path.read_text()
-          replacements = [
-              (
-                  'def test_create_model_configuration_accepts_legacy_label_without_changing_call_order(',
-                  'def test_create_model_configuration_activates_first_named_preset(',
-              ),
-              (
-                  '    assert payload["agent"]["model_preset"] == "default"\n'
-                  '    assert payload["agent"]["model"] == "openai/gpt-4o"\n',
-                  '    assert payload["agent"]["model_preset"] == "fast-writing"\n'
-                  '    assert payload["agent"]["model"] == "openai/gpt-4.1-mini"\n',
-              ),
-              (
-                  '    assert saved.agents.defaults.model_preset is None\n'
-                  '    assert saved.model_presets["fast-writing"].model == "openai/gpt-4.1-mini"\n',
-                  '    assert saved.agents.defaults.model_preset == "fast-writing"\n'
-                  '    assert saved.model_presets["fast-writing"].model == "openai/gpt-4.1-mini"\n',
-              ),
-          ]
-          for old, new in replacements:
-              if text.count(old) != 1:
-                  raise SystemExit(f'unexpected test_settings_api match count for {old!r}: {text.count(old)}')
-              text = text.replace(old, new, 1)
-          text = text.replace('\n\n\n\ndef test_create_model_configuration_preserves_canonical_name', '\n\ndef test_create_model_configuration_preserves_canonical_name', 1)
-          path.write_text(text)
-
-          path = Path('webui/src/components/settings/models/ModelsSettings.tsx')
-          text = path.read_text()
-          old = '              saving ||\n              orderSaving\n'
-          new = '              saving ||\n              selectionSaving\n'
+          text = text.replace('    expect(screen.queryByText("Model call order")).not.toBeInTheDocument();\n', '')
+          old = 'screen.getByTestId("model-call-order-row-primary")'
           if text.count(old) != 1:
-              raise SystemExit(f'unexpected ModelsSettings match count: {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
+              raise SystemExit(f'unexpected app-layout selector count: {text.count(old)}')
+          path.write_text(text.replace(old, 'screen.getByTestId("model-preset-row-primary")', 1))
 
-          path = Path('webui/src/tests/settings-models.test.tsx')
+          path = Path('webui/src/tests/thread-shell.test.tsx')
           text = path.read_text()
-          old = 'Remove this preset from the call order before deleting it.'
-          new = 'Select another preset before deleting this one.'
+          old = 'it("switches through every named preset while preserving call-order priority", async () => {'
           if text.count(old) != 1:
-              raise SystemExit(f'unexpected settings-models text match count: {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
+              raise SystemExit(f'unexpected thread-shell title count: {text.count(old)}')
+          path.write_text(text.replace(old, 'it("switches through every named preset while keeping the active preset first", async () => {', 1))
+
+          obsolete = {
+              'callOrder', 'primary', 'fallbackNumber', 'addToOrder',
+              'convertTitle', 'convertHelp', 'converting', 'convertAction',
+              'dragToReorder', 'moveUp', 'moveDown', 'removeFromOrder',
+              'inCallOrder', 'disabled', 'noPresets', 'noPresetsHelp',
+          }
+          for path in Path('webui/src/i18n/locales').glob('*/common.json'):
+              lines = path.read_text().splitlines(True)
+              kept = []
+              for line in lines:
+                  stripped = line.lstrip()
+                  if any(stripped.startswith(f'"{key}":') for key in obsolete):
+                      continue
+                  kept.append(line)
+              path.write_text(''.join(kept))
+              json.loads(path.read_text())
           PY
-      - name: Verify and commit fixes
+      - name: Verify and commit cleanup
         run: |
           set -euo pipefail
           git diff --check
-          python -m compileall -q tests
+          if grep -R -n -I -i -E 'call order|model-call-order|call-order|"callOrder"|"inCallOrder"|"fallbackNumber"|"addToOrder"|"convertTitle"|"convertHelp"|"dragToReorder"|"removeFromOrder"|"noPresetsHelp"' webui/src nanobot tests docs README.md; then
+            echo 'legacy call-order residue remains'
+            exit 1
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add webui tests
-          git commit -m 'test: align model preset checks with single runtime'
+          git add webui/src
+          git commit -m 'chore: remove model call-order remnants'
           git push origin HEAD:refactor/remove-model-fallback
 
   python-targeted:

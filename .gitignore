@@ -16,6 +16,7 @@ webui/node_modules/
 webui/dist/
 webui/coverage/
 webui/.vite/
+nanobot/web/dist/
 tui/node_modules/
 tui/dist/
 *.tsbuildinfo

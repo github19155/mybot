@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from nanobot.agent.tools.subagent import SubagentTool, _SUBAGENT_PARAMETERS
+from nanobot.agent.tools.subagent import _SUBAGENT_PARAMETERS, SubagentTool
 
 
 def test_main_tool_contract_is_async_first() -> None:

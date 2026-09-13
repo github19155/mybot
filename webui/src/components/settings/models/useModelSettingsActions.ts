@@ -52,6 +52,16 @@ function isProviderOAuthPending(
   return (payload as ProviderOAuthPending).status === "pending";
 }
 
+function presetSupportsImageGeneration(
+  preset: SettingsPayload["model_presets"][number],
+): boolean {
+  return (
+    preset as SettingsPayload["model_presets"][number] & {
+      supports_image_generation?: boolean;
+    }
+  ).supports_image_generation === true;
+}
+
 interface ModelSettingsActionsOptions {
   state: ModelSettingsState;
   settings: SettingsPayload | null;
@@ -202,6 +212,7 @@ export function useModelSettingsActions({
           temperature: form.temperature,
           reasoningEffort: form.reasoningEffort || null,
           supportsVision: form.supportsVision,
+          supportsImageGeneration: form.supportsImageGeneration,
         });
         const createdPreset = payload.created_model_preset;
         const nextOrder = createdPreset ? [...modelCallOrder, createdPreset] : null;
@@ -266,6 +277,10 @@ export function useModelSettingsActions({
           reasoningEffort !== selectedPreset.reasoning_effort ? reasoningEffort : undefined,
         supportsVision:
           form.supportsVision !== (selectedPreset.supports_vision === true) ? form.supportsVision : undefined,
+        supportsImageGeneration:
+          form.supportsImageGeneration !== presetSupportsImageGeneration(selectedPreset)
+            ? form.supportsImageGeneration
+            : undefined,
       });
       applyPayload(payload);
       setForm(agentDraftFromPayload(payload, nextName));
@@ -306,6 +321,7 @@ export function useModelSettingsActions({
       temperature: primaryPreset?.temperature ?? settings.agent.temperature,
       reasoningEffort: primaryPreset?.reasoning_effort ?? settings.agent.reasoning_effort ?? "",
       supportsVision: false,
+      supportsImageGeneration: false,
     }));
     setModelPresetCreating(true);
   };

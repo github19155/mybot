@@ -58,6 +58,13 @@ const SLASH_COMMAND_LIFECYCLES = new Set<SlashCommandLifecycle>([
   "agent_turn_with_args",
 ]);
 
+type ModelConfigurationCreateWithCapabilities = ModelConfigurationCreate & {
+  supportsImageGeneration?: boolean;
+};
+type ModelConfigurationUpdateWithCapabilities = ModelConfigurationUpdate & {
+  supportsImageGeneration?: boolean;
+};
+
 function isSlashCommandLifecycle(value: unknown): value is SlashCommandLifecycle {
   return (
     typeof value === "string"
@@ -920,8 +927,13 @@ export async function updateSettings(
 
 function modelGenerationSettingsPayload(
   configuration: Pick<
-    ModelConfigurationCreate,
-    "maxTokens" | "contextWindowTokens" | "temperature" | "reasoningEffort" | "supportsVision"
+    ModelConfigurationCreateWithCapabilities,
+    | "maxTokens"
+    | "contextWindowTokens"
+    | "temperature"
+    | "reasoningEffort"
+    | "supportsVision"
+    | "supportsImageGeneration"
   >,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
@@ -940,12 +952,15 @@ function modelGenerationSettingsPayload(
   if (configuration.supportsVision !== undefined) {
     payload.supports_vision = configuration.supportsVision;
   }
+  if (configuration.supportsImageGeneration !== undefined) {
+    payload.supports_image_generation = configuration.supportsImageGeneration;
+  }
   return payload;
 }
 
 export async function createModelConfiguration(
   transport: WebUIMutationTransport,
-  configuration: ModelConfigurationCreate,
+  configuration: ModelConfigurationCreateWithCapabilities,
 ): Promise<SettingsPayload> {
   return mutation<SettingsPayload>(
     transport,
@@ -961,7 +976,7 @@ export async function createModelConfiguration(
 
 export async function updateModelConfiguration(
   transport: WebUIMutationTransport,
-  configuration: ModelConfigurationUpdate,
+  configuration: ModelConfigurationUpdateWithCapabilities,
 ): Promise<SettingsPayload> {
   return mutation<SettingsPayload>(
     transport,

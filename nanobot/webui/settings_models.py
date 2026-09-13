@@ -1083,6 +1083,7 @@ def model_settings_payload(
             "temperature": defaults.temperature,
             "reasoning_effort": defaults.reasoning_effort,
             "supports_vision": defaults.supports_vision,
+            "supports_image_generation": False,
             "reasoning_effort_values": reasoning_effort_values_for(
                 config.get_provider_name(
                     defaults.model,
@@ -1111,6 +1112,7 @@ def model_settings_payload(
                 "temperature": preset.temperature,
                 "reasoning_effort": preset.reasoning_effort,
                 "supports_vision": preset.supports_vision,
+                "supports_image_generation": preset.supports_image_generation,
                 "reasoning_effort_values": reasoning_effort_values_for(
                     resolved_preset_provider,
                     preset.model,
@@ -1292,10 +1294,21 @@ def create_model_configuration(
     temperature = _parse_temperature(query_first(query, "temperature"))
     reasoning_effort = base.reasoning_effort
     supports_vision = base.supports_vision
+    supports_image_generation = base.supports_image_generation
     if query_has_alias(query, "supports_vision", "supportsVision"):
         supports_vision = parse_bool(
             query_first_alias(query, "supports_vision", "supportsVision") or "",
             "supports_vision",
+        )
+    if query_has_alias(query, "supports_image_generation", "supportsImageGeneration"):
+        supports_image_generation = parse_bool(
+            query_first_alias(
+                query,
+                "supports_image_generation",
+                "supportsImageGeneration",
+            )
+            or "",
+            "supports_image_generation",
         )
     if "reasoning_effort" in query or "reasoningEffort" in query:
         reasoning_effort = (
@@ -1313,6 +1326,7 @@ def create_model_configuration(
         temperature=temperature if temperature is not None else base.temperature,
         reasoning_effort=reasoning_effort,
         supports_vision=supports_vision,
+        supports_image_generation=supports_image_generation,
     )
     if activate_as_primary:
         config.agents.defaults.model_preset = name
@@ -1392,6 +1406,20 @@ def update_model_configuration(
         )
         if preset.supports_vision != supports_vision:
             preset.supports_vision = supports_vision
+            changed = True
+
+    if query_has_alias(query, "supports_image_generation", "supportsImageGeneration"):
+        supports_image_generation = parse_bool(
+            query_first_alias(
+                query,
+                "supports_image_generation",
+                "supportsImageGeneration",
+            )
+            or "",
+            "supports_image_generation",
+        )
+        if preset.supports_image_generation != supports_image_generation:
+            preset.supports_image_generation = supports_image_generation
             changed = True
 
     if "reasoning_effort" in query or "reasoningEffort" in query:
@@ -1529,6 +1557,7 @@ def migrate_model_configurations(
             temperature=primary.temperature,
             reasoning_effort=primary.reasoning_effort,
             supports_vision=primary.supports_vision,
+            supports_image_generation=primary.supports_image_generation,
         )
         defaults.model_preset = name
         created.append(name)

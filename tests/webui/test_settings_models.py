@@ -7,9 +7,11 @@ import pytest
 from nanobot.config.schema import Config, ModelPresetConfig
 from nanobot.webui.settings_contracts import WebUISettingsError
 from nanobot.webui.settings_models import (
+    create_model_configuration,
     delete_model_configuration,
     model_settings_payload,
     update_agent_model_settings,
+    update_model_configuration,
     update_provider_settings,
 )
 
@@ -55,7 +57,6 @@ def test_model_domain_owns_dto_and_config_updates() -> None:
     assert payload["agent"]["model"] == "openai/gpt-5.4"
 
 
-
 def test_model_settings_configure_vision_fallback() -> None:
     config = Config()
     config.model_presets["vision"] = ModelPresetConfig(
@@ -99,3 +100,47 @@ def test_model_preset_delete_rejects_configured_image_fallback() -> None:
 
     with pytest.raises(WebUISettingsError, match="image analysis model preset"):
         delete_model_configuration(config, {"name": ["vision"]})
+
+
+def test_model_settings_payload_exposes_image_generation_capability() -> None:
+    config = Config()
+    config.model_presets["image"] = ModelPresetConfig(
+        model="openai/gpt-5.4-image-2",
+        provider="auto",
+        supports_image_generation=True,
+    )
+
+    payload = model_settings_payload(config, oauth_status=_oauth_status)
+    image_preset = next(row for row in payload["model_presets"] if row["name"] == "image")
+
+    assert image_preset["supports_image_generation"] is True
+
+
+def test_model_configuration_create_and_update_image_generation_capability() -> None:
+    config = Config()
+
+    name = create_model_configuration(
+        config,
+        {
+            "name": ["image"],
+            "model": ["openai/gpt-5.4-image-2"],
+            "provider": ["auto"],
+            "supportsImageGeneration": ["true"],
+        },
+        oauth_status=_oauth_status,
+    )
+
+    assert name == "image"
+    assert config.model_presets["image"].supports_image_generation is True
+
+    changed = update_model_configuration(
+        config,
+        {
+            "name": ["image"],
+            "supports_image_generation": ["false"],
+        },
+        oauth_status=_oauth_status,
+    )
+
+    assert changed is True
+    assert config.model_presets["image"].supports_image_generation is False

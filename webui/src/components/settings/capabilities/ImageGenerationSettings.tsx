@@ -18,6 +18,11 @@ import type { ImageGenerationSettingsUpdate, SettingsPayload } from "@/lib/types
 const IMAGE_ASPECT_RATIO_OPTIONS = ["1:1", "3:4", "9:16", "4:3", "16:9", "3:2", "2:3", "21:9"];
 const IMAGE_SIZE_OPTIONS = ["1K", "2K", "4K", "1024x1024", "1536x1024", "1024x1536"];
 
+type ImageGenerationPreset = SettingsPayload["model_presets"][number] & {
+  supports_image_generation?: boolean;
+  image_provider: string;
+};
+
 export const DEFAULT_IMAGE_GENERATION_FORM: ImageGenerationSettingsUpdate = {
   enabled: false,
   provider: "openrouter",
@@ -70,6 +75,31 @@ export function ImageGenerationSettings({
   const selectedProvider =
     settings.image_generation.providers.find((provider) => provider.name === form.provider) ??
     settings.image_generation.providers[0];
+  const imageProviderNames = new Set(
+    settings.image_generation.providers.map((provider) => provider.name),
+  );
+  const imageGenerationPresets: ImageGenerationPreset[] = settings.model_presets.flatMap((preset) => {
+    const supportsImageGeneration = (
+      preset as SettingsPayload["model_presets"][number] & {
+        supports_image_generation?: boolean;
+      }
+    ).supports_image_generation === true;
+    if (!supportsImageGeneration || preset.is_default) return [];
+    const imageProvider = preset.provider === "auto"
+      ? preset.resolved_provider ?? ""
+      : preset.provider;
+    if (!imageProvider || !imageProviderNames.has(imageProvider)) return [];
+    return [{ ...preset, supports_image_generation: true, image_provider: imageProvider }];
+  });
+  const selectedImagePreset = imageGenerationPresets.find(
+    (preset) => preset.image_provider === form.provider && preset.model === form.model,
+  ) ?? null;
+  const imageModelOptions = Array.from(new Set([
+    ...imageGenerationPresets
+      .filter((preset) => preset.image_provider === form.provider)
+      .map((preset) => preset.model),
+    ...(selectedProvider?.models ?? []),
+  ]));
   const providerConfigured = !!selectedProvider?.configured;
   const missingCredential = form.enabled && !providerConfigured;
   const aspectOptions = optionRowsWithCurrent(
@@ -86,6 +116,16 @@ export function ImageGenerationSettings({
       ...prev,
       provider,
       model: nextProvider?.default_model || nextProvider?.models?.[0] || prev.model,
+    }));
+  };
+  const selectImagePreset = (name: string) => {
+    if (!name) return;
+    const preset = imageGenerationPresets.find((row) => row.name === name);
+    if (!preset) return;
+    onChangeForm((prev) => ({
+      ...prev,
+      provider: preset.image_provider,
+      model: preset.model,
     }));
   };
 
@@ -139,12 +179,35 @@ export function ImageGenerationSettings({
       <section>
         <SettingsSectionTitle>{tx("settings.sections.imageDefaults", "Defaults")}</SettingsSectionTitle>
         <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.rows.imageModelPreset", "Image model preset")}
+            description={tx(
+              "settings.help.imageModelPreset",
+              "Presets marked as image-generation capable select their provider and model together. Custom model IDs remain available below.",
+            )}
+          >
+            <select
+              aria-label={tx("settings.rows.imageModelPreset", "Image model preset")}
+              value={selectedImagePreset?.name ?? ""}
+              onChange={(event) => selectImagePreset(event.target.value)}
+              className="h-9 max-w-[360px] rounded-control border border-input bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">
+                {tx("settings.image.customModel", "Custom / provider model")}
+              </option>
+              {imageGenerationPresets.map((preset) => (
+                <option key={preset.name} value={preset.name}>
+                  {preset.name} — {preset.model}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
           <SettingsRow title={tx("settings.rows.imageModel", "Image model")}>
             <ModelIdPicker
               token={token}
               settings={settings}
               provider={form.provider}
-              models={selectedProvider?.models ?? []}
+              models={imageModelOptions}
               value={form.model}
               showProviderLogos={showBrandLogos}
               emptyLabel={tx("settings.image.selectModel", "Select image model")}

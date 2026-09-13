@@ -1,4 +1,4 @@
-name: Temporary core patch
+name: Temporary fallback development
 
 on:
   push:
@@ -8,26 +8,22 @@ permissions:
   contents: write
 
 jobs:
-  apply:
+  develop:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply when triggered
+      - name: Inspect when triggered
         shell: bash
         run: |
           set -euo pipefail
           message="$(git log -1 --pretty=%B)"
-          if [ "$message" != "chore: trigger core fallback removal" ]; then
-            echo "Not the trigger commit; skipping."
+          if [ "$message" != "chore: inspect remaining fallback" ]; then
+            echo "Not the inspect trigger; skipping."
             exit 0
           fi
-          python scripts/remove_model_fallback_core.py
-          git diff --check
-          git status --short
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add nanobot
-          git commit -m 'refactor: remove core model fallback path'
-          git push origin HEAD:refactor/remove-model-fallback
+          echo '=== MODEL FALLBACK RESIDUALS ==='
+          git grep -n -I -E 'fallback_models|fallbackModels|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate|fallback_model_observer|build_webui_fallback_model_observer|fallbackModelName|model_call_order|modelCallOrder|update_model_call_order|onChangeCallOrder|orderSaving|migrationSaving|onMigrate|turn_model_updated' -- . ':!nanobot/web/dist/**' || true
+          echo '=== CALL ORDER REFERENCES ==='
+          git grep -n -I -E 'callOrder|call order|model configuration.*migrat|migrate_model_configurations|migrateModel' -- nanobot webui tests docs README.md || true

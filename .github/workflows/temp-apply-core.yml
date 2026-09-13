@@ -5,23 +5,45 @@ on:
     branches: [refactor/remove-model-fallback]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  migrate-docs:
+  python-targeted:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
-      - name: Apply docs migration
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v4
+      - run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
+      - run: uv sync --all-extras --dev
+      - run: uv run ruff check nanobot tests conftest.py
+      - name: Run affected Python tests
         run: |
-          python scripts/update_model_fallback_docs.py
-          git diff --check
-          echo '=== CURRENT DOC MODEL-FALLBACK REFERENCES ==='
-          git grep -n -I -E 'fallbackModels|fallback_models|FallbackProvider|model fallback|fallback model|fallback chains|Fallback Models|Fallback Presets' -- README.md docs || true
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add README.md docs
-          git commit -m 'docs: remove model fallback configuration'
-          git push origin HEAD:refactor/remove-model-fallback
+          uv run python -m pytest -q \
+            tests/agent/test_model_runtime_resolver.py \
+            tests/agent/test_runtime_refresh.py \
+            tests/agent/test_dream_control_plane.py \
+            tests/agent/test_runtime_resolution_integration.py \
+            tests/agent/test_onboard_logic.py \
+            tests/providers/test_custom_thinking_style.py \
+            tests/providers/test_llm_usage_observer.py \
+            tests/providers/test_provider_retry.py \
+            tests/utils/test_webui_turn_helpers.py \
+            tests/webui/test_settings_api.py \
+            tests/webui/test_settings_routes.py
+  webui-targeted:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run test
+      - run: bun run build

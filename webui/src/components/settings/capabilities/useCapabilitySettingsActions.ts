@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 
 import {
   webSearchProviderAcceptsApiKey,
+  webSearchProviderAcceptsBaseUrl,
   webSearchProviderRequiresApiKey,
 } from "@/components/settings/capabilities/WebSettings";
 import type { CapabilitySettingsState } from "@/components/settings/capabilities/useCapabilitySettingsState";
@@ -160,7 +161,7 @@ export function useCapabilitySettingsActions({
       ) {
         update.apiKey = apiKey;
       }
-      if (provider.credential === "base_url") update.baseUrl = baseUrl;
+      if (webSearchProviderAcceptsBaseUrl(provider)) update.baseUrl = baseUrl;
       const payload = await updateWebSearchSettings(client, update);
       applyPayload(payload);
       if (payload.requires_restart || webFetchRestartRequired) {

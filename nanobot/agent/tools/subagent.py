@@ -87,7 +87,11 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
     ),
     context=StringSchema("History mode", enum=["fresh", "fork"], nullable=True),
     wait=BooleanSchema(
-        description="Wait for the child result; defaults to false",
+        description=(
+            "Block for the child result. Main is async-first: normally leave false and reply to "
+            "the user after dispatch. Use true only for trivial near-instant work when same-turn "
+            "output is essential."
+        ),
         default=False,
     ),
     values={"type": "object", "additionalProperties": True},
@@ -136,13 +140,14 @@ class SubagentTool(Tool):
             "model_preset, thinking, temperature, timeout_seconds, or context) to create a temporary "
             "WorkAgent snapshot that is destroyed after the task and never persisted. "
             "Do not combine WorkAgent identity/tool overrides with a persistent role. Use role.list "
-            "to discover current built-in and config-managed specialists. Default long or "
-            "independent work to run with wait=false, especially installs/downloads, builds, broad "
-            "test suites, environment setup, multi-step debugging, or work likely to take more than "
-            "about 10 seconds. Browser automation is a worker capability, not a separate Agent type. "
-            "Background results are delivered automatically: do not repeatedly poll status or "
-            "sleep-and-check. Use wait=true only for short child work whose result is required before "
-            "the current turn can proceed. Children cannot create children."
+            "to discover current built-in and config-managed specialists. Main is async-first: normal "
+            "delegated work should run with wait=false, including filesystem, shell, web, browser, "
+            "code, build, test, and other multi-step work, even when the eventual answer needs the "
+            "child result. After dispatch, reply to the user promptly; background results are "
+            "delivered automatically, so do not repeatedly poll status or sleep-and-check. Use "
+            "wait=true only for trivial near-instant child work when same-turn output is essential. "
+            "Browser automation is a worker capability, not a separate Agent type. Children cannot "
+            "create children."
         )
 
     @property

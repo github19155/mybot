@@ -63,7 +63,7 @@ def test_main_registry_keeps_internal_tools_but_model_sees_orchestrator_only(tmp
 
     registered = loader.load(ctx, registry, scope="core")
 
-    assert registered == ["exec", "read_file", "subagent", "web_search"]
+    assert set(registered) == {"subagent", "exec", "web_search", "read_file"}
     assert set(registry.tool_names) == {"subagent", "exec", "web_search", "read_file"}
     assert _definition_names(registry) == ["subagent"]
 

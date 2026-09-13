@@ -17,6 +17,22 @@ if TYPE_CHECKING:
 
 _MAIN_TOOL_CALL_BUDGET = 2
 _MAIN_TOOL_CALL_COUNT_ATTR = "_main_orchestrator_tool_calls"
+_MAIN_ORCHESTRATOR_TOOLS = frozenset({
+    "subagent",
+    "message",
+    "context",
+    "my",
+    "model_config",
+    "cron",
+    "create_goal",
+    "update_goal",
+    "list_sessions",
+    "search_sessions",
+    "read_session",
+    "send_session_message",
+    "image_analyze",
+    "generate_image",
+})
 
 
 def is_tool_error_result(result: Any) -> bool:
@@ -62,6 +78,20 @@ class ToolRegistry:
         manager = self.permission_manager
         subject = self.permission_subject
         return manager is None or subject is None or manager.tool_allowed(subject, name)
+
+    def _main_orchestrator_tool_allowed(self, name: str) -> bool:
+        """Keep Main model-facing tools to orchestration/control capabilities only."""
+        if self.permission_subject != MAIN_SUBJECT:
+            return True
+        tool = self.get(name)
+        if tool is None:
+            return False
+        if name in _MAIN_ORCHESTRATOR_TOOLS:
+            return True
+        return "orchestrator" in getattr(tool, "_scopes", set())
+
+    def _model_tool_allowed(self, name: str) -> bool:
+        return self._tool_allowed(name) and self._main_orchestrator_tool_allowed(name)
 
     def _permission_error(self, name: str) -> str | None:
         if self._tool_allowed(name):
@@ -132,7 +162,8 @@ class ToolRegistry:
         matches = [
             registered
             for registered in self._tools
-            if self._lookup_key(registered) == key
+            if self._model_tool_allowed(registered)
+            and self._lookup_key(registered) == key
         ]
         if len(matches) == 1:
             return matches[0]
@@ -154,12 +185,13 @@ class ToolRegistry:
         return name if isinstance(name, str) else ""
 
     def get_definitions(self) -> list[dict[str, Any]]:
-        """Get tool definitions with stable ordering for cache-friendly prompts.
+        """Get model-facing tool definitions with stable ordering.
 
-        Built-in tools are sorted first as a stable prefix, then MCP tools are
-        sorted and appended. The result is cached until the next
-        register/unregister call. Main stops advertising tools after its small
-        per-turn orchestration budget is consumed, forcing a user-visible reply.
+        The internal registry may contain worker tools used by trusted product
+        surfaces (for example explicit user shell execution), but the Main model
+        only sees orchestration/control tools. Subagent registries keep their
+        existing worker tool exposure. Main also stops advertising tools after
+        its small per-turn orchestration budget is consumed.
         """
         if self._main_tool_budget_exhausted():
             return []
@@ -167,7 +199,7 @@ class ToolRegistry:
             definitions = [
                 tool.to_schema()
                 for name, tool in self._tools.items()
-                if self._tool_allowed(name)
+                if self._model_tool_allowed(name)
             ]
             builtins: list[dict[str, Any]] = []
             mcp_tools: list[dict[str, Any]] = []
@@ -189,17 +221,24 @@ class ToolRegistry:
         name: str,
         params: Any,
     ) -> tuple[Tool | None, Any, str | None]:
-        """Resolve, cast, and validate one tool call."""
+        """Resolve, cast, and validate one model tool call."""
+        tool = self.get(name)
+        if tool is not None and not self._main_orchestrator_tool_allowed(name):
+            return None, params, str(ToolResult.error(
+                f"Error: Tool {name!r} is not available to the Main orchestrator. "
+                "Delegate execution to a subagent."
+            ))
+
         permission_error = self._permission_error(name)
         if permission_error:
             return None, params, permission_error
-        tool = self.get(name)
         if not tool:
             suggestion = self._suggest_name(str(name))
             hint = f" Did you mean '{suggestion}'? Tool names must match exactly." if suggestion else ""
+            available = [registered for registered in self._tools if self._model_tool_allowed(registered)]
             return None, params, (
                 ToolResult.error(
-                    f"Error: Tool '{name}' not found.{hint} Available: {', '.join(self.tool_names)}"
+                    f"Error: Tool '{name}' not found.{hint} Available: {', '.join(available)}"
                 )
             )
         # Compatibility for external tools that still implement the legacy
@@ -271,7 +310,7 @@ class ToolRegistry:
         return cls._coerce_argument_value(arguments_payload.get("arguments"))
 
     async def execute(self, name: str, params: Any) -> Any:
-        """Execute a tool by name with given parameters."""
+        """Execute a model tool call by name with given parameters."""
         hint = "\n\n[Analyze the error above and try a different approach.]"
         tool, params, error = self.prepare_call(name, params)
         if error:
@@ -288,7 +327,7 @@ class ToolRegistry:
 
     @property
     def tool_names(self) -> list[str]:
-        """Get list of registered tool names."""
+        """Get list of all internally registered tool names."""
         return list(self._tools.keys())
 
     def __len__(self) -> int:

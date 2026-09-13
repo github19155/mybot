@@ -53,6 +53,18 @@ def _provider_extra_headers(
     return headers or None
 
 
+def _openai_compat_extra_headers(
+    spec: ProviderSpec | None,
+    provider_config: ProviderConfig | None,
+) -> dict[str, str]:
+    """Use a neutral client User-Agent for OpenAI-compatible endpoints."""
+    headers = {"User-Agent": "nanobot"}
+    configured = _provider_extra_headers(spec, provider_config)
+    if configured:
+        headers.update(configured)
+    return headers
+
+
 def _provider_spec_for_config(
     provider_name: str,
     provider_config: ProviderConfig | None,
@@ -214,7 +226,7 @@ def _make_provider_core(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(model, preset=preset),
             default_model=model,
-            extra_headers=_provider_extra_headers(spec, p),
+            extra_headers=_openai_compat_extra_headers(spec, p),
             spec=spec,
             extra_body=p.extra_body if p else None,
             api_type=p.api_type if p and provider_name == "openai" else "auto",

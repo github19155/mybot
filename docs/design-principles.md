@@ -23,7 +23,7 @@ WorkAgent  = one-task ephemeral customization
 Specialist = stable recurring responsibility
 Tools      = capabilities
 Docs       = project knowledge
-Dream      = long-term knowledge + specialist evolution
+Dream      = observation + long-term analysis + proposals
 ```
 
 All worker kinds reuse the same SubagentManager/runtime lifecycle. WorkAgent must not become a second Agent framework.
@@ -57,15 +57,15 @@ Do not create a new Agent type merely because a capability exists. Browser is th
 
 Keep Specialist capability sets narrow enough to match responsibility. A future server-management responsibility may justify a Specialist role with controlled tools, but not an independent Agent architecture solely because new tools were added.
 
-## 4. Dream may evolve Specialists; the user governs deletion
+## 4. Dream proposes Specialist evolution; execution remains governed
 
-Repeated task patterns may justify a new Specialist. Dream may create and later refine its own Specialist roles when repeated independent evidence shows that a narrower responsibility, prompt, tool set, or runtime profile is useful.
+Repeated task patterns may justify a new Specialist. Dream may observe durable evidence and propose creating or refining a Specialist when a narrower responsibility, prompt, tool set, or runtime profile appears useful. It does not directly create, modify, cool, reactivate, delete, or disable Specialist definitions.
 
-Dream Specialist state is changed through a restricted role-management capability rather than generic file writes. This is a governance boundary: Dream may create, refine, mark cold, or reactivate its own Specialists, but it cannot delete or disable them.
+Dream may save its own cursor/run state and structured proposal records. Those writes are part of Dream's control-plane bookkeeping, not execution of the proposal. Any accepted proposal that changes formal memory, Specialist state, configuration, or an external system must be executed through the existing Main/Runtime path and remain subject to the user's authorization and governance boundaries.
 
 Candidate evidence should identify the underlying task/source occurrence. Rewording the same task is not independent evidence. Do not optimize from one noisy run and do not grow near-duplicate Specialists.
 
-Meaningful Specialist evolution is versioned and keeps a bounded append-only evolution trail rather than replacing prior history. When a Dream-managed Specialist becomes rarely useful or superseded, mark it `cold` rather than deleting it automatically. Cold roles remain discoverable; the user decides whether they are kept, disabled, consolidated operationally, or deleted.
+When Specialist evolution is applied by the governed execution path, meaningful changes should remain versioned with a bounded append-only evolution trail rather than silently replacing prior history. A rarely useful or superseded Specialist may be proposed for `cold` state; Dream does not apply that mutation itself. Cold roles remain discoverable, and the user retains final governance over deletion or other consequential changes.
 
 General is permanent and is never removed or narrowed by Dream. WorkAgent is outside Dream entirely because it has no persistent lifecycle.
 

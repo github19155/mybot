@@ -73,15 +73,21 @@ async def test_report_progress_delivery_failure_does_not_fail_child() -> None:
     assert result == "Milestone delivery failed; continue the task and still produce the final result."
 
 
-def test_report_progress_uses_parent_bus_binding(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_report_progress_uses_parent_bus_binding(tmp_path: Path) -> None:
     bus = MessageBus()
     bind_subagent_browser_bus(tmp_path, bus)
     tool = ReportProgressTool.create(
         ToolContext(config=ToolsConfig(), workspace=str(tmp_path))
     )
+    request = RequestContext(channel="test", chat_id="bound")
 
-    assert isinstance(tool, ReportProgressTool)
-    assert tool._bus is bus  # pyright: ignore[reportPrivateUsage]
+    with request_context(request):
+        result = await tool.execute(message="bound route works")
+
+    outbound = await bus.consume_outbound()
+    assert "1/3" in result
+    assert outbound.chat_id == "bound"
 
 
 def test_milestone_tool_is_internal_to_main_but_available_to_workers() -> None:

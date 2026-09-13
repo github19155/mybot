@@ -47,7 +47,27 @@ def bind_subagent_browser_bus(workspace: str | Path, bus: MessageBus) -> None:
 
 def subagent_bus_for_workspace(workspace: str | Path) -> MessageBus | None:
     """Return the parent bus bound to a subagent workspace, when available."""
-    return _BUSES.get(_workspace_key(workspace))
+    key = _workspace_key(workspace)
+    if bus := _BUSES.get(key):
+        return bus
+
+    path = Path(key)
+    matches: list[tuple[int, MessageBus]] = []
+    for root, candidate in _BUSES.items():
+        try:
+            path.relative_to(Path(root))
+        except ValueError:
+            continue
+        matches.append((len(root), candidate))
+    if matches:
+        return max(matches, key=lambda item: item[0])[1]
+
+    # One AgentLoop/MessageBus per process is the normal runtime shape. Host-admin
+    # project scopes may point outside the stable agent workspace, so preserve
+    # that route without making multi-bus processes guess between candidates.
+    if len(_BUSES) == 1:
+        return next(iter(_BUSES.values()))
+    return None
 
 
 def _runtime(ctx: ToolContext) -> browser_tools._BrowserRuntime:  # pyright: ignore[reportPrivateUsage]

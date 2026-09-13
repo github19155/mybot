@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         "context_window_tokens": {"type": "integer", "minimum": 1},
         "temperature": {"type": "number"},
         "supports_vision": {"type": "boolean"},
+        "supports_image_generation": {"type": "boolean"},
         "reasoning_effort": {"type": "string"},
         "api_key": {"type": "string"},
         "api_base": {"type": "string"},
@@ -79,6 +80,7 @@ class ModelConfigTool(Tool):
     def description(self) -> str:
         return (
             "Manage model presets/providers and the runtime Model Fleet without changing your own selected model. "
+            "Model preset capabilities include supports_vision and supports_image_generation; use explicit capability flags instead of inferring them from model names. "
             "Use fleet_status to inspect each concrete provider+model offering's observed quality/speed/reliability/cost/confidence, capacity, queues and cooldown. "
             "Use fleet_recommend before dispatch when the user did not explicitly choose a model; pass pool/task_type/capability constraints and prefer its recommended preset. "
             "A user's explicit model or preset always wins over Fleet recommendations. Do not infer performance from model names. "

@@ -66,6 +66,16 @@ function pendingRestartSectionsFromPayload(payload: SettingsPayload): PendingRes
   };
 }
 
+function presetSupportsImageGeneration(
+  preset: SettingsPayload["model_presets"][number],
+): boolean {
+  return (
+    preset as SettingsPayload["model_presets"][number] & {
+      supports_image_generation?: boolean;
+    }
+  ).supports_image_generation === true;
+}
+
 export function useSettingsController({
   initialSection,
   initialSettings,
@@ -271,7 +281,8 @@ export function useSettingsController({
       form.contextWindowTokens !== normalizeContextWindowTokens(selectedPreset.context_window_tokens) ||
       form.temperature !== selectedPreset.temperature ||
       form.reasoningEffort !== (selectedPreset.reasoning_effort ?? "") ||
-      form.supportsVision !== (selectedPreset.supports_vision === true)
+      form.supportsVision !== (selectedPreset.supports_vision === true) ||
+      form.supportsImageGeneration !== presetSupportsImageGeneration(selectedPreset)
     );
   }, [form, modelPresetEditingName, settings]);
 

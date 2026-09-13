@@ -1,6 +1,6 @@
 # Install and Quick Start
 
-This guide has one goal: get a normal nanobot reply in your browser. Do not add chat apps, MCP servers, fallback models, or deployment until this path works.
+This guide has one goal: get a normal nanobot reply in your browser. Do not add chat apps, MCP servers, extra model presets, or deployment until this path works.
 
 If terminals, Python, or API keys are unfamiliar, use the [beginner walkthrough](./start-without-technical-background.md), which explains each term and screen.
 

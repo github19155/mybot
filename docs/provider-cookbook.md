@@ -22,7 +22,6 @@ Match the recipe to the credential or endpoint you already have:
 | An OpenAI-compatible `/v1` endpoint that is not a named nanobot provider | [Custom OpenAI-Compatible Provider](#recipe-custom-openai-compatible-provider) | `apiBase`, optional API key, and the model ID served by that endpoint |
 | Ollama already running locally | [Ollama Local Model](#recipe-ollama-local-model) | Ollama `apiBase`, pulled model name, and local server availability |
 | vLLM, LM Studio, or another local OpenAI-compatible server | [vLLM or LM Studio](#recipe-vllm-or-lm-studio) | Local `/v1` base URL, any required key, and served model name |
-| A primary model plus one or more backups | [Fallback Presets](#recipe-fallback-presets) | Named presets in `modelPresets`, referenced from `agents.defaults.fallbackModels` |
 | A working agent and a Langfuse project | [Langfuse Tracing](#recipe-langfuse-tracing) | Langfuse env vars in the same process environment that starts nanobot |
 
 ## How to Use a Recipe
@@ -34,7 +33,7 @@ Match the recipe to the credential or endpoint you already have:
 5. Run `nanobot agent -m "Hello!"`.
 6. If the CLI works, then connect WebUI, gateway, or chat apps.
 
-The active model should normally come from `agents.defaults.modelPreset`, and that name should point to an entry in `modelPresets`. Direct `agents.defaults.provider` and `agents.defaults.model` still work for older configs, but presets are easier to switch and easier to reuse as fallbacks.
+The active model should normally come from `agents.defaults.modelPreset`, and that name should point to an entry in `modelPresets`. Direct `agents.defaults.provider` and `agents.defaults.model` still work for older configs, but presets are easier to switch and reuse across sessions, Subagent roles, Dream, and Model Fleet.
 
 ## Secret Setup
 
@@ -483,48 +482,6 @@ For LM Studio, use its local base URL and provider name:
 ```
 
 The config key can be `lmStudio` or `lm_studio`, but the preset provider should use the registry name `lm_studio`.
-
-## Recipe: Fallback Presets
-
-This recipe applies when one provider sometimes rate-limits, one model is expensive, or you want a local backup.
-
-```json
-{
-  "modelPresets": {
-    "fast": {
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    },
-    "deep": {
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
-    },
-    "local": {
-      "provider": "ollama",
-      "model": "llama3.2",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768,
-      "temperature": 0.2
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "fast",
-      "fallbackModels": ["deep", "local"]
-    }
-  }
-}
-```
-
-`fallbackModels` belongs under `agents.defaults`. String entries are preset names, not raw model names. nanobot tries the active preset first, then the fallback presets in order.
-
-Keep fallback candidates realistic. If the local fallback has a smaller context window, nanobot must build context that fits the smallest window in the active chain.
 
 ## Recipe: Langfuse Tracing
 

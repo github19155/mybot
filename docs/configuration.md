@@ -24,7 +24,6 @@ the focused guides first and come back here for exact fields and defaults.
 |---|---|
 | Add MCP tools | [`guides/configure-mcp-tools.md`](./guides/configure-mcp-tools.md) |
 | Enable web search and web fetch | [`guides/configure-web-search.md`](./guides/configure-web-search.md) |
-| Configure model fallback | [`guides/configure-model-fallback.md`](./guides/configure-model-fallback.md) |
 | Add an OpenAI-compatible provider | [`guides/configure-openai-compatible-provider.md`](./guides/configure-openai-compatible-provider.md) |
 | Add Langfuse observability | [`guides/configure-langfuse-observability.md`](./guides/configure-langfuse-observability.md) |
 | Secure a local AI agent | [`guides/secure-local-ai-agent.md`](./guides/secure-local-ai-agent.md) |
@@ -39,7 +38,6 @@ the focused guides first and come back here for exact fields and defaults.
 | Trace model calls | [Langfuse Observability](#langfuse-observability) |
 | Configure credentials and endpoints | [Providers](#providers) |
 | Name and switch model choices | [Model Presets](#model-presets) |
-| Add fallback chains | [Model Fallbacks](#model-fallbacks) |
 | Configure voice transcription | [Transcription Settings](#transcription-settings) |
 | Tune channel defaults | [Channel Settings](#channel-settings) |
 | Configure web search and fetch | [Web Tools](#web-tools) |
@@ -56,7 +54,6 @@ If the WebUI does not expose the option you need, start from the task below. Mos
 | Task | First keys to check | Verify with | Deep dive |
 |---|---|---|---|
 | Make the first model reply work | `providers.<name>.apiKey`, optional `providers.<name>.apiBase`, `modelPresets.<preset>`, `agents.defaults.modelPreset` | `nanobot status`, then `nanobot agent -m "Hello!"` | [Providers](#providers), [Model Presets](#model-presets) |
-| Add fallback models | `modelPresets.<fallback>`, `agents.defaults.fallbackModels` | `nanobot status`, then a normal agent run | [Model Fallbacks](#model-fallbacks) |
 | Keep secrets out of the config file | `${ENV_VAR}` placeholders inside any string value | Start nanobot from the same environment that sets the variable | [Environment Variables for Secrets](#environment-variables-for-secrets) |
 | Open the bundled WebUI | `channels.websocket.enabled`, optional `channels.websocket.port`, `channels.websocket.tokenIssueSecret` | `nanobot webui` | [Channel Settings](#channel-settings), [WebSocket docs](./websocket.md) |
 | Connect one chat app | `channels.<channel>.enabled`, channel credentials, optional pairing or `channels.<channel>.allowFrom` | `nanobot channels status`, then `nanobot gateway --verbose` | [Channel Settings](#channel-settings), [Chat Apps](./chat-apps.md) |
@@ -1408,7 +1405,7 @@ Contributor notes for adding new providers live in [`development.md`](./developm
 
 ## Model Presets
 
-Model presets let you name a complete model configuration and select one per session with `/model <preset>`. They are the recommended way to configure models because the same names can be reused for new-session defaults, chat-command switching, and fallback chains.
+Model presets let you name a complete model configuration and select one per session with `/model <preset>`. They are the recommended way to configure models because the same names can be reused for new-session defaults, chat-command switching, Subagent roles, Dream, and Model Fleet selection.
 
 Existing configs do not need to change. Direct `agents.defaults.model`, `provider`, `maxTokens`, `contextWindowTokens`, `temperature`, and `reasoningEffort` fields still define the implicit `default` preset. For new configs, prefer top-level `modelPresets` plus `agents.defaults.modelPreset`.
 
@@ -1440,14 +1437,13 @@ Existing configs do not need to change. Direct `agents.defaults.model`, `provide
   },
   "agents": {
     "defaults": {
-      "modelPreset": "fast",
-      "fallbackModels": ["deep", "localSmall"]
+      "modelPreset": "fast"
     }
   }
 }
 ```
 
-`modelPresets` is a top-level object. Each key (`fast`, `deep`, `coding`, etc.) is the preset's one canonical name: it is shown in the interface, passed to `/model <name>`, and referenced by defaults, fallbacks, sessions, and Dream. New and renamed presets must be unique ignoring case. Existing keys accepted by earlier releases remain loadable so upgrades do not break startup. Each preset supports:
+`modelPresets` is a top-level object. Each key (`fast`, `deep`, `coding`, etc.) is the preset's one canonical name: it is shown in the interface, passed to `/model <name>`, and referenced by defaults, sessions, Subagent roles, Dream, and Model Fleet. New and renamed presets must be unique ignoring case. Existing keys accepted by earlier releases remain loadable so upgrades do not break startup. Each preset supports:
 
 Older configs may still contain a `label` inside a preset. It is accepted when loading for compatibility but ignored; the object key remains the canonical name.
 
@@ -1464,85 +1460,9 @@ Older configs may still contain a `label` inside a preset. It is accepted when l
 
 Set `agents.defaults.modelPreset` to choose the preset followed by sessions that have no saved model selection. When `modelPreset` is `null` or omitted, such sessions follow the implicit `default` preset from direct `agents.defaults.*` fields. `/model <preset>` saves an override in the current session, so its future turns keep that preset across process restarts while other sessions remain unchanged. The command does not write the selection back to `config.json`.
 
-### Model Fallbacks
+### Request-time model selection
 
-`agents.defaults.fallbackModels` defines an ordered failover chain for the active model configuration. The primary model is still selected by `agents.defaults.modelPreset` or, in older configs, by the implicit `default` preset from direct `agents.defaults.*` fields.
-
-Each fallback candidate can be either:
-
-- A preset name from `modelPresets`, such as `"deep"`. This is the recommended form. The preset's full model, provider, generation, and context-window config is used.
-- An inline fallback object with at least `provider` and `model`. Optional `maxTokens`, `contextWindowTokens`, and `temperature` fields inherit from the active primary config when omitted. `reasoningEffort` does not inherit; omit it to leave reasoning off for that fallback, or set it explicitly for models that support reasoning.
-
-Preset fallback chain:
-
-```json
-{
-  "modelPresets": {
-    "fast": {
-      "model": "gpt-4.1-mini",
-      "provider": "openai",
-      "maxTokens": 4096,
-      "contextWindowTokens": 128000,
-      "temperature": 0.2
-    },
-    "deep": {
-      "model": "claude-opus-4-5",
-      "provider": "anthropic",
-      "maxTokens": 8192,
-      "contextWindowTokens": 200000,
-      "reasoningEffort": "high"
-    },
-    "localSmall": {
-      "model": "llama3.2",
-      "provider": "ollama",
-      "maxTokens": 4096,
-      "contextWindowTokens": 32768
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "fast",
-      "fallbackModels": ["deep", "localSmall"]
-    }
-  }
-}
-```
-
-String entries are preset names, not raw model names. In the example above, `"deep"` means `modelPresets.deep`; nanobot will not interpret it as a provider model ID. Changing a preset updates both `/model <preset>` switching and any fallback chain that references it.
-
-Inline fallback object:
-
-```json
-{
-  "modelPresets": {
-    "fast": {
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "fast",
-      "fallbackModels": [
-        {
-          "provider": "deepseek",
-          "model": "deepseek-v4-pro",
-          "maxTokens": 4096,
-          "contextWindowTokens": 262144
-        }
-      ]
-    }
-  }
-}
-```
-
-Use inline objects only when a fallback is not worth naming as a reusable preset. `fallbackModels` belongs under `agents.defaults`, not inside individual `modelPresets` entries.
-
-Failover normally runs when the primary provider returns a fallbackable model/provider error before any answer text has been streamed. Stream-stall timeouts are the recovery exception: if the provider already emitted partial answer text and then stalls, nanobot closes the current stream segment and retries/fails over in a new segment. Typical fallback cases include timeouts, connection errors, 5xx server errors, 429 rate limits, overloads, authentication/permission failures such as invalid or expired credentials, and quota/balance exhaustion. It does not run for malformed requests, content filtering/refusals, or context-length/message-format errors.
-
-If fallback candidates use smaller `contextWindowTokens` values, nanobot builds context using the smallest window in the active chain so every candidate can receive the same prompt.
+Each admitted request resolves exactly one `LLMRuntime` through `ModelRuntimeResolver` (and Model Fleet when used). That runtime fixes the model, provider, generation settings, context window, vision capability, and system-prompt override for the request. Provider-level retry may retry the same selected route, but nanobot does not transparently switch to another model or provider after failure; exhausted retries return the failure explicitly.
 
 ## Transcription Settings
 

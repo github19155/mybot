@@ -2589,7 +2589,6 @@ describe("App layout", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Models" }));
     expect(screen.queryByText("AI")).not.toBeInTheDocument();
     expect(screen.getByText("Model presets")).toBeInTheDocument();
-    expect(screen.queryByText("Model call order")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "New model preset" }));
     expect(screen.queryByRole("dialog", { name: "New model preset" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "Preset name" }), {
@@ -2606,7 +2605,7 @@ describe("App layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("Up to date.")).not.toBeInTheDocument();
     fireEvent.click(
-      within(screen.getByTestId("model-call-order-row-primary")).getAllByRole("button")[0],
+      within(screen.getByTestId("model-preset-row-primary")).getAllByRole("button")[0],
     );
     fireEvent.pointerDown(screen.getByRole("button", { name: /Auto/ }));
     expect(screen.getAllByTestId("provider-picker-logo-openai").length).toBeGreaterThan(0);

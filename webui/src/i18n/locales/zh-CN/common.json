@@ -134,8 +134,6 @@
       "configurationName": "配置名称",
       "configurationNameHelp": "重命名这个已保存的模型配置。",
       "configurationNamePlaceholder": "快速写作",
-      "callOrder": "模型调用顺序",
-      "primary": "主模型",
       "subagentRoles": {
         "title": "子代理角色",
         "concurrency": "并发后台任务",
@@ -145,8 +143,6 @@
         "save": "保存角色绑定",
         "saving": "正在保存角色绑定…"
       },
-      "fallbackNumber": "备用模型 {{number}}",
-      "addToOrder": "启用预设",
       "newPreset": "新建模型预设",
       "newPresetHelp": "保存可复用的模型及其生成参数。",
       "presets": "模型预设",
@@ -160,18 +156,6 @@
       "maxTokens": "最大输出 tokens",
       "temperature": "温度",
       "reasoningEffort": "推理强度",
-      "convertTitle": "转换现有模型设置",
-      "convertHelp": "把现有主模型和备用模型转换成预设，之后即可在这里管理调用顺序。",
-      "converting": "正在转换...",
-      "convertAction": "转换为预设",
-      "dragToReorder": "拖动调整顺序",
-      "moveUp": "上移",
-      "moveDown": "下移",
-      "removeFromOrder": "停用预设",
-      "inCallOrder": "已加入调用顺序",
-      "disabled": "未启用",
-      "noPresets": "还没有模型预设",
-      "noPresetsHelp": "先创建预设，再将它加入调用顺序。",
       "removeBeforeDelete": "删除前请先将此预设从调用顺序中移除。",
       "providerSetupRequired": "提供商需要配置",
       "configureProviderBeforeSaving": "请先配置此提供商，再保存预设。",
@@ -445,7 +429,6 @@
       "dark": "深色",
       "notAvailable": "不可用",
       "enabled": "已启用",
-      "disabled": "已禁用",
       "restartPending": "等待重启",
       "ready": "就绪",
       "privateEngine": "私有引擎",
@@ -1078,7 +1061,6 @@
     },
     "next": {
       "label": "下次：{{time}}",
-      "disabled": "已暂停",
       "local": "等待触发",
       "none": "没有下次运行"
     }
@@ -1168,7 +1150,6 @@
       "loading": "正在加载自动任务...",
       "loadFailed": "无法加载自动任务。",
       "empty": "这个会话暂时没有自动任务。",
-      "disabled": "已关闭",
       "schedule": {
         "at": "{{time}}",
         "every": "每 {{duration}}",
@@ -1180,7 +1161,6 @@
       "next": {
         "label": "下次 {{time}}",
         "pending": "即将执行",
-        "disabled": "已暂停",
         "local": "等待触发",
         "none": "没有下次运行"
       }

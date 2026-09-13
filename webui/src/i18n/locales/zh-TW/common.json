@@ -224,7 +224,6 @@
       "dark": "深色",
       "notAvailable": "不可用",
       "enabled": "已啟用",
-      "disabled": "已停用",
       "restartPending": "等待重新啟動",
       "ready": "就緒",
       "privateEngine": "私有引擎",
@@ -412,9 +411,6 @@
       "configurationName": "設定名稱",
       "configurationNameHelp": "重新命名這個已儲存的模型設定。",
       "configurationNamePlaceholder": "快速寫作",
-      "callOrder": "模型呼叫順序",
-      "primary": "主要模型",
-      "fallbackNumber": "備用模型 {{number}}",
       "subagentRoles": {
         "title": "子代理角色",
         "concurrency": "並行背景任務",
@@ -424,7 +420,6 @@
         "save": "儲存角色繫結",
         "saving": "正在儲存角色繫結…"
       },
-      "addToOrder": "啟用預設",
       "newPreset": "新增模型預設",
       "newPresetHelp": "儲存可重複使用的模型與生成參數。",
       "presets": "模型預設",
@@ -438,18 +433,6 @@
       "maxTokens": "最大輸出 tokens",
       "temperature": "溫度",
       "reasoningEffort": "推理強度",
-      "convertTitle": "轉換現有模型設定",
-      "convertHelp": "將現有主要模型和備用模型轉換為預設，之後即可在這裡管理呼叫順序。",
-      "converting": "正在轉換…",
-      "convertAction": "轉換為預設",
-      "dragToReorder": "拖曳調整順序",
-      "moveUp": "上移",
-      "moveDown": "下移",
-      "removeFromOrder": "停用預設",
-      "inCallOrder": "已加入呼叫順序",
-      "disabled": "未啟用",
-      "noPresets": "尚無模型預設",
-      "noPresetsHelp": "先建立預設，再將它加入呼叫順序。",
       "removeBeforeDelete": "刪除前請先將此預設從呼叫順序中移除。",
       "providerSetupRequired": "供應商需要設定",
       "configureProviderBeforeSaving": "請先設定此供應商，再儲存預設。",
@@ -1064,7 +1047,6 @@
     },
     "next": {
       "label": "下次：{{time}}",
-      "disabled": "已暫停",
       "local": "等待觸發",
       "none": "沒有下次執行"
     }
@@ -1154,7 +1136,6 @@
       "loading": "正在載入自動任務…",
       "loadFailed": "無法載入自動任務。",
       "empty": "這個對話目前沒有自動任務。",
-      "disabled": "已關閉",
       "schedule": {
         "at": "{{time}}",
         "every": "每 {{duration}}",
@@ -1166,7 +1147,6 @@
       "next": {
         "label": "{{time}}",
         "pending": "即將執行",
-        "disabled": "已暫停",
         "local": "等待觸發",
         "none": "沒有下次執行"
       }

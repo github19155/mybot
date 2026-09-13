@@ -224,7 +224,6 @@
       "dark": "Tối",
       "notAvailable": "Không khả dụng",
       "enabled": "Đã bật",
-      "disabled": "Đã tắt",
       "restartPending": "Chờ khởi động lại",
       "ready": "Sẵn sàng",
       "privateEngine": "Bộ máy riêng",
@@ -412,8 +411,6 @@
       "configurationName": "Tên cấu hình",
       "configurationNameHelp": "Đổi tên cấu hình mô hình đã lưu này.",
       "configurationNamePlaceholder": "Viết nhanh",
-      "callOrder": "Thứ tự gọi mô hình",
-      "primary": "Chính",
       "subagentRoles": {
         "title": "Vai trò của tác nhân phụ",
         "concurrency": "Tác vụ nền chạy đồng thời",
@@ -423,8 +420,6 @@
         "save": "Lưu gắn kết vai trò",
         "saving": "Đang lưu gắn kết vai trò…"
       },
-      "fallbackNumber": "Dự phòng {{number}}",
-      "addToOrder": "Bật cấu hình đặt trước",
       "newPreset": "Cấu hình mô hình đặt trước mới",
       "newPresetHelp": "Lưu mô hình có thể tái sử dụng cùng các thiết lập sinh nội dung.",
       "presets": "Cấu hình mô hình đặt trước",
@@ -438,18 +433,6 @@
       "maxTokens": "Token đầu ra tối đa",
       "temperature": "Nhiệt độ",
       "reasoningEffort": "Mức suy luận",
-      "convertTitle": "Chuyển đổi thiết lập mô hình hiện tại",
-      "convertHelp": "Chuyển mô hình chính và các mô hình dự phòng hiện có thành cấu hình đặt trước để quản lý thứ tự tại đây.",
-      "converting": "Đang chuyển đổi...",
-      "convertAction": "Chuyển thành cấu hình đặt trước",
-      "dragToReorder": "Kéo để sắp xếp lại",
-      "moveUp": "Di chuyển lên",
-      "moveDown": "Di chuyển xuống",
-      "removeFromOrder": "Tắt cấu hình đặt trước",
-      "inCallOrder": "Trong thứ tự gọi",
-      "disabled": "Đã tắt",
-      "noPresets": "Chưa có cấu hình mô hình đặt trước",
-      "noPresetsHelp": "Tạo cấu hình đặt trước rồi thêm vào thứ tự gọi.",
       "removeBeforeDelete": "Hãy xóa cấu hình này khỏi thứ tự gọi trước khi xóa.",
       "providerSetupRequired": "Cần cấu hình nhà cung cấp",
       "configureProviderBeforeSaving": "Hãy cấu hình nhà cung cấp này trước khi lưu cấu hình đặt trước.",
@@ -1064,7 +1047,6 @@
     },
     "next": {
       "label": "Tiếp theo: {{time}}",
-      "disabled": "Đã tạm dừng",
       "local": "Đang chờ kích hoạt",
       "none": "Không có lần chạy tiếp theo"
     }
@@ -1154,7 +1136,6 @@
       "loading": "Đang tải tự động hóa...",
       "loadFailed": "Không thể tải tự động hóa.",
       "empty": "Phiên này chưa có tự động hóa.",
-      "disabled": "Tắt",
       "schedule": {
         "at": "Lúc {{time}}",
         "every": "Mỗi {{duration}}",
@@ -1166,7 +1147,6 @@
       "next": {
         "label": "Tiếp theo {{time}}",
         "pending": "Sắp chạy",
-        "disabled": "Đã tạm dừng",
         "local": "Đang chờ kích hoạt",
         "none": "Không có lần chạy tiếp theo"
       }

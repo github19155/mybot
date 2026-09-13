@@ -224,7 +224,6 @@
       "dark": "Oscuro",
       "notAvailable": "No disponible",
       "enabled": "Activado",
-      "disabled": "Desactivado",
       "restartPending": "Reinicio pendiente",
       "ready": "Listo",
       "privateEngine": "Motor privado",
@@ -412,8 +411,6 @@
       "configurationName": "Nombre de configuración",
       "configurationNameHelp": "Renombra esta configuración de modelo guardada.",
       "configurationNamePlaceholder": "Escritura rápida",
-      "callOrder": "Orden de llamada de modelos",
-      "primary": "Principal",
       "subagentRoles": {
         "title": "Roles de los subagentes",
         "concurrency": "Tareas en segundo plano simultáneas",
@@ -423,8 +420,6 @@
         "save": "Guardar asignaciones de roles",
         "saving": "Guardando asignaciones de roles…"
       },
-      "fallbackNumber": "Alternativa {{number}}",
-      "addToOrder": "Activar preajuste",
       "newPreset": "Nuevo preajuste de modelo",
       "newPresetHelp": "Guarda un modelo reutilizable y sus ajustes de generación.",
       "presets": "Preajustes de modelo",
@@ -438,18 +433,6 @@
       "maxTokens": "Máx. tokens de salida",
       "temperature": "Temperatura",
       "reasoningEffort": "Esfuerzo de razonamiento",
-      "convertTitle": "Convertir la configuración de modelos actual",
-      "convertHelp": "Convierte los modelos principal y alternativos existentes en preajustes para administrar aquí su orden.",
-      "converting": "Convirtiendo...",
-      "convertAction": "Convertir en preajustes",
-      "dragToReorder": "Arrastrar para reordenar",
-      "moveUp": "Subir",
-      "moveDown": "Bajar",
-      "removeFromOrder": "Desactivar preajuste",
-      "inCallOrder": "En el orden de llamada",
-      "disabled": "Desactivado",
-      "noPresets": "Aún no hay preajustes de modelo",
-      "noPresetsHelp": "Crea un preajuste y añádelo al orden de llamada.",
       "removeBeforeDelete": "Quita este preajuste del orden de llamada antes de eliminarlo.",
       "providerSetupRequired": "El proveedor requiere configuración",
       "configureProviderBeforeSaving": "Configura este proveedor antes de guardar el preajuste.",
@@ -1065,7 +1048,6 @@
     },
     "next": {
       "label": "Siguiente: {{time}}",
-      "disabled": "Pausada",
       "local": "Esperando activador",
       "none": "Sin próxima ejecución"
     }
@@ -1155,7 +1137,6 @@
       "loading": "Cargando automatizaciones...",
       "loadFailed": "No se pudieron cargar las automatizaciones.",
       "empty": "Esta sesión aún no tiene automatizaciones.",
-      "disabled": "Desactivado",
       "schedule": {
         "at": "A las {{time}}",
         "every": "Cada {{duration}}",
@@ -1167,7 +1148,6 @@
       "next": {
         "label": "Siguiente {{time}}",
         "pending": "Se ejecutará pronto",
-        "disabled": "En pausa",
         "local": "Esperando activador",
         "none": "Sin próxima ejecución"
       }

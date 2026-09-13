@@ -763,7 +763,7 @@ describe("ThreadShell", () => {
     expect(screen.queryByRole("button", { name: "Choose your AI" })).not.toBeInTheDocument();
   });
 
-  it("switches through every named preset while preserving call-order priority", async () => {
+  it("switches through every named preset while keeping the active preset first", async () => {
     const client = makeClient();
     const settings = settingsWithFastPreset();
     settings.model_presets.push({

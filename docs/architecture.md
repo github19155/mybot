@@ -13,7 +13,7 @@ flowchart LR
     Loop --> Runner["AgentRunner<br/>provider/tool loop"]
     Runner --> Provider["Provider<br/>LLM backend"]
     Provider --> Runner
-    Runner --> Tools["Tools<br/>files, shell, web, MCP, cron"]
+    Runner --> Tools["Model-facing tools<br/>Main control or worker execution"]
     Tools --> Runner
     Runner --> Loop
     Loop --> Outbound["MessageBus<br/>OutboundMessage"]
@@ -30,12 +30,42 @@ Main files:
 | Turn orchestration | `nanobot/agent/loop.py` |
 | Provider/tool conversation loop | `nanobot/agent/runner.py` |
 | Context construction | `nanobot/agent/context.py` |
+| Model-facing tool boundary | `nanobot/agent/tools/registry.py` |
 | Session storage and compaction | `nanobot/session/manager.py` |
 | Runtime resolution | `nanobot/agent/model_runtime.py` |
 | Model management and Fleet policy | `nanobot/agent/model_management.py`, `nanobot/model_fleet.py` |
 | Capability policy | `nanobot/agent/permissions.py` |
+| Subagent lifecycle | `nanobot/agent/subagent.py`, `nanobot/agent/tools/subagent.py` |
 | Dream cognition | `nanobot/agent/dream.py`, `nanobot/agent/dream_worker.py` |
 | Long-term memory | `nanobot/agent/memory.py` |
+
+## Main Agent vs Subagents
+
+Main is an orchestrator, not a worker executor.
+
+Main owns:
+
+- conversation and user-facing replies;
+- intent interpretation and task decomposition;
+- worker selection and delegation through the unified `subagent` tool;
+- coordination of concurrent work;
+- final synthesis and decisions;
+- orchestration-safe controls such as session/context/model/cron/goal/message/image surfaces.
+
+Subagents own execution-heavy work:
+
+- filesystem discovery, reading, editing, patching, and search;
+- shell/CLI commands and process execution;
+- web search/fetch and browser work;
+- code changes, builds, and tests.
+
+The implementation deliberately keeps the **internal** tool registry complete so trusted runtime paths can still access required capabilities. `ToolRegistry` then applies a **model-facing** policy: when the permission subject is Main, worker execution tools are hidden from model definitions and direct model calls to them are rejected. Worker/subagent registries keep their execution tools subject to normal permission policy.
+
+This distinction matters. Internal registration is not the same as model authority. For example, a trusted explicit user shell surface may use an internal execution path without granting the Main model direct `exec` access.
+
+Main also has a small per-turn orchestration budget: after two valid Main tool calls, model-facing tool definitions are withdrawn for that turn so Main must return a user-visible response. This is intentionally a control-flow limit for Main only; worker registries are not subject to it.
+
+The old `spawn` interface is not part of this architecture. Delegation uses the unified `subagent` tool.
 
 ## Agent Loop vs Agent Runner
 
@@ -51,7 +81,7 @@ Main files:
 
 - sends messages to the selected provider;
 - handles streaming deltas and reasoning blocks;
-- executes tool calls;
+- executes model-visible tool calls;
 - feeds tool results back into the model;
 - stops when a final answer is produced or runtime limits are hit.
 
@@ -62,7 +92,7 @@ that lifecycle. `AgentLoop.from_config()` therefore requires a caller-owned
 `ToolRegistry`; callers using MCP share it with their application-owned
 `MCPProvider`.
 
-Keep this split in mind when debugging. If a problem is about channel routing, session keys, workspace selection, or outbound delivery, start in `agent/loop.py`. If it is about provider calls, tool calls, streaming, or iteration limits, start in `agent/runner.py`.
+Keep this split in mind when debugging. If a problem is about channel routing, session keys, workspace selection, or outbound delivery, start in `agent/loop.py`. If it is about provider calls, tool calls, streaming, or iteration limits, start in `agent/runner.py`. If Main can see or call the wrong tools, start in `agent/tools/registry.py`.
 
 ## Runtime Resolution and Capability Authority
 
@@ -70,7 +100,7 @@ Keep this split in mind when debugging. If a problem is about channel routing, s
 
 `ModelManagement` owns model/provider administration and Dream selection policy. `ModelFleet` may rank or recommend configured offerings and enforce physical-request admission, but it does not construct `LLMRuntime` objects. Likewise, `SubagentManager` owns worker lifecycle/admission and chooses the applicable role or per-run override; it does not own runtime resolution after Phase 3B.
 
-`PermissionManager` is the canonical runtime authority for capabilities. Role names, prompts, requested tools, and old permission tiers are not independent authorization sources; tool visibility and execution are constrained by the current capability policy.
+`PermissionManager` is the canonical runtime authority for capabilities. Role names, prompts, requested tools, and old permission tiers are not independent authorization sources; tool visibility and execution are constrained by the current capability policy. The Main-orchestrator model-facing filter is an additional responsibility boundary, not a replacement for permission authority.
 
 ## Providers
 
@@ -140,7 +170,8 @@ Important files:
 | Tool area | Files |
 |---|---|
 | Tool base and schema | `nanobot/agent/tools/base.py`, `nanobot/agent/tools/schema.py` |
-| Discovery | `nanobot/agent/tools/registry.py` |
+| Discovery/loading | `nanobot/agent/tools/loader.py` |
+| Registry and Main model boundary | `nanobot/agent/tools/registry.py` |
 | Shell execution | `nanobot/agent/tools/shell.py` |
 | Filesystem tools | `nanobot/agent/tools/filesystem.py` |
 | Web search/fetch | `nanobot/agent/tools/web.py` |
@@ -149,7 +180,7 @@ Important files:
 | Image generation | `nanobot/agent/tools/image_generation.py` |
 | Runtime self-inspection | `nanobot/agent/tools/self.py` |
 
-Tool behavior is part of the model contract. Keep user-visible tool names, schemas, and error messages stable unless a change is intentional.
+Tool behavior is part of the model contract. Keep user-visible tool names, schemas, and error messages stable unless a change is intentional. Main's worker-tool boundary is enforced at the registry's model-facing definition/call layer rather than by physically removing tools from the internal registry.
 
 ## Config and Paths
 
@@ -206,6 +237,7 @@ Security-sensitive code paths include:
 | Boundary | Files |
 |---|---|
 | Capability policy | `nanobot/agent/permissions.py`, `nanobot/permission_config.py`, `nanobot/permission_types.py` |
+| Main model tool boundary | `nanobot/agent/tools/registry.py` |
 | Workspace scope | `nanobot/security/workspace_access.py`, `nanobot/security/workspace_policy.py` |
 | Shell sandboxing | `nanobot/agent/tools/shell.py` |
 | SSRF/network checks | `nanobot/security/network.py`, `nanobot/agent/tools/web.py` |
@@ -247,6 +279,7 @@ Choose tests based on the changed surface:
 | Channel behavior | Channel tests plus `nanobot gateway` startup path |
 | WebUI behavior | WebUI tests/build and, for routing/settings/chat changes, browser-level verification through the gateway |
 | Tool behavior | Tool unit tests and an agent-run path when schema or model-facing behavior changes |
+| Main/Subagent boundary | Main definition/call filtering tests, worker visibility tests, permission-authority tests, and explicit trusted-path smoke tests |
 | Docs | Link checks, command accuracy against CLI/schema, and `git diff --check` |
 
 For user-facing flows, prefer at least one verification path through the public surface the user actually touches: CLI command, HTTP endpoint, WebSocket/WebUI, chat channel, or packaged import.

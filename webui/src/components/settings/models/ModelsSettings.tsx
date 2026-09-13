@@ -574,7 +574,7 @@ export function ModelsSettings({
               !selectedProviderConfigured ||
               modelFieldsMissing ||
               saving ||
-              orderSaving
+              selectionSaving
             }
             onClick={onSave}
           >

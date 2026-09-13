@@ -241,7 +241,7 @@ def _dynamic_provider_config(
     return Config.model_validate(raw_config)
 
 
-def test_create_model_configuration_accepts_legacy_label_without_changing_call_order(
+def test_create_model_configuration_activates_first_named_preset(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -261,14 +261,14 @@ def test_create_model_configuration_accepts_legacy_label_without_changing_call_o
         }
     )
 
-    assert payload["agent"]["model_preset"] == "default"
-    assert payload["agent"]["model"] == "openai/gpt-4o"
+    assert payload["agent"]["model_preset"] == "fast-writing"
+    assert payload["agent"]["model"] == "openai/gpt-4.1-mini"
     assert payload["created_model_preset"] == "fast-writing"
     rows = {row["name"]: row for row in payload["model_presets"]}
     assert rows["fast-writing"]["label"] == "fast-writing"
 
     saved = load_config(config_path)
-    assert saved.agents.defaults.model_preset is None
+    assert saved.agents.defaults.model_preset == "fast-writing"
     assert saved.model_presets["fast-writing"].model == "openai/gpt-4.1-mini"
     assert saved.model_presets["fast-writing"].provider == "openai"
 
@@ -281,8 +281,6 @@ def test_create_model_configuration_accepts_legacy_label_without_changing_call_o
             }
         )
     assert duplicate.value.status == 409
-
-
 
 
 def test_create_model_configuration_preserves_canonical_name(

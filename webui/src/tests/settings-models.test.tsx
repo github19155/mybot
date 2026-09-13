@@ -404,7 +404,7 @@ describe("Settings models", () => {
     expect(deleteButton).toBeDisabled();
     expect(deleteButton).toHaveAttribute("aria-describedby", "model-preset-delete-hint");
     expect(
-      within(editor).getByText("Remove this preset from the call order before deleting it."),
+      within(editor).getByText("Select another preset before deleting this one."),
     ).toBeInTheDocument();
 
     fireEvent.click(trigger);

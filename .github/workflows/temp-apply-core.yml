@@ -9,62 +9,58 @@ permissions:
 
 jobs:
   apply-final:
-    if: "${{ github.event.head_commit.message == 'clean final call order remnants' }}"
+    if: "${{ github.event.head_commit.message == 'restore shared disabled translations' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Remove final call-order remnants
+      - name: Restore shared disabled translations
         run: |
           python - <<'PY'
           from pathlib import Path
-          import json
 
-          path = Path('webui/src/tests/app-layout.test.tsx')
-          text = path.read_text()
-          text = text.replace('    expect(screen.queryByText("Model call order")).not.toBeInTheDocument();\n', '')
-          old = 'screen.getByTestId("model-call-order-row-primary")'
-          if text.count(old) != 1:
-              raise SystemExit(f'unexpected app-layout selector count: {text.count(old)}')
-          path.write_text(text.replace(old, 'screen.getByTestId("model-preset-row-primary")', 1))
-
-          path = Path('webui/src/tests/thread-shell.test.tsx')
-          text = path.read_text()
-          old = 'it("switches through every named preset while preserving call-order priority", async () => {'
-          if text.count(old) != 1:
-              raise SystemExit(f'unexpected thread-shell title count: {text.count(old)}')
-          path.write_text(text.replace(old, 'it("switches through every named preset while keeping the active preset first", async () => {', 1))
-
-          obsolete = {
-              'callOrder', 'primary', 'fallbackNumber', 'addToOrder',
-              'convertTitle', 'convertHelp', 'converting', 'convertAction',
-              'dragToReorder', 'moveUp', 'moveDown', 'removeFromOrder',
-              'inCallOrder', 'disabled', 'noPresets', 'noPresetsHelp',
+          translations = {
+              'en': 'Disabled',
+              'es': 'Desactivado',
+              'fr': 'Désactivé',
+              'id': 'Nonaktif',
+              'ja': '無効',
+              'ko': '비활성화됨',
+              'pt-BR': 'Desabilitado',
+              'vi': 'Đã tắt',
+              'zh-CN': '已禁用',
+              'zh-TW': '已停用',
           }
-          for path in Path('webui/src/i18n/locales').glob('*/common.json'):
-              lines = path.read_text().splitlines(True)
-              kept = []
-              for line in lines:
-                  stripped = line.lstrip()
-                  if any(stripped.startswith(f'"{key}":') for key in obsolete):
-                      continue
-                  kept.append(line)
-              path.write_text(''.join(kept))
-              json.loads(path.read_text())
+          for locale, value in translations.items():
+              path = Path('webui/src/i18n/locales') / locale / 'common.json'
+              text = path.read_text()
+              start = text.index('    "values": {')
+              end = text.index('    },', start)
+              block = text[start:end]
+              if '"disabled":' in block:
+                  continue
+              enabled = block.index('      "enabled":')
+              line_end = block.index('\n', enabled) + 1
+              block = block[:line_end] + f'      "disabled": {value!r},\n'.replace("'", '"') + block[line_end:]
+              path.write_text(text[:start] + block + text[end:])
           PY
-      - name: Verify and commit cleanup
+      - name: Verify and commit translation fix
         run: |
           set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          for path in Path('webui/src/i18n/locales').glob('*/common.json'):
+              data = json.loads(path.read_text())
+              assert data['settings']['values']['disabled']
+              assert 'disabled' not in data['settings']['models']
+          PY
           git diff --check
-          if grep -R -n -I -i -E 'call order|model-call-order|call-order|"callOrder"|"inCallOrder"|"fallbackNumber"|"addToOrder"|"convertTitle"|"convertHelp"|"dragToReorder"|"removeFromOrder"|"noPresetsHelp"' webui/src nanobot tests docs README.md; then
-            echo 'legacy call-order residue remains'
-            exit 1
-          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add webui/src
-          git commit -m 'chore: remove model call-order remnants'
+          git add webui/src/i18n/locales
+          git commit -m 'fix: restore shared disabled translations'
           git push origin HEAD:refactor/remove-model-fallback
 
   python-targeted:

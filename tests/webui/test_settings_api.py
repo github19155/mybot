@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfig
+from nanobot.config.schema import Config, ModelPresetConfig
 from nanobot.llm_usage import get_llm_usage_store
 from nanobot.llm_usage.models import LLMCallRecord
 from nanobot.providers.base import LLMUsage
@@ -287,31 +287,6 @@ def test_create_model_configuration_accepts_legacy_label_without_changing_call_o
     assert duplicate.value.status == 409
 
 
-def test_first_model_configuration_replaces_unused_schema_default(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.providers.openai.api_key = "sk-test"
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = create_model_configuration(
-        {
-            "name": ["openai"],
-            "provider": ["openai"],
-            "model": ["openai/gpt-4.1"],
-        }
-    )
-
-    assert payload["model_call_order"] == ["openai"]
-    assert payload["model_call_order_editable"] is True
-    assert payload["agent"]["model_preset"] == "openai"
-    saved = load_config(config_path)
-    assert saved.agents.defaults.model_preset == "openai"
-    assert saved.agents.defaults.fallback_models == []
-    assert saved.model_presets["openai"].model == "openai/gpt-4.1"
 
 
 def test_create_model_configuration_preserves_canonical_name(
@@ -456,52 +431,6 @@ def test_update_model_configuration_edits_named_preset_without_selecting(
     assert saved.model_presets["codex"].model == "openai-codex/gpt-5.5"
 
 
-def test_update_model_configuration_renames_preset_and_config_references(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.model_presets = {
-        "openai": ModelPresetConfig(model="openai/gpt-4.1"),
-        "backup": ModelPresetConfig(model="anthropic/claude-sonnet-4"),
-    }
-    defaults = config.agents.defaults
-    defaults.model_preset = "openai"
-    defaults.fallback_models = ["backup", "openai"]
-    defaults.dream.model_override = "openai"
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    session_manager = SessionManager(
-        tmp_path / "workspace",
-        sessions_root=tmp_path / "sessions",
-    )
-    session = session_manager.get_or_create("websocket:selected")
-    session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = "openai"
-    session_manager.save(session)
-
-    payload = update_model_configuration(
-        {"name": ["openai"], "new_name": ["Codex"]},
-        rename_model_preset=session_manager.rename_model_preset,
-    )
-
-    assert payload["agent"]["model_preset"] == "Codex"
-    assert payload["model_call_order"] == ["Codex", "backup", "Codex"]
-    assert [row["name"] for row in payload["model_presets"]] == [
-        "default",
-        "Codex",
-        "backup",
-    ]
-    saved = load_config(config_path)
-    assert list(saved.model_presets) == ["Codex", "backup"]
-    assert saved.agents.defaults.model_preset == "Codex"
-    assert saved.agents.defaults.fallback_models == ["backup", "Codex"]
-    assert saved.agents.defaults.dream.model_override == "Codex"
-    persisted = SessionManager(
-        tmp_path / "workspace",
-        sessions_root=tmp_path / "sessions",
-    ).get_or_create("websocket:selected")
-    assert persisted.metadata[SESSION_MODEL_PRESET_METADATA_KEY] == "Codex"
 
 
 def test_update_model_configuration_rejects_duplicate_rename(
@@ -549,129 +478,14 @@ def test_update_model_configuration_rolls_back_sessions_when_config_save_fails(
     assert list(load_config(config_path).model_presets) == ["openai"]
 
 
-def test_settings_payload_exposes_named_model_call_order(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.model_presets = {
-        "primary": ModelPresetConfig(model="openai/gpt-4.1", provider="openai"),
-        "backup": ModelPresetConfig(model="anthropic/claude-sonnet-4", provider="anthropic"),
-    }
-    config.agents.defaults.model_preset = "primary"
-    config.agents.defaults.fallback_models = ["backup", "backup"]
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = settings_payload()
-
-    assert payload["model_call_order"] == ["primary", "backup", "backup"]
-    assert payload["model_call_order_editable"] is True
 
 
-def test_update_model_call_order_sets_primary_and_fallbacks(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.model_presets = {
-        "primary": ModelPresetConfig(model="openai/gpt-4.1", provider="openai"),
-        "backup": ModelPresetConfig(model="anthropic/claude-sonnet-4", provider="anthropic"),
-    }
-    config.agents.defaults.model_preset = "primary"
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = update_model_call_order({"order": [json.dumps(["backup", "primary"])]})
-
-    assert payload["model_call_order"] == ["backup", "primary"]
-    saved = load_config(config_path)
-    assert saved.agents.defaults.model_preset == "backup"
-    assert saved.agents.defaults.fallback_models == ["primary"]
 
 
-def test_update_model_call_order_activates_existing_named_preset(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.model_presets["backup"] = ModelPresetConfig(model="openai/gpt-4.1-mini")
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = update_model_call_order({"order": [json.dumps(["backup"])]})
-
-    assert payload["model_call_order"] == ["backup"]
-    assert payload["model_call_order_editable"] is True
-    assert load_config(config_path).agents.defaults.model_preset == "backup"
 
 
-def test_update_model_call_order_preserves_real_legacy_configuration(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.providers.openai.api_key = "sk-test"
-    config.agents.defaults.model = "openai/gpt-4o"
-    config.agents.defaults.provider = "openai"
-    config.model_presets["backup"] = ModelPresetConfig(
-        model="openai/gpt-4.1-mini",
-        provider="openai",
-    )
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    with pytest.raises(WebUISettingsError) as error:
-        update_model_call_order({"order": [json.dumps(["backup"])]})
-
-    assert error.value.status == 409
-    saved = load_config(config_path)
-    assert saved.agents.defaults.model_preset is None
-    assert saved.agents.defaults.model == "openai/gpt-4o"
 
 
-def test_migrate_model_configurations_preserves_legacy_chain(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.agents.defaults.model = "openai/gpt-4o"
-    config.agents.defaults.provider = "openai"
-    config.agents.defaults.max_tokens = 4096
-    config.agents.defaults.temperature = 0.25
-    config.agents.defaults.fallback_models = [
-        InlineFallbackConfig(
-            model="anthropic/claude-sonnet-4",
-            provider="anthropic",
-        )
-    ]
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    legacy_payload = settings_payload()
-    assert legacy_payload["model_call_order"] == []
-    assert legacy_payload["model_call_order_editable"] is False
-    assert legacy_payload["model_configuration_migratable"] is True
-
-    payload = migrate_model_configurations()
-
-    assert payload["model_call_order_editable"] is True
-    assert payload["model_call_order"] == ["gpt-4o", "claude-sonnet-4"]
-    saved = load_config(config_path)
-    assert saved.agents.defaults.model_preset == "gpt-4o"
-    assert saved.agents.defaults.fallback_models == ["claude-sonnet-4"]
-    assert saved.model_presets["gpt-4o"].temperature == 0.25
-    assert saved.model_presets["claude-sonnet-4"].max_tokens == 4096
-    assert saved.model_presets["claude-sonnet-4"].temperature == 0.25
-
-    repeated = migrate_model_configurations()
-    assert repeated["model_call_order"] == ["gpt-4o", "claude-sonnet-4"]
-    assert set(load_config(config_path).model_presets) == {"gpt-4o", "claude-sonnet-4"}
 
 
 def test_schema_default_is_not_exposed_or_materialized_as_legacy_configuration(
@@ -2483,3 +2297,46 @@ def test_azure_openai_spec_no_longer_requires_api_key() -> None:
     spec = find_by_name("azure_openai")
     assert spec is not None
     assert _provider_requires_api_key(spec) is False
+
+
+def test_update_model_call_order_selects_exactly_one_preset(tmp_path) -> None:
+    config = Config.model_validate({
+        "agents": {"defaults": {"modelPreset": "primary"}},
+        "modelPresets": {
+            "primary": {"model": "openai/gpt-4.1", "provider": "openai"},
+            "backup": {"model": "deepseek/deepseek-chat", "provider": "deepseek"},
+        },
+        "providers": {"openai": {"apiKey": "sk-test"}, "deepseek": {"apiKey": "sk-test"}},
+    })
+    path = tmp_path / "config.json"
+    from nanobot.config.loader import save_config
+    save_config(config, path)
+    payload = update_model_call_order({"order": [json.dumps(["backup"])]}, config_path=path)
+    assert payload["model_call_order"] == ["backup"]
+    saved = load_config(path)
+    assert saved.agents.defaults.model_preset == "backup"
+    assert not hasattr(saved.agents.defaults, "fallback_models")
+
+
+def test_update_model_call_order_rejects_multiple_presets(tmp_path) -> None:
+    config = Config.model_validate({
+        "agents": {"defaults": {"modelPreset": "primary"}},
+        "modelPresets": {
+            "primary": {"model": "openai/gpt-4.1", "provider": "openai"},
+            "other": {"model": "openai/gpt-4o-mini", "provider": "openai"},
+        },
+        "providers": {"openai": {"apiKey": "sk-test"}},
+    })
+    path = tmp_path / "config.json"
+    from nanobot.config.loader import save_config
+    save_config(config, path)
+    with pytest.raises(WebUISettingsError, match="exactly one"):
+        update_model_call_order({"order": [json.dumps(["primary", "other"])]}, config_path=path)
+
+
+def test_legacy_fallback_models_are_ignored_by_schema() -> None:
+    config = Config.model_validate({
+        "agents": {"defaults": {"model": "openai/gpt-4.1", "provider": "openai", "fallbackModels": ["missing"]}},
+        "providers": {"openai": {"apiKey": "sk-test"}},
+    })
+    assert not hasattr(config.agents.defaults, "fallback_models")

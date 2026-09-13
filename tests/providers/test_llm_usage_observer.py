@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
-from types import SimpleNamespace
 
 import pytest
 
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.llm_usage.models import LLMCallRecord
 from nanobot.providers.base import LLMProvider, LLMResponse, LLMUsage
-from nanobot.providers.fallback_provider import FallbackProvider
 
 
 class _SequenceProvider(LLMProvider):
@@ -24,10 +22,6 @@ class _SequenceProvider(LLMProvider):
 
     def get_default_model(self) -> str:
         return "test-model"
-
-
-class _NoRetryProvider(_SequenceProvider):
-    _CHAT_RETRY_DELAYS = ()
 
 
 class _BlockingProvider(LLMProvider):
@@ -186,49 +180,3 @@ async def test_observer_records_cancelled_provider_attempt(stream: bool) -> None
     assert events[0].finish_reason == "cancelled"
     assert events[0].error_kind == "cancelled"
     assert events[0].usage is None
-
-
-@pytest.mark.asyncio
-async def test_fallback_provider_propagates_observer_to_every_leaf() -> None:
-    primary = _NoRetryProvider(
-        iter(
-            [
-                LLMResponse(
-                    content="primary unavailable",
-                    finish_reason="error",
-                    error_kind="timeout",
-                )
-            ]
-        )
-    )
-    fallback = _SequenceProvider(
-        iter(
-            [
-                LLMResponse(
-                    content="fallback ok",
-                    usage=LLMUsage.reported(input_tokens=12, output_tokens=3),
-                )
-            ]
-        )
-    )
-    preset = SimpleNamespace(
-        model="fallback-model",
-        max_tokens=256,
-        temperature=0.2,
-        reasoning_effort=None,
-        context_window_tokens=4_096,
-    )
-    provider = FallbackProvider(primary, [preset], lambda _preset: fallback)
-    events: list[LLMCallRecord] = []
-    provider.set_llm_call_observer(events.append)
-
-    response = await provider.chat_with_retry(
-        messages=[{"role": "user", "content": "hello"}],
-        model="primary-model",
-    )
-
-    assert response.content == "fallback ok"
-    assert [(event.model, event.finish_reason) for event in events] == [
-        ("primary-model", "error"),
-        ("fallback-model", "stop"),
-    ]

@@ -87,7 +87,7 @@ async def test_invalidation_refreshes_on_next_main_admission_and_publishes(tmp_p
     await asyncio.sleep(0)
 
     assert runtime.model == "model-b"
-    loader.assert_called_once_with(include_fallbacks=True)
+    loader.assert_called_once_with()
     assert [(event.model, event.model_preset) for event in published] == [("model-b", None)]
 
 

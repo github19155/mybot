@@ -336,49 +336,12 @@ def _rename_model_configuration(config: Config, old_name: str, new_name: str) ->
     defaults = config.agents.defaults
     if defaults.model_preset == old_name:
         defaults.model_preset = new_name
-    defaults.fallback_models = [new_name if fallback == old_name else fallback for fallback in defaults.fallback_models]
     if defaults.dream.model_override == old_name:
         defaults.dream.model_override = new_name
     for binding in config.subagent_roles.values():
         if binding.model_preset == old_name:
             binding.model_preset = new_name
     return True
-
-
-def _model_call_order_state(config: Config) -> tuple[list[str], bool]:
-    defaults = config.agents.defaults
-    primary = defaults.model_preset
-    if not primary or primary == "default" or primary not in config.model_presets:
-        return [], False
-    order = [primary]
-    for fallback in defaults.fallback_models:
-        if not isinstance(fallback, str):
-            return [], False
-        order.append(fallback)
-    return order, True
-
-
-def _legacy_model_configuration_migratable(config: Config, oauth_status: OAuthStatusReader) -> bool:
-    _, editable = _model_call_order_state(config)
-    if editable:
-        return False
-    defaults = config.agents.defaults
-    if defaults.fallback_models:
-        return True
-    provider_name = defaults.provider
-    if provider_name == "auto":
-        model_prefix = defaults.model.split("/", 1)[0] if "/" in defaults.model else ""
-        if model_prefix and resolve_provider(config, model_prefix) is not None:
-            provider_name = model_prefix
-        else:
-            provider_name = config.get_provider_name(defaults.model, preset=config.resolve_default_preset()) or ""
-    if not provider_name or provider_name == "auto":
-        return False
-    resolved = resolve_provider(config, provider_name)
-    if resolved is None:
-        return False
-    spec, _, provider_config = resolved
-    return provider_configured(spec, provider_config, oauth_status)
 
 
 def _validate_configured_provider(config: Config, provider: str, oauth_status: OAuthStatusReader) -> None:
@@ -407,7 +370,7 @@ def create_model_configuration(config: Config, query: QueryParams, *, oauth_stat
     if _model_configuration_name_exists(config, name):
         raise ModelSettingsError("configuration already exists", status=409)
     _validate_configured_provider(config, provider, oauth_status)
-    activate_as_primary = not config.model_presets and not _legacy_model_configuration_migratable(config, oauth_status)
+    activate_as_primary = not config.model_presets
     base = config.resolve_preset()
     max_tokens = _parse_positive_int(_query_first_alias(query, "max_tokens", "maxTokens"), "max_tokens")
     context_window_tokens = _parse_positive_int(_query_first_alias(query, "context_window_tokens", "contextWindowTokens"), "context_window_tokens")
@@ -429,7 +392,6 @@ def create_model_configuration(config: Config, query: QueryParams, *, oauth_stat
     )
     if activate_as_primary:
         config.agents.defaults.model_preset = name
-        config.agents.defaults.fallback_models = []
     return name
 
 
@@ -499,8 +461,8 @@ def delete_model_configuration(config: Config, query: QueryParams) -> None:
     if bound_roles:
         raise ModelSettingsError("Rebind or clear these subagent roles before deleting the preset: " + ", ".join(bound_roles), status=409)
     defaults = config.agents.defaults
-    if defaults.model_preset == name or any(fallback == name for fallback in defaults.fallback_models):
-        raise ModelSettingsError("remove the model preset from the call order first", status=409)
+    if defaults.model_preset == name:
+        raise ModelSettingsError("select another model preset before deleting it", status=409)
     if config.tools.image_analysis.model_preset == name:
         raise ModelSettingsError("clear the image analysis model preset before deleting it", status=409)
     del config.model_presets[name]

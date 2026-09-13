@@ -32,7 +32,7 @@ class ModelRuntimeResolver:
         self._preset_catalog_refresh_required = False
         self._provider_snapshot_loader = provider_snapshot_loader
         self._refresh_required = False
-        self._resolved_presets: dict[tuple[str, bool], LLMRuntime] = {}
+        self._resolved_presets: dict[str, LLMRuntime] = {}
         self._default_selection_signature = preset_helpers.default_selection_signature(
             initial_runtime.snapshot_signature,
             initial_runtime.model_preset,
@@ -104,7 +104,6 @@ class ModelRuntimeResolver:
         *,
         model: str | None = None,
         model_preset: str | None = None,
-        include_fallbacks: bool = True,
     ) -> LLMRuntime:
         """Resolve one inherited, direct-model, or preset selection without mutation."""
         if model is not None and model_preset is not None:
@@ -128,7 +127,6 @@ class ModelRuntimeResolver:
             )
             snapshot = self._provider_snapshot_loader(
                 preset=preset,
-                include_fallbacks=include_fallbacks,
             )
             return self.resolve_snapshot(snapshot)
 
@@ -136,13 +134,12 @@ class ModelRuntimeResolver:
         normalized = preset_helpers.normalize_preset_name(model_preset, self._model_presets)
         if self._provider_snapshot_loader is None:
             raise RuntimeError("runtime selection requires a provider snapshot loader")
-        cache_key = (normalized, include_fallbacks)
+        cache_key = normalized
         cached = self._resolved_presets.get(cache_key)
         if cached is not None:
             return cached
         snapshot = self._provider_snapshot_loader(
             preset_name=normalized,
-            include_fallbacks=include_fallbacks,
         )
         runtime = self.resolve_snapshot(snapshot)
         self._resolved_presets[cache_key] = runtime
@@ -153,13 +150,11 @@ class ModelRuntimeResolver:
         name: str | None,
         *,
         parent_runtime: LLMRuntime | None = None,
-        include_fallbacks: bool = True,
     ) -> LLMRuntime:
         """Delegate named preset resolution to the canonical selection primitive."""
         return self.resolve_selection(
             parent_runtime or self._runtime,
             model_preset=name,
-            include_fallbacks=include_fallbacks,
         )
 
     def select_preset(self, name: str | None) -> LLMRuntime:
@@ -190,7 +185,7 @@ class ModelRuntimeResolver:
             return None
 
         self._resolved_presets.clear()
-        snapshot = self._provider_snapshot_loader(include_fallbacks=True)
+        snapshot = self._provider_snapshot_loader()
         default_selection = preset_helpers.default_selection_signature(
             snapshot.signature,
             snapshot.model_preset,
@@ -200,7 +195,6 @@ class ModelRuntimeResolver:
             runtime = self.resolve_selection(
                 self._runtime,
                 model_preset=active_preset,
-                include_fallbacks=True,
             )
         else:
             runtime = self.resolve_snapshot(snapshot)
@@ -222,7 +216,6 @@ class ModelRuntimeResolver:
         *,
         model: str | None,
         model_preset: str | None,
-        include_fallbacks: bool = True,
     ) -> LLMRuntime | None:
         """Resolve an SDK-style per-run override without mutating the default."""
         if model is None and model_preset is None:
@@ -231,5 +224,4 @@ class ModelRuntimeResolver:
             self._runtime,
             model=model,
             model_preset=model_preset,
-            include_fallbacks=include_fallbacks,
         )

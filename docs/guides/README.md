@@ -42,7 +42,6 @@ Use **Settings → Channels** in the WebUI for guided setup. These guides explai
 |---|---|
 | Add MCP tools | [Configure MCP tools](./configure-mcp-tools.md) |
 | Enable web search | [Configure web search](./configure-web-search.md) |
-| Add model fallback | [Configure model fallback](./configure-model-fallback.md) |
 | Add an OpenAI-compatible provider | [Configure an OpenAI-compatible provider](./configure-openai-compatible-provider.md) |
 | Improve Ollama tool prompt-cache reuse | [Configure Ollama prompt caching](./configure-ollama-prompt-cache.md) |
 | Add Langfuse tracing | [Configure Langfuse observability](./configure-langfuse-observability.md) |

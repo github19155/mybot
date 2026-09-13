@@ -87,7 +87,6 @@ class ModelManagement:
         return self._runtime_resolver.resolve_selection(
             self._runtime_resolver.runtime,
             model_preset=selected,
-            include_fallbacks=False,
         )
 
     @staticmethod
@@ -307,11 +306,9 @@ class ModelManagement:
                     self._update_dream(config, params)
                 elif action in {"model_create", "model_update"}:
                     selected = config.agents.defaults.model_preset
-                    fallbacks = list(config.agents.defaults.fallback_models)
                     cast(Any, operation)(config, query)
                     if action == "model_create":
                         config.agents.defaults.model_preset = selected
-                        config.agents.defaults.fallback_models = fallbacks
                 else:
                     cast(Any, operation)(config, query)
                 return config
@@ -326,7 +323,6 @@ class ModelManagement:
             self.config.subagent_roles = updated.subagent_roles
             self.config.model_fleet = updated.model_fleet
             self.config.agents.defaults.model_preset = updated.agents.defaults.model_preset
-            self.config.agents.defaults.fallback_models = updated.agents.defaults.fallback_models
             self.config.agents.defaults.dream = updated.agents.defaults.dream
             return self._catalog(updated)
 

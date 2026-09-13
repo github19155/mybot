@@ -412,8 +412,6 @@
       "configurationName": "設定名",
       "configurationNameHelp": "保存済みのモデル設定の名前を変更します。",
       "configurationNamePlaceholder": "高速執筆",
-      "callOrder": "モデル呼び出し順序",
-      "primary": "プライマリ",
       "subagentRoles": {
         "title": "サブエージェントのロール",
         "concurrency": "同時実行バックグラウンドタスク",
@@ -423,8 +421,6 @@
         "save": "ロール設定を保存",
         "saving": "ロール設定を保存中…"
       },
-      "fallbackNumber": "フォールバック {{number}}",
-      "addToOrder": "プリセットを有効化",
       "newPreset": "新しいモデルプリセット",
       "newPresetHelp": "再利用できるモデルと生成設定を保存します。",
       "presets": "モデルプリセット",
@@ -438,18 +434,6 @@
       "maxTokens": "最大出力トークン",
       "temperature": "温度",
       "reasoningEffort": "推論の強度",
-      "convertTitle": "現在のモデル設定を変換",
-      "convertHelp": "既存のプライマリモデルとフォールバックモデルをプリセットに変換し、ここで順序を管理できるようにします。",
-      "converting": "変換中...",
-      "convertAction": "プリセットに変換",
-      "dragToReorder": "ドラッグして並べ替え",
-      "moveUp": "上へ移動",
-      "moveDown": "下へ移動",
-      "removeFromOrder": "プリセットを無効化",
-      "inCallOrder": "呼び出し順序に追加済み",
-      "disabled": "無効",
-      "noPresets": "モデルプリセットはまだありません",
-      "noPresetsHelp": "プリセットを作成してから呼び出し順序に追加してください。",
       "removeBeforeDelete": "削除する前に、このプリセットを呼び出し順序から外してください。",
       "providerSetupRequired": "プロバイダーの設定が必要です",
       "configureProviderBeforeSaving": "プリセットを保存する前に、このプロバイダーを設定してください。",
@@ -1064,7 +1048,6 @@
     },
     "next": {
       "label": "次回: {{time}}",
-      "disabled": "一時停止中",
       "local": "トリガー待ち",
       "none": "次回実行なし"
     }
@@ -1154,7 +1137,6 @@
       "loading": "自動タスクを読み込み中...",
       "loadFailed": "自動タスクを読み込めませんでした。",
       "empty": "このセッションにはまだ自動タスクがありません。",
-      "disabled": "オフ",
       "schedule": {
         "at": "{{time}}",
         "every": "{{duration}}ごと",
@@ -1166,7 +1148,6 @@
       "next": {
         "label": "次回 {{time}}",
         "pending": "まもなく実行",
-        "disabled": "一時停止",
         "local": "トリガー待ち",
         "none": "次回実行なし"
       }

@@ -115,7 +115,7 @@ def test_named_preset_resolution_is_non_mutating_normalized_and_cached() -> None
     assert first is second
     assert first.model_preset == "Fast"
     assert resolver.runtime is parent
-    loader.assert_called_once_with(preset_name="Fast", include_fallbacks=True)
+    loader.assert_called_once_with(preset_name="Fast")
 
 
 def test_direct_model_rebuilds_a_canonical_snapshot_from_parent_settings() -> None:
@@ -140,25 +140,12 @@ def test_direct_model_rebuilds_a_canonical_snapshot_from_parent_settings() -> No
     assert preset.to_generation_settings() == parent.generation
     assert preset.context_window_tokens == parent.context_window_tokens
     assert preset.supports_vision is False
-    assert call.kwargs["include_fallbacks"] is True
     assert resolved.provider is canonical.provider
     assert resolved.snapshot_signature == canonical.signature
     assert resolved.system_prompt_prefix == canonical.system_prompt_prefix
     assert resolver.runtime is parent
 
 
-def test_selection_forwards_explicit_fallback_policy() -> None:
-    parent = _runtime()
-    loader = MagicMock(return_value=_snapshot(model="dream-model", preset="dream"))
-    resolver = ModelRuntimeResolver(
-        parent,
-        model_presets={"dream": ModelPresetConfig(model="dream-model")},
-        provider_snapshot_loader=loader,
-    )
-
-    resolver.resolve_selection(parent, model_preset="dream", include_fallbacks=False)
-
-    loader.assert_called_once_with(preset_name="dream", include_fallbacks=False)
 
 
 def test_selection_requires_one_canonical_snapshot_loader() -> None:
@@ -235,7 +222,7 @@ def test_invalidate_refreshes_only_on_next_admission() -> None:
     admitted = resolver.admit()
 
     assert admitted.model == "refreshed-model"
-    loader.assert_called_once_with(include_fallbacks=True)
+    loader.assert_called_once_with()
     assert resolver.admit() is admitted
 
 

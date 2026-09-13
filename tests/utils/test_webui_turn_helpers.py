@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import GoalStatusEvent, TurnModelUpdatedEvent, UserInputEvent
 from nanobot.bus.runtime_events import (
@@ -149,36 +148,6 @@ async def test_publish_turn_run_status_non_websocket_noop_registry() -> None:
     assert wth._WEBSOCKET_TURN_IDS == {}
 
 
-@pytest.mark.asyncio
-async def test_fallback_model_is_scoped_to_its_websocket_chat() -> None:
-    bus = MagicMock()
-    bus.publish_outbound = AsyncMock()
-    observer = wth.build_webui_fallback_model_observer(bus)
-
-    runtime = LLMRuntime(
-        provider=MagicMock(),
-        model="openai/gpt-4.1",
-        generation=GenerationSettings(),
-        context_window_tokens=16_000,
-        model_preset="Deep Research",
-    )
-    with request_context(
-        RequestContext(
-            channel="websocket",
-            chat_id="chat-model",
-            runtime=runtime,
-            metadata={"webui": True},
-        )
-    ):
-        await observer("deepseek/deepseek-chat")
-
-    outbound = bus.publish_outbound.await_args.args[0]
-    assert outbound.channel == "websocket"
-    assert outbound.chat_id == "chat-model"
-    assert outbound.metadata == {"webui": True}
-    assert isinstance(outbound.event, TurnModelUpdatedEvent)
-    assert outbound.event.model == "deepseek/deepseek-chat"
-    assert outbound.event.model_preset == "Deep Research"
 
 
 @pytest.mark.asyncio
@@ -270,15 +239,3 @@ async def test_session_input_is_projected_by_the_webui_coordinator(
         "id": source.id,
         "name": source.name,
     }
-
-
-@pytest.mark.asyncio
-async def test_fallback_model_ignores_non_websocket_requests() -> None:
-    bus = MagicMock()
-    bus.publish_outbound = AsyncMock()
-    observer = wth.build_webui_fallback_model_observer(bus)
-
-    with request_context(RequestContext(channel="telegram", chat_id="chat-model")):
-        await observer("fallback")
-
-    bus.publish_outbound.assert_not_awaited()

@@ -526,9 +526,9 @@ class AgentLoop:
         provider_snapshot = extra.pop("provider_snapshot", None)
         if provider_snapshot is None and explicit_provider is None:
             if supplied_snapshot_loader:
-                provider_snapshot = provider_snapshot_loader(include_fallbacks=True)
+                provider_snapshot = provider_snapshot_loader()
             else:
-                provider_snapshot = build_provider_snapshot(config, include_fallbacks=True)
+                provider_snapshot = build_provider_snapshot(config)
 
         model_override = extra.pop("model", None)
         preset_override = extra.pop("model_preset", None)

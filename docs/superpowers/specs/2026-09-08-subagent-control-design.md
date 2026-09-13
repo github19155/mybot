@@ -117,8 +117,7 @@ Resolution precedence, strongest first, is:
 and is passed internally as `reasoning_effort`. Provider-specific validation remains in the
 provider layer. An unknown role, model preset, or thinking value fails before task admission.
 
-The first version does not add per-role fallback model lists. Existing nanobot preset and
-global provider fallback behavior remains authoritative.
+The first version does not add per-role fallback model lists. Model selection remains authoritative through named presets and `ModelRuntimeResolver`; a request does not transparently switch models after admission.
 
 ## Tool contract
 

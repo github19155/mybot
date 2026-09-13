@@ -35,7 +35,6 @@ import {
   listSlashCommands,
   loginProviderOAuth,
   logoutProviderOAuth,
-  migrateModelConfigurations,
   disableNanobotFeature,
   enableNanobotFeature,
   runAutomationAction,
@@ -52,7 +51,6 @@ import {
   updateAutomation,
   updateSidebarState,
   updateImageGenerationSettings,
-  updateModelCallOrder,
   updateModelConfiguration,
   updateMcpServerTools,
   updateNetworkSafetySettings,
@@ -503,30 +501,11 @@ describe("webui API helpers", () => {
     );
   });
 
-  it("serializes model preset deletion and migration", async () => {
+  it("serializes model preset deletion", async () => {
     await deleteModelConfiguration(mutationTransport, "spare");
-    await migrateModelConfigurations(mutationTransport);
-
-    expect(requestMutation).toHaveBeenNthCalledWith(
-      1,
+    expect(requestMutation).toHaveBeenCalledWith(
       "settings.model_configuration.delete",
       { name: "spare" },
-      20_000,
-    );
-    expect(requestMutation).toHaveBeenNthCalledWith(
-      2,
-      "settings.model_configuration.migrate",
-      {},
-      20_000,
-    );
-  });
-
-  it("serializes model call order as an ordered JSON array", async () => {
-    await updateModelCallOrder(mutationTransport, ["backup", "primary"]);
-
-    expect(requestMutation).toHaveBeenCalledWith(
-      "settings.model_call_order.update",
-      { order: ["backup", "primary"] },
       20_000,
     );
   });

@@ -366,18 +366,6 @@ async def test_oauth_completion_reads_websocket_payload(
             {"name": ["spare"]},
         ),
         (
-            "/api/settings/model-configurations/migrate",
-            "migrate_model_configurations",
-            {},
-            {},
-        ),
-        (
-            "/api/settings/model-call-order/update",
-            "update_model_call_order",
-            {"order": ["backup"]},
-            {"order": ['["backup"]']},
-        ),
-        (
             "/api/settings/provider/create",
             "create_provider_settings",
             {"name": "team", "api_base": "https://llm.example/v1"},

@@ -51,7 +51,7 @@ sessions for longer work.
 
 - Keep one workspace per project or personal context.
 - Use `modelPresets` when you want stable names for fast, deep, local, or
-  fallback models.
+  named model presets.
 - Keep `nanobot gateway` running for WebUI, chat apps, automations, and the
   WebSocket channel.
 - Use the Python SDK or OpenAI-compatible API when another program should call

@@ -412,8 +412,6 @@
       "configurationName": "구성 이름",
       "configurationNameHelp": "저장된 모델 구성의 이름을 변경합니다.",
       "configurationNamePlaceholder": "빠른 작성",
-      "callOrder": "모델 호출 순서",
-      "primary": "기본",
       "subagentRoles": {
         "title": "서브에이전트 역할",
         "concurrency": "동시 백그라운드 작업",
@@ -423,8 +421,6 @@
         "save": "역할 바인딩 저장",
         "saving": "역할 바인딩 저장 중…"
       },
-      "fallbackNumber": "대체 {{number}}",
-      "addToOrder": "프리셋 활성화",
       "newPreset": "새 모델 프리셋",
       "newPresetHelp": "재사용할 모델과 생성 설정을 저장합니다.",
       "presets": "모델 프리셋",
@@ -438,18 +434,6 @@
       "maxTokens": "최대 출력 토큰",
       "temperature": "온도",
       "reasoningEffort": "추론 강도",
-      "convertTitle": "현재 모델 설정 변환",
-      "convertHelp": "기존 기본 및 대체 모델을 프리셋으로 변환하여 여기서 순서를 관리합니다.",
-      "converting": "변환 중...",
-      "convertAction": "프리셋으로 변환",
-      "dragToReorder": "드래그하여 순서 변경",
-      "moveUp": "위로 이동",
-      "moveDown": "아래로 이동",
-      "removeFromOrder": "프리셋 비활성화",
-      "inCallOrder": "호출 순서에 포함됨",
-      "disabled": "비활성화됨",
-      "noPresets": "아직 모델 프리셋이 없습니다",
-      "noPresetsHelp": "프리셋을 만든 다음 호출 순서에 추가하세요.",
       "removeBeforeDelete": "삭제하기 전에 이 프리셋을 호출 순서에서 제거하세요.",
       "providerSetupRequired": "제공자 설정 필요",
       "configureProviderBeforeSaving": "프리셋을 저장하기 전에 이 제공자를 설정하세요.",
@@ -1064,7 +1048,6 @@
     },
     "next": {
       "label": "다음: {{time}}",
-      "disabled": "일시 중지됨",
       "local": "트리거 대기 중",
       "none": "다음 실행 없음"
     }
@@ -1154,7 +1137,6 @@
       "loading": "자동화를 불러오는 중...",
       "loadFailed": "자동화를 불러오지 못했습니다.",
       "empty": "이 세션에는 아직 자동화가 없습니다.",
-      "disabled": "꺼짐",
       "schedule": {
         "at": "{{time}}",
         "every": "{{duration}}마다",
@@ -1166,7 +1148,6 @@
       "next": {
         "label": "다음 {{time}}",
         "pending": "곧 실행됨",
-        "disabled": "일시 중지됨",
         "local": "트리거 대기 중",
         "none": "다음 실행 없음"
       }

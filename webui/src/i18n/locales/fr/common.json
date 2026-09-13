@@ -412,8 +412,6 @@
       "configurationName": "Nom de la configuration",
       "configurationNameHelp": "Renomme cette configuration de modèle enregistrée.",
       "configurationNamePlaceholder": "Rédaction rapide",
-      "callOrder": "Ordre d’appel des modèles",
-      "primary": "Principal",
       "subagentRoles": {
         "title": "Rôles des sous-agents",
         "concurrency": "Tâches d’arrière-plan simultanées",
@@ -423,8 +421,6 @@
         "save": "Enregistrer les rôles",
         "saving": "Enregistrement des rôles…"
       },
-      "fallbackNumber": "Secours {{number}}",
-      "addToOrder": "Activer le préréglage",
       "newPreset": "Nouveau préréglage de modèle",
       "newPresetHelp": "Enregistrez un modèle réutilisable et ses paramètres de génération.",
       "presets": "Préréglages de modèle",
@@ -438,18 +434,6 @@
       "maxTokens": "Tokens de sortie max.",
       "temperature": "Température",
       "reasoningEffort": "Effort de raisonnement",
-      "convertTitle": "Convertir la configuration de modèles actuelle",
-      "convertHelp": "Convertissez les modèles principal et de secours existants en préréglages afin de gérer leur ordre ici.",
-      "converting": "Conversion...",
-      "convertAction": "Convertir en préréglages",
-      "dragToReorder": "Faire glisser pour réorganiser",
-      "moveUp": "Monter",
-      "moveDown": "Descendre",
-      "removeFromOrder": "Désactiver le préréglage",
-      "inCallOrder": "Dans l’ordre d’appel",
-      "disabled": "Désactivé",
-      "noPresets": "Aucun préréglage de modèle",
-      "noPresetsHelp": "Créez un préréglage, puis ajoutez-le à l’ordre d’appel.",
       "removeBeforeDelete": "Retirez ce préréglage de l’ordre d’appel avant de le supprimer.",
       "providerSetupRequired": "Configuration du fournisseur requise",
       "configureProviderBeforeSaving": "Configurez ce fournisseur avant d’enregistrer le préréglage.",
@@ -1064,7 +1048,6 @@
     },
     "next": {
       "label": "Prochaine exécution : {{time}}",
-      "disabled": "En pause",
       "local": "En attente du déclencheur",
       "none": "Aucune prochaine exécution"
     }
@@ -1154,7 +1137,6 @@
       "loading": "Chargement des automatisations...",
       "loadFailed": "Impossible de charger les automatisations.",
       "empty": "Aucune automatisation dans cette session pour le moment.",
-      "disabled": "Désactivé",
       "schedule": {
         "at": "À {{time}}",
         "every": "Toutes les {{duration}}",
@@ -1166,7 +1148,6 @@
       "next": {
         "label": "Prochaine {{time}}",
         "pending": "Exécution imminente",
-        "disabled": "En pause",
         "local": "En attente du déclencheur",
         "none": "Aucune prochaine exécution"
       }

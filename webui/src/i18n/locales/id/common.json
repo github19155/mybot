@@ -412,8 +412,6 @@
       "configurationName": "Nama konfigurasi",
       "configurationNameHelp": "Ganti nama konfigurasi model tersimpan ini.",
       "configurationNamePlaceholder": "Menulis cepat",
-      "callOrder": "Urutan pemanggilan model",
-      "primary": "Utama",
       "subagentRoles": {
         "title": "Peran subagen",
         "concurrency": "Tugas latar belakang serentak",
@@ -423,8 +421,6 @@
         "save": "Simpan pengikatan peran",
         "saving": "Menyimpan pengikatan peran…"
       },
-      "fallbackNumber": "Cadangan {{number}}",
-      "addToOrder": "Aktifkan prasetel",
       "newPreset": "Prasetel model baru",
       "newPresetHelp": "Simpan model yang dapat digunakan kembali beserta pengaturan generasinya.",
       "presets": "Prasetel model",
@@ -438,18 +434,6 @@
       "maxTokens": "Maks. token keluaran",
       "temperature": "Temperatur",
       "reasoningEffort": "Upaya penalaran",
-      "convertTitle": "Konversi pengaturan model saat ini",
-      "convertHelp": "Ubah model utama dan cadangan yang ada menjadi prasetel agar urutannya dapat dikelola di sini.",
-      "converting": "Mengonversi...",
-      "convertAction": "Konversi ke prasetel",
-      "dragToReorder": "Seret untuk mengurutkan ulang",
-      "moveUp": "Naikkan",
-      "moveDown": "Turunkan",
-      "removeFromOrder": "Nonaktifkan prasetel",
-      "inCallOrder": "Dalam urutan pemanggilan",
-      "disabled": "Nonaktif",
-      "noPresets": "Belum ada prasetel model",
-      "noPresetsHelp": "Buat prasetel, lalu tambahkan ke urutan pemanggilan.",
       "removeBeforeDelete": "Hapus prasetel ini dari urutan pemanggilan sebelum menghapusnya.",
       "providerSetupRequired": "Penyedia perlu dikonfigurasi",
       "configureProviderBeforeSaving": "Konfigurasikan penyedia ini sebelum menyimpan prasetel.",
@@ -1064,7 +1048,6 @@
     },
     "next": {
       "label": "Berikutnya: {{time}}",
-      "disabled": "Dijeda",
       "local": "Menunggu pemicu",
       "none": "Tidak ada jadwal berikutnya"
     }
@@ -1154,7 +1137,6 @@
       "loading": "Memuat otomasi...",
       "loadFailed": "Tidak dapat memuat otomasi.",
       "empty": "Belum ada otomasi dalam sesi ini.",
-      "disabled": "Mati",
       "schedule": {
         "at": "Pada {{time}}",
         "every": "Setiap {{duration}}",
@@ -1166,7 +1148,6 @@
       "next": {
         "label": "Berikutnya {{time}}",
         "pending": "Segera berjalan",
-        "disabled": "Dijeda",
         "local": "Menunggu pemicu",
         "none": "Tidak ada jadwal berikutnya"
       }

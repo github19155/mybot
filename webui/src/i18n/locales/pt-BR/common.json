@@ -134,8 +134,6 @@
       "configurationName": "Nome da configuração",
       "configurationNameHelp": "Renomeie esta configuração de modelo.",
       "configurationNamePlaceholder": "Escrita rápida",
-      "callOrder": "Ordem de chamada dos modelos",
-      "primary": "Principal",
       "subagentRoles": {
         "title": "Papéis dos subagentes",
         "concurrency": "Tarefas em segundo plano simultâneas",
@@ -145,8 +143,6 @@
         "save": "Salvar vínculos de papel",
         "saving": "Salvando vínculos de papel…"
       },
-      "fallbackNumber": "Alternativo {{number}}",
-      "addToOrder": "Ativar predefinição",
       "newPreset": "Nova predefinição de modelo",
       "newPresetHelp": "Salve um modelo reutilizável e suas configurações de geração.",
       "presets": "Predefinições de modelo",
@@ -160,18 +156,6 @@
       "maxTokens": "Máx. de tokens de saída",
       "temperature": "Temperatura",
       "reasoningEffort": "Esforço de raciocínio",
-      "convertTitle": "Converter a configuração de modelos atual",
-      "convertHelp": "Converta os modelos principal e alternativos existentes em predefinições para gerenciar a ordem aqui.",
-      "converting": "Convertendo...",
-      "convertAction": "Converter em predefinições",
-      "dragToReorder": "Arraste para reordenar",
-      "moveUp": "Mover para cima",
-      "moveDown": "Mover para baixo",
-      "removeFromOrder": "Desativar predefinição",
-      "inCallOrder": "Na ordem de chamada",
-      "disabled": "Desabilitado",
-      "noPresets": "Ainda não há predefinições de modelo",
-      "noPresetsHelp": "Crie uma predefinição e adicione-a à ordem de chamada.",
       "removeBeforeDelete": "Remova esta predefinição da ordem de chamada antes de excluí-la.",
       "providerSetupRequired": "Configuração do provedor necessária",
       "configureProviderBeforeSaving": "Configure este provedor antes de salvar a predefinição.",
@@ -1078,7 +1062,6 @@
     },
     "next": {
       "label": "Próxima: {{time}}",
-      "disabled": "Pausada",
       "local": "Aguardando gatilho",
       "none": "Sem próxima execução"
     }
@@ -1168,7 +1151,6 @@
       "loading": "Carregando automações...",
       "loadFailed": "Não foi possível carregar as automações.",
       "empty": "Ainda não há automações nesta sessão.",
-      "disabled": "Desligado",
       "schedule": {
         "at": "{{time}}",
         "every": "A cada {{duration}}",
@@ -1180,7 +1162,6 @@
       "next": {
         "label": "{{time}}",
         "pending": "Executará em breve",
-        "disabled": "Pausada",
         "local": "Aguardando gatilho",
         "none": "Sem próxima execução"
       }

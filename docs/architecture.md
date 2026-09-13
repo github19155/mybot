@@ -111,8 +111,8 @@ Provider selection uses:
 - explicit `agents.defaults.provider` or preset provider;
 - provider registry keywords;
 - API key prefixes and API base URL hints;
-- local provider fallback when `apiBase` is configured;
-- gateway fallback for providers that can route many model families.
+- local provider resolution when `apiBase` is configured;
+- gateway resolution for providers that can route many model families.
 
 Provider implementations live in `nanobot/providers/`. Most hosted providers use the OpenAI-compatible implementation, while Anthropic, Azure OpenAI, AWS Bedrock, OpenAI Codex, and GitHub Copilot have specialized paths.
 

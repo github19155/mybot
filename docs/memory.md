@@ -122,7 +122,7 @@ Dream execution and persistence are runtime-owned. The Dream worker may read the
 
 ## Dream Model Selection
 
-Dream model policy lives under `agents.defaults.dream`. It may select an explicit Dream model preset, choose a preset recommended from a configured Dream pool, or use the configured Dream fallback preset. `ModelManagement` owns that selection policy and delegates the selected preset to `ModelRuntimeResolver`, which is the only component that turns the selection into `LLMRuntime`.
+Dream model policy lives under `agents.defaults.dream`. It may select an explicit Dream model preset, choose a preset recommended from a configured Dream pool, or use the configured Dream `fallback_preset` as a final pre-request preset choice. `ModelManagement` owns that selection policy and delegates the selected preset to `ModelRuntimeResolver`, which is the only component that turns the selection into `LLMRuntime`.
 
 Dream does not inherit an ad hoc runtime construction path, and `ModelFleet` recommendations do not construct the runtime.
 

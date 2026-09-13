@@ -18,7 +18,6 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config
 from nanobot.providers.factory import build_provider_snapshot, provider_signature
-from nanobot.providers.fallback_provider import FallbackProvider
 from nanobot.utils.llm_runtime import runtime_from_provider_snapshot
 
 
@@ -150,16 +149,13 @@ def test_override_and_default_selection_share_cross_provider_resolution(
         assert selected.context_window_tokens == parent.context_window_tokens
 
 
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dream_first", [False, True])
-async def test_main_and_dream_fallback_caches_are_order_independent(
-    runtime_config,
-    dream_first,
-):
-    runtime_config.agents.defaults.fallback_models = ["backup"]
+async def test_main_and_dream_share_one_resolved_preset_runtime(runtime_config, dream_first):
     runtime_config.agents.defaults.dream.model_override = "worker"
     original = runtime_config.model_dump()
-    fallback_list = runtime_config.agents.defaults.fallback_models
     resolver, loader = _resolver(runtime_config)
     management = ModelManagement(runtime_config, runtime_resolver=resolver)
 
@@ -170,33 +166,15 @@ async def test_main_and_dream_fallback_caches_are_order_independent(
         main = resolver.select_preset("worker")
         dream = await management.resolve_dream_runtime("consolidation")
 
-    assert isinstance(main.provider, FallbackProvider)
-    assert not isinstance(dream.provider, FallbackProvider)
-    assert dream.provider.provider_name == "deepseek"
-    assert main.context_window_tokens == 8_000
-    assert dream.context_window_tokens == 48_000
-    assert main.snapshot_signature == provider_signature(
-        runtime_config,
-        preset_name="worker",
-        include_fallbacks=True,
-    )
-    assert dream.snapshot_signature == provider_signature(
-        runtime_config,
-        preset_name="worker",
-        include_fallbacks=False,
-    )
-    assert main.snapshot_signature != dream.snapshot_signature
-    assert resolver.resolve_preset("worker", include_fallbacks=True) is main
-    assert resolver.resolve_preset("worker", include_fallbacks=False) is dream
-    assert await management.resolve_dream_runtime("consolidation") is dream
+    assert main is dream
+    assert main.provider.provider_name == "deepseek"
+    assert main.context_window_tokens == 48_000
+    assert main.snapshot_signature == provider_signature(runtime_config, preset_name="worker")
+    assert resolver.resolve_preset("worker") is main
+    assert await management.resolve_dream_runtime("consolidation") is main
     assert resolver.runtime is main
-    assert loader.call_count == 2
-    assert {call.kwargs["include_fallbacks"] for call in loader.call_args_list} == {
-        True,
-        False,
-    }
+    assert loader.call_count == 1
     assert runtime_config.model_dump() == original
-    assert runtime_config.agents.defaults.fallback_models is fallback_list
 
 
 @pytest.mark.asyncio

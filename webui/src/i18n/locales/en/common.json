@@ -134,8 +134,6 @@
       "configurationName": "Configuration name",
       "configurationNameHelp": "Rename this saved model configuration.",
       "configurationNamePlaceholder": "Fast writing",
-      "callOrder": "Model call order",
-      "primary": "Primary",
       "subagentRoles": {
         "title": "Subagent roles",
         "concurrency": "Concurrent background tasks",
@@ -145,8 +143,6 @@
         "save": "Save role bindings",
         "saving": "Saving role bindings..."
       },
-      "fallbackNumber": "Fallback {{number}}",
-      "addToOrder": "Enable preset",
       "newPreset": "New model preset",
       "newPresetHelp": "Save a reusable model and its generation settings.",
       "presets": "Model presets",
@@ -160,19 +156,7 @@
       "maxTokens": "Max output tokens",
       "temperature": "Temperature",
       "reasoningEffort": "Reasoning effort",
-      "convertTitle": "Convert the current model setup",
-      "convertHelp": "Turn the existing primary and fallback models into presets so their order can be managed here.",
-      "converting": "Converting...",
-      "convertAction": "Convert to presets",
-      "dragToReorder": "Drag to reorder",
-      "moveUp": "Move up",
-      "moveDown": "Move down",
-      "removeFromOrder": "Disable preset",
-      "inCallOrder": "In call order",
-      "disabled": "Disabled",
-      "noPresets": "No model presets yet",
-      "noPresetsHelp": "Create a preset, then add it to the call order.",
-      "removeBeforeDelete": "Remove this preset from the call order before deleting it.",
+      "removeBeforeDelete": "Select another preset before deleting this one.",
       "providerSetupRequired": "Provider setup required",
       "configureProviderBeforeSaving": "Configure this provider before saving the preset.",
       "deletePresetTitle": "Delete model preset?",
@@ -1078,7 +1062,6 @@
     },
     "next": {
       "label": "Next: {{time}}",
-      "disabled": "Paused",
       "local": "Waiting for trigger",
       "none": "No next run"
     }
@@ -1168,7 +1151,6 @@
       "loading": "Loading automations...",
       "loadFailed": "Could not load automations.",
       "empty": "No automations in this session yet.",
-      "disabled": "Off",
       "schedule": {
         "at": "{{time}}",
         "every": "Every {{duration}}",
@@ -1180,7 +1162,6 @@
       "next": {
         "label": "{{time}}",
         "pending": "Runs shortly",
-        "disabled": "Paused",
         "local": "Waiting for trigger",
         "none": "No next run"
       }

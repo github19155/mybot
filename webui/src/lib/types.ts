@@ -662,8 +662,6 @@ export interface SettingsPayload {
     max_image_mb: number;
     max_images: number;
   };
-  model_call_order: string[];
-  model_call_order_editable: boolean;
   system_prompt_overrides: Array<{
     prompt: string;
     models: string[];
@@ -675,8 +673,6 @@ export interface SettingsPayload {
     model_preset: string | null;
   }>;
   max_concurrent_subagents?: number;
-  /** Whether an actual legacy model configuration is available to convert. */
-  model_configuration_migratable?: boolean;
   created_model_preset?: string;
   created_provider?: string;
   providers: Array<{
@@ -1495,7 +1491,6 @@ export type InboundEvent =
       chat_id: string;
       model_name: string;
       model_preset?: string | null;
-      fallback?: boolean;
     }
   | ({
       event: "turn_end";

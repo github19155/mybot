@@ -23,7 +23,6 @@ function settingsPayloadWithBackup(): {
     payload: {
       ...base,
       model_presets: [base.model_presets[0], backupPreset],
-      model_call_order: ["primary", "backup"],
       providers: [
         {
           name: "openai",
@@ -82,7 +81,7 @@ function autoDynamicProviderPayload(
 }
 
 async function togglePresetEditor(name = "primary") {
-  const row = await screen.findByTestId(`model-call-order-row-${name}`);
+  const row = await screen.findByTestId(`model-preset-row-${name}`);
   fireEvent.click(within(row).getAllByRole("button")[0]);
 }
 
@@ -181,7 +180,6 @@ describe("Settings models", () => {
       ...base,
       agent: { ...base.agent, image_analysis_model_preset: null },
       model_presets: [...base.model_presets, visionPreset],
-      model_call_order: ["primary", "vision"],
     };
     const updatedPayload: SettingsPayload = {
       ...payload,
@@ -216,7 +214,6 @@ describe("Settings models", () => {
       name: "openai",
       label: "minimax",
     };
-    payload.model_call_order = ["openai"];
     payload.agent.model_preset = "openai";
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
 
@@ -250,7 +247,6 @@ describe("Settings models", () => {
       ...payload,
       agent: { ...payload.agent, model_preset: "Fast" },
       model_presets: [primary, legacyConflict],
-      model_call_order: ["Fast", "fast"],
     };
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     requestMutationMock.mockResolvedValueOnce(legacyPayload);
@@ -283,7 +279,6 @@ describe("Settings models", () => {
         name: "Codex",
         label: "Codex",
       })),
-      model_call_order: ["Codex"],
     };
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     requestMutationMock.mockResolvedValueOnce(renamedPayload);
@@ -302,7 +297,7 @@ describe("Settings models", () => {
         20_000,
       );
     });
-    expect(await screen.findByTestId("model-call-order-row-Codex")).toBeInTheDocument();
+    expect(await screen.findByTestId("model-preset-row-Codex")).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Preset name" })).toHaveValue("Codex");
   });
 
@@ -383,7 +378,7 @@ describe("Settings models", () => {
 
     renderSettingsView({ initialSection: "models" });
 
-    const row = await screen.findByTestId("model-call-order-row-primary");
+    const row = await screen.findByTestId("model-preset-row-primary");
     const trigger = within(row).getAllByRole("button")[0];
     expect(screen.queryByTestId("model-preset-editor")).not.toBeInTheDocument();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
@@ -409,353 +404,13 @@ describe("Settings models", () => {
     expect(deleteButton).toBeDisabled();
     expect(deleteButton).toHaveAttribute("aria-describedby", "model-preset-delete-hint");
     expect(
-      within(editor).getByText("Remove this preset from the call order before deleting it."),
+      within(editor).getByText("Select another preset before deleting this one."),
     ).toBeInTheDocument();
 
     fireEvent.click(trigger);
 
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("model-preset-editor")).not.toBeInTheDocument();
-  });
-
-  it("drags model presets to reorder and saves the model call order immediately", async () => {
-    const { payload, backupPreset } = settingsPayloadWithBackup();
-    const updatedPayload: SettingsPayload = {
-      ...payload,
-      agent: {
-        ...payload.agent,
-        model: backupPreset.model,
-        provider: backupPreset.provider,
-        resolved_provider: backupPreset.resolved_provider,
-        model_preset: backupPreset.name,
-      },
-      model_presets: payload.model_presets.map((preset) => ({
-        ...preset,
-        active: preset.name === backupPreset.name,
-      })),
-      model_call_order: ["backup", "primary"],
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/settings") return jsonResponse(payload);
-      if (url === "/api/settings/cli-apps") {
-        return jsonResponse({ apps: [], installed_count: 0 });
-      }
-      if (url === "/api/settings/mcp-presets") {
-        return jsonResponse({ presets: [], installed_count: 0 });
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    requestMutationMock.mockResolvedValueOnce(updatedPayload);
-
-    renderSettingsView({ initialSection: "models", initialSettings: payload });
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/settings",
-        expect.objectContaining({
-          headers: { Authorization: "Bearer tok" },
-        }),
-      ),
-    );
-    await togglePresetEditor();
-    fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));
-    fireEvent.change(screen.getByLabelText("Temperature"), {
-      target: { value: "0.4" },
-    });
-    const primaryRow = screen.getByTestId("model-call-order-row-primary");
-    const backupRow = screen.getByTestId("model-call-order-row-backup");
-    expect(backupRow).toHaveAttribute("draggable", "true");
-    expect(screen.queryByRole("button", { name: "Move up" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Move down" })).not.toBeInTheDocument();
-    const dataTransfer = {
-      dropEffect: "move",
-      effectAllowed: "move",
-      setData: vi.fn(),
-    };
-    fireEvent.dragStart(backupRow, { dataTransfer });
-    fireEvent.dragEnter(primaryRow, { dataTransfer });
-    fireEvent.drop(primaryRow, { dataTransfer });
-
-    await waitFor(() => {
-      expect(requestMutationMock).toHaveBeenCalledWith(
-        "settings.model_call_order.update",
-        { order: ["backup", "primary"] },
-        20_000,
-      );
-    });
-
-    expect(screen.queryByRole("button", { name: "Save order" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Temperature")).toHaveValue(0.4);
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  });
-
-  it("keeps repeated fallback preset rows stable when changing the primary preset", async () => {
-    const { payload, backupPreset } = settingsPayloadWithBackup();
-    const initialPayload: SettingsPayload = {
-      ...payload,
-      agent: {
-        ...payload.agent,
-        model: backupPreset.model,
-        provider: backupPreset.provider,
-        resolved_provider: backupPreset.resolved_provider,
-        model_preset: backupPreset.name,
-      },
-      model_presets: payload.model_presets.map((preset) => ({
-        ...preset,
-        active: preset.name === backupPreset.name,
-      })),
-      model_call_order: ["backup", "primary", "backup"],
-    };
-    const updatedPayload: SettingsPayload = {
-      ...initialPayload,
-      agent: {
-        ...payload.agent,
-        model_preset: "primary",
-      },
-      model_presets: payload.model_presets.map((preset) => ({
-        ...preset,
-        active: preset.name === "primary",
-      })),
-      model_call_order: ["primary", "backup", "backup"],
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/settings") return jsonResponse(initialPayload);
-      if (url === "/api/settings/cli-apps") {
-        return jsonResponse({ apps: [], installed_count: 0 });
-      }
-      if (url === "/api/settings/mcp-presets") {
-        return jsonResponse({ presets: [], installed_count: 0 });
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    requestMutationMock.mockResolvedValueOnce(updatedPayload);
-
-    renderSettingsView({ initialSection: "models", initialSettings: initialPayload });
-
-    const primaryRow = screen.getByTestId("model-call-order-row-primary");
-    const backupRows = screen.getAllByTestId("model-call-order-row-backup");
-    const firstBackupRow = backupRows[0];
-    const secondBackupRow = backupRows[1];
-    const secondBackupTrigger = within(secondBackupRow).getAllByRole("button")[0];
-    fireEvent.click(secondBackupTrigger);
-    expect(screen.getAllByTestId("model-preset-editor")).toHaveLength(1);
-    expect(secondBackupRow.nextElementSibling).toBe(
-      screen.getByTestId("model-preset-editor"),
-    );
-    fireEvent.click(secondBackupTrigger);
-
-    const dataTransfer = {
-      dropEffect: "move",
-      effectAllowed: "move",
-      setData: vi.fn(),
-    };
-    fireEvent.dragStart(primaryRow, { dataTransfer });
-    fireEvent.dragEnter(firstBackupRow, { dataTransfer });
-    fireEvent.drop(firstBackupRow, { dataTransfer });
-
-    await waitFor(() =>
-      expect(
-        screen
-          .getAllByTestId(/^model-call-order-row-/)
-          .map((row) => row.getAttribute("data-testid")),
-      ).toEqual([
-        "model-call-order-row-primary",
-        "model-call-order-row-backup",
-        "model-call-order-row-backup",
-      ]),
-    );
-  });
-
-  it("restores the model call order when immediate persistence fails", async () => {
-    const { payload } = settingsPayloadWithBackup();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/settings") return jsonResponse(payload);
-      if (url === "/api/settings/cli-apps") {
-        return jsonResponse({ apps: [], installed_count: 0 });
-      }
-      if (url === "/api/settings/mcp-presets") {
-        return jsonResponse({ presets: [], installed_count: 0 });
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    requestMutationMock.mockRejectedValueOnce(new Error("Order update failed"));
-
-    renderSettingsView({ initialSection: "models", initialSettings: payload });
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/settings",
-        expect.objectContaining({
-          headers: { Authorization: "Bearer tok" },
-        }),
-      ),
-    );
-    fireEvent.keyDown(screen.getByTestId("model-call-order-row-backup"), {
-      key: "ArrowUp",
-    });
-
-    expect(await screen.findByText("Order update failed")).toBeInTheDocument();
-    expect(
-      screen
-        .getAllByTestId(/^model-call-order-row-/)
-        .map((row) => row.getAttribute("data-testid")),
-    ).toEqual([
-      "model-call-order-row-primary",
-      "model-call-order-row-backup",
-    ]);
-  });
-
-  it("shows presets outside the call order in the unified list and adds them directly", async () => {
-    const { payload } = settingsPayloadWithBackup();
-    const codexPreset = {
-      ...payload.model_presets[0],
-      name: "codex",
-      label: "Codex",
-      active: false,
-      model: "openai-codex/gpt-5.5",
-      provider: "openai",
-      resolved_provider: "openai",
-    };
-    const payloadWithCodex: SettingsPayload = {
-      ...payload,
-      model_presets: [...payload.model_presets, codexPreset],
-    };
-    const orderedPayload: SettingsPayload = {
-      ...payloadWithCodex,
-      model_call_order: ["primary", "backup", "codex"],
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/settings") return jsonResponse(payloadWithCodex);
-      if (url === "/api/settings/cli-apps") {
-        return jsonResponse({ apps: [], installed_count: 0 });
-      }
-      if (url === "/api/settings/mcp-presets") {
-        return jsonResponse({ presets: [], installed_count: 0 });
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    requestMutationMock.mockResolvedValueOnce(orderedPayload);
-
-    renderSettingsView({ initialSection: "models", initialSettings: payloadWithCodex });
-
-    const codexRow = await screen.findByTestId("model-call-order-row-codex");
-    expect(codexRow).toHaveTextContent("codex");
-    expect(codexRow).not.toHaveTextContent("Codex");
-    expect(codexRow).toHaveTextContent("openai-codex/gpt-5.5");
-    expect(codexRow).toHaveTextContent("Disabled");
-    expect(codexRow).toHaveAttribute("draggable", "false");
-    expect(screen.queryByRole("button", { name: "Add preset" })).not.toBeInTheDocument();
-
-    const enableSwitch = within(codexRow).getByRole("switch", { name: "Enable preset" });
-    expect(enableSwitch).not.toBeChecked();
-    fireEvent.click(enableSwitch);
-
-    await waitFor(() => {
-      expect(requestMutationMock).toHaveBeenCalledWith(
-        "settings.model_call_order.update",
-        { order: ["primary", "backup", "codex"] },
-        20_000,
-      );
-    });
-    const enabledCodexRow = await screen.findByTestId("model-call-order-row-codex");
-    expect(enabledCodexRow).not.toHaveTextContent("Disabled");
-    expect(enabledCodexRow).not.toHaveTextContent(/Fallback/);
-    expect(enabledCodexRow).toHaveAttribute("draggable", "true");
-    expect(
-      within(enabledCodexRow).getByRole("switch", { name: "Disable preset" }),
-    ).toBeChecked();
-    expect(screen.queryByText("Up to date.")).not.toBeInTheDocument();
-  });
-
-  it("appends a new model preset to the call order immediately", async () => {
-    const { payload } = settingsPayloadWithBackup();
-    const writerPreset = {
-      ...payload.model_presets[0],
-      name: "Writer",
-      label: "Writer",
-      active: false,
-      model: "openai/gpt-4o-mini",
-      provider: "openai",
-      resolved_provider: "openai",
-    };
-    const createdPayload: SettingsPayload = {
-      ...payload,
-      model_presets: [...payload.model_presets, writerPreset],
-      created_model_preset: writerPreset.name,
-    };
-    const orderedPayload: SettingsPayload = {
-      ...createdPayload,
-      model_call_order: ["primary", "backup", "Writer"],
-      created_model_preset: undefined,
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/settings") return jsonResponse(payload);
-      if (url === "/api/settings/cli-apps") {
-        return jsonResponse({ apps: [], installed_count: 0 });
-      }
-      if (url === "/api/settings/mcp-presets") {
-        return jsonResponse({ presets: [], installed_count: 0 });
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    requestMutationMock
-      .mockResolvedValueOnce(createdPayload)
-      .mockResolvedValueOnce(orderedPayload);
-
-    renderSettingsView({ initialSection: "models", initialSettings: payload });
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/settings",
-        expect.objectContaining({
-          headers: { Authorization: "Bearer tok" },
-        }),
-      ),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "New model preset" }));
-    expect(screen.queryByRole("dialog", { name: "New model preset" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(
-      screen.queryByText("Complete the preset before saving."),
-    ).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Preset name" }), {
-      target: { value: "Writer" },
-    });
-    await openPopover(screen.getByRole("button", { name: "Select model" }));
-    const modelSearch = await screen.findByRole("combobox", {
-      name: "Search or type model ID",
-    });
-    fireEvent.change(modelSearch, {
-      target: { value: "openai/gpt-4o-mini" },
-    });
-    fireEvent.keyDown(modelSearch, { key: "Enter" });
-    const saveButton = screen.getByRole("button", { name: "Save" });
-    expect(saveButton).toBeEnabled();
-    fireEvent.click(saveButton);
-
-    await waitFor(() => {
-      expect(requestMutationMock).toHaveBeenLastCalledWith(
-        "settings.model_call_order.update",
-        { order: ["primary", "backup", "Writer"] },
-        20_000,
-      );
-    });
-    const writerRow = await screen.findByTestId("model-call-order-row-Writer");
-    expect(writerRow).not.toHaveTextContent("Disabled");
-    expect(writerRow).not.toHaveTextContent(/Fallback/);
-    expect(within(writerRow).getByRole("switch", { name: "Disable preset" })).toBeChecked();
-    expect(screen.getAllByText("Writer").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "Save order" })).not.toBeInTheDocument();
   });
 
   it("shows an inline error when a new preset name already exists", async () => {
@@ -793,59 +448,6 @@ describe("Settings models", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("converts legacy model settings into presets before editing call order", async () => {
-    const migratedPayload = settingsPayload();
-    const defaultPreset = {
-      ...migratedPayload.model_presets[0],
-      name: "default",
-      label: "Default",
-      is_default: true,
-    };
-    const legacyPayload: SettingsPayload = {
-      ...migratedPayload,
-      agent: {
-        ...migratedPayload.agent,
-        model_preset: "default",
-      },
-      model_presets: [defaultPreset],
-      model_call_order: [],
-      model_call_order_editable: false,
-      model_configuration_migratable: true,
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/settings") return jsonResponse(legacyPayload);
-      if (url === "/api/settings/cli-apps") {
-        return jsonResponse({ apps: [], installed_count: 0 });
-      }
-      if (url === "/api/settings/mcp-presets") {
-        return jsonResponse({ presets: [], installed_count: 0 });
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    requestMutationMock.mockResolvedValueOnce(migratedPayload);
-
-    renderSettingsView({ initialSection: "models", initialSettings: legacyPayload });
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Convert to presets" }),
-    );
-
-    await waitFor(() =>
-      expect(requestMutationMock).toHaveBeenCalledWith(
-        "settings.model_configuration.migrate",
-        {},
-        20_000,
-      ),
-    );
-    expect(
-      screen.queryByRole("button", { name: "Convert to presets" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save order" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Default")).not.toBeInTheDocument();
-  });
-
   it("starts fresh users with an empty preset list instead of legacy conversion", async () => {
     const base = settingsPayload();
     const freshPayload: SettingsPayload = {
@@ -870,9 +472,6 @@ describe("Settings models", () => {
           resolved_provider: null,
         },
       ],
-      model_call_order: [],
-      model_call_order_editable: false,
-      model_configuration_migratable: false,
       providers: [],
     };
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
@@ -921,7 +520,6 @@ describe("Settings models", () => {
           resolved_provider: "minimax_anthropic",
         },
       ],
-      model_call_order: ["fast"],
       providers: [
         {
           name: "openai_codex",
@@ -974,8 +572,6 @@ describe("Settings models", () => {
           is_default: true,
         },
       ],
-      model_call_order: [],
-      model_call_order_editable: false,
     };
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
 

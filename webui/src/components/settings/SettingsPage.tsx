@@ -75,7 +75,7 @@ export function SettingsPage({
     automationsSort,
     beginModelPresetCreation,
     cancelModelPresetCreation,
-    changeModelCallOrder,
+    selectActiveModelPreset,
     promptOverrides,
     promptOverridesSaving,
     roleBindingsDraft,
@@ -109,7 +109,6 @@ export function SettingsPage({
     handleMcpOAuthOpen,
     handleMcpPresetAction,
     handleMcpToolsChange,
-    handleMigrateModelConfigurations,
     handleNanobotFeatureAction,
     handleSaveCustomMcp,
     handleToggleProvider,
@@ -135,11 +134,9 @@ export function SettingsPage({
     mcpPresetAction,
     mcpPresets,
     mcpPresetsLoading,
-    modelCallOrder,
-    modelCallOrderSaving,
+    modelPresetSelecting,
     modelConfigurationSaving,
     modelDirty,
-    modelMigrationSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
     modelPresetEditingName,
@@ -259,7 +256,6 @@ export function SettingsPage({
               dirty={modelDirty}
               creating={modelPresetCreating}
               creatingSaving={modelConfigurationSaving}
-              callOrder={modelCallOrder}
               promptOverrides={promptOverrides}
               promptOverridesSaving={promptOverridesSaving}
               onSavePromptOverrides={savePromptOverrides}
@@ -270,14 +266,12 @@ export function SettingsPage({
               setRoleBindingsDraft={setRoleBindingsDraft}
               onSaveRoleBindings={saveRoleBindings}
               saving={saving}
-              orderSaving={modelCallOrderSaving || modelConfigurationSaving}
-              migrationSaving={modelMigrationSaving}
+              selectionSaving={modelPresetSelecting || modelConfigurationSaving}
               showBrandLogos={localPrefs.brandLogos}
               providerSaving={providerSaving}
-              onChangeCallOrder={changeModelCallOrder}
+              onSelectActivePreset={selectActiveModelPreset}
               onProviderOAuthLogin={(provider) => runProviderOAuth(provider, "login")}
               onSave={saveModelSettings}
-              onMigrate={handleMigrateModelConfigurations}
               onBeginCreate={beginModelPresetCreation}
               onCancelCreate={cancelModelPresetCreation}
               onClearPresetNameError={() => setModelPresetNameError(null)}

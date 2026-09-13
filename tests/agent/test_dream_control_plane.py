@@ -330,7 +330,6 @@ async def test_dream_override_bypasses_fleet_and_disables_main_fallbacks() -> No
     resolver.resolve_selection.assert_called_once_with(
         resolver.runtime,
         model_preset="dream",
-        include_fallbacks=False,
     )
 
 
@@ -353,7 +352,6 @@ async def test_dream_fleet_then_dream_fallback_choose_only_the_preset() -> None:
     resolver.resolve_selection.assert_called_once_with(
         resolver.runtime,
         model_preset="fleet",
-        include_fallbacks=False,
     )
 
     resolver.resolve_selection.reset_mock()
@@ -363,7 +361,6 @@ async def test_dream_fleet_then_dream_fallback_choose_only_the_preset() -> None:
     resolver.resolve_selection.assert_called_once_with(
         resolver.runtime,
         model_preset="fallback",
-        include_fallbacks=False,
     )
 
 

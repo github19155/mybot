@@ -105,21 +105,6 @@ class DreamConfig(Base):
         return self.pools.get(workload, "dream")
 
 
-class InlineFallbackConfig(Base):
-    """One inline fallback model configuration."""
-
-    model: str
-    provider: str
-    max_tokens: int | None = None
-    context_window_tokens: int | None = None
-    supports_vision: bool = False
-    temperature: float | None = None
-    reasoning_effort: str | None = None
-
-
-FallbackCandidate = str | InlineFallbackConfig
-
-
 class FleetRetentionConfig(Base):
     """Retention for passive model-fleet telemetry."""
 
@@ -234,7 +219,6 @@ class AgentDefaults(Base):
     context_window_tokens: int = 200_000
     context_block_limit: int | None = None
     temperature: float = 0.1
-    fallback_models: list[FallbackCandidate] = Field(default_factory=list)
     max_tool_iterations: int = 200
     max_concurrent_subagents: int = Field(default=16, ge=1)
     max_tool_result_chars: int = 16_000
@@ -565,9 +549,6 @@ class Config(BaseSettings):
         ):
             if dream_name and dream_name != "default" and dream_name not in self.model_presets:
                 raise ValueError(f"Dream {field_name} preset {dream_name!r} not found in model_presets")
-        for fallback in self.agents.defaults.fallback_models:
-            if isinstance(fallback, str) and fallback not in self.model_presets:
-                raise ValueError(f"fallback_models entry {fallback!r} not found in model_presets")
         image_preset = self.tools.image_analysis.model_preset
         if image_preset:
             if image_preset == "default":

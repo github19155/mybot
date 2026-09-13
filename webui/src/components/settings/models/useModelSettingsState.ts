@@ -16,8 +16,7 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
   const [modelPresetCreating, setModelPresetCreating] = useState(false);
   const [modelPresetNameError, setModelPresetNameError] = useState<string | null>(null);
   const [modelConfigurationSaving, setModelConfigurationSaving] = useState(false);
-  const [modelCallOrderSaving, setModelCallOrderSaving] = useState(false);
-  const [modelMigrationSaving, setModelMigrationSaving] = useState(false);
+  const [modelPresetSelecting, setModelPresetSelecting] = useState(false);
   const [imageAnalysisSaving, setImageAnalysisSaving] = useState(false);
   const [modelPresetPendingDelete, setModelPresetPendingDelete] =
     useState<SettingsPayload["model_presets"][number] | null>(null);
@@ -37,9 +36,6 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
   const [modelPresetEditingName, setModelPresetEditingName] = useState(
     initialForm.modelPreset,
   );
-  const [modelCallOrder, setModelCallOrder] = useState<string[]>(
-    () => initialSettings?.model_call_order ?? [],
-  );
   const [promptOverrides, setPromptOverrides] = useState<
     SettingsPayload["system_prompt_overrides"]
   >(() => initialSettings?.system_prompt_overrides ?? []);
@@ -51,20 +47,18 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     editingProviderKeys,
     expandedProvider,
     form,
-    modelCallOrder,
     imageAnalysisSaving,
-    modelCallOrderSaving,
     modelConfigurationSaving,
     promptOverrides,
     promptOverridesSaving,
     roleBindingsDraft,
     roleBindingsSaving,
-    modelMigrationSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
     modelPresetEditingName,
     modelPresetNameError,
     modelPresetPendingDelete,
+    modelPresetSelecting,
     providerForms,
     providerOAuthCompleting,
     providerOAuthDialogError,
@@ -77,10 +71,7 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     setExpandedProvider,
     setForm,
     setImageAnalysisSaving,
-    setModelCallOrder,
-    setModelCallOrderSaving,
     setModelConfigurationSaving,
-    setModelMigrationSaving,
     setPromptOverrides,
     setPromptOverridesSaving,
     setRoleBindingsDraft,
@@ -89,6 +80,7 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     setModelPresetEditingName,
     setModelPresetNameError,
     setModelPresetPendingDelete,
+    setModelPresetSelecting,
     setProviderForms,
     setProviderOAuthCompleting,
     setProviderOAuthDialogError,

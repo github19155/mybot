@@ -278,21 +278,6 @@ def update_model_configuration(
     return settings_payload(config_path=config_path)
 
 
-def update_model_call_order(
-    query: QueryParams,
-    *,
-    config_path: Path | None = None,
-) -> dict[str, Any]:
-    config = _load_settings_config(config_path)
-    if models.update_model_call_order(
-        config,
-        query,
-        oauth_status=_oauth_provider_status,
-    ):
-        _save_settings_config(config, config_path)
-    return settings_payload(config_path=config_path)
-
-
 def update_model_prompt_overrides(
     query: QueryParams,
     *,
@@ -312,20 +297,6 @@ def update_subagent_roles(
     config = _load_settings_config(config_path)
     _core_model_call(core_models.update_subagent_roles, config, query)
     _save_settings_config(config, config_path)
-    return settings_payload(config_path=config_path)
-
-
-def migrate_model_configurations(
-    _query: QueryParams | None = None,
-    *,
-    config_path: Path | None = None,
-) -> dict[str, Any]:
-    config = _load_settings_config(config_path)
-    if models.migrate_model_configurations(
-        config,
-        oauth_status=_oauth_provider_status,
-    ):
-        _save_settings_config(config, config_path)
     return settings_payload(config_path=config_path)
 
 

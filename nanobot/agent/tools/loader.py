@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from nanobot.agent.permissions import MAIN_SUBJECT
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.registry import ToolRegistry
 
@@ -20,6 +21,27 @@ if TYPE_CHECKING:
 _SKIP_MODULES = frozenset({
     "base", "schema", "registry", "context", "loader", "config",
     "file_state", "sandbox", "mcp", "__init__", "runtime_control",
+})
+
+# Main is an orchestrator, not a worker. Keep only conversation/runtime control,
+# delegation, scheduling, cross-session coordination, and image capabilities in
+# its registry. Heavy execution/search/file/browser tools remain available to
+# subagents through scope="subagent".
+_MAIN_ORCHESTRATOR_TOOLS = frozenset({
+    "subagent",
+    "message",
+    "context",
+    "my",
+    "model_config",
+    "cron",
+    "create_goal",
+    "update_goal",
+    "list_sessions",
+    "search_sessions",
+    "read_session",
+    "send_session_message",
+    "image_analyze",
+    "generate_image",
 })
 
 
@@ -89,6 +111,23 @@ class ToolLoader:
         self._plugins = plugins
         return plugins
 
+    @staticmethod
+    def _main_orchestrator_allows(
+        registry: ToolRegistry,
+        scope: str,
+        tool: Tool,
+        *,
+        is_plugin_source: bool,
+    ) -> bool:
+        """Return whether a core tool may be exposed to the Main orchestrator."""
+        if scope != "core" or registry.permission_subject != MAIN_SUBJECT:
+            return True
+        if tool.name in _MAIN_ORCHESTRATOR_TOOLS:
+            return True
+        if is_plugin_source and "orchestrator" in getattr(tool, "_scopes", set()):
+            return True
+        return False
+
     def load(self, ctx: ToolContext, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
         registered: list[str] = []
         builtin_names: set[str] = set()
@@ -102,6 +141,14 @@ class ToolLoader:
                     if not tool_cls.enabled(ctx):
                         continue
                     tool = tool_cls.create(ctx)
+                    if not self._main_orchestrator_allows(
+                        registry,
+                        scope,
+                        tool,
+                        is_plugin_source=is_plugin_source,
+                    ):
+                        logger.debug("Main orchestrator skipped worker tool: %s", tool.name)
+                        continue
                     if is_plugin_source:
                         tool = _LegacyErrorPrefixTool(tool)
                     if registry.has(tool.name):

@@ -343,14 +343,12 @@ def _run_gateway(
         build_unconfigured_provider_snapshot,
         load_provider_snapshot,
     )
-    from nanobot.providers.fallback_provider import FallbackProvider
     from nanobot.providers.image_generation import image_gen_provider_configs
     from nanobot.session.manager import SessionManager
     from nanobot.session.recovery import RecoveryCoordinator
     from nanobot.session.webui_turns import (
         WebuiTurnCoordinator,
         WebuiTurnRoutePolicy,
-        build_webui_fallback_model_observer,
     )
     from nanobot.triggers.local_runner import run_local_trigger_queue
     from nanobot.triggers.local_store import LocalTriggerStore
@@ -382,12 +380,8 @@ def _run_gateway(
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
     runtime_events = RuntimeEventBus()
-    fallback_model_observer = build_webui_fallback_model_observer(bus)
-
     def _observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
         snapshot.provider.set_llm_call_observer(record_llm_call)
-        if isinstance(snapshot.provider, FallbackProvider):
-            snapshot.provider.set_fallback_model_observer(fallback_model_observer)
         return snapshot
 
     def _load_gateway_provider_snapshot(**kwargs: Any) -> ProviderSnapshot:

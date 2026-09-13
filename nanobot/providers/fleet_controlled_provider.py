@@ -23,8 +23,8 @@ class FleetControlledProvider(LLMProvider):
     The inherited retry loop invokes this wrapper's ``_safe_chat`` once per
     attempt. That method calls ``chat``/``chat_stream`` here, so the admission
     slot surrounds only the underlying physical API call and is released before
-    the base retry policy sleeps. FallbackProvider can therefore wrap these
-    leaves and each fallback route keeps its own fleet identity.
+    the base provider retry policy sleeps. Runtime selection remains outside
+    this wrapper, so one request stays on one selected provider/model route.
 
     The adapter is intentionally transparent to existing provider-facing code:
     provider-specific helpers are delegated to the wrapped provider and

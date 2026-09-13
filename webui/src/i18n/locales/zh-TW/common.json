@@ -224,6 +224,7 @@
       "dark": "深色",
       "notAvailable": "不可用",
       "enabled": "已啟用",
+      "disabled": "已停用",
       "restartPending": "等待重新啟動",
       "ready": "就緒",
       "privateEngine": "私有引擎",

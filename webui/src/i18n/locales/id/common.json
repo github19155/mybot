@@ -224,6 +224,7 @@
       "dark": "Gelap",
       "notAvailable": "Tidak tersedia",
       "enabled": "Aktif",
+      "disabled": "Nonaktif",
       "restartPending": "Menunggu mulai ulang",
       "ready": "Siap",
       "privateEngine": "Mesin privat",

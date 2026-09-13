@@ -429,6 +429,7 @@
       "dark": "Escuro",
       "notAvailable": "Indisponível",
       "enabled": "Habilitado",
+      "disabled": "Desabilitado",
       "restartPending": "Reinício pendente",
       "ready": "Pronto",
       "privateEngine": "Motor privado",

@@ -224,6 +224,7 @@
       "dark": "Oscuro",
       "notAvailable": "No disponible",
       "enabled": "Activado",
+      "disabled": "Desactivado",
       "restartPending": "Reinicio pendiente",
       "ready": "Listo",
       "privateEngine": "Motor privado",

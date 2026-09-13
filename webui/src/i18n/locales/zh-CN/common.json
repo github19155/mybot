@@ -429,6 +429,7 @@
       "dark": "深色",
       "notAvailable": "不可用",
       "enabled": "已启用",
+      "disabled": "已禁用",
       "restartPending": "等待重启",
       "ready": "就绪",
       "privateEngine": "私有引擎",

@@ -224,6 +224,7 @@
       "dark": "ダーク",
       "notAvailable": "利用不可",
       "enabled": "有効",
+      "disabled": "無効",
       "restartPending": "再起動待ち",
       "ready": "準備完了",
       "privateEngine": "プライベートエンジン",

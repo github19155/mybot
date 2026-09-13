@@ -429,6 +429,7 @@
       "dark": "Dark",
       "notAvailable": "Not available",
       "enabled": "Enabled",
+      "disabled": "Disabled",
       "restartPending": "Restart pending",
       "ready": "Ready",
       "privateEngine": "Private engine",

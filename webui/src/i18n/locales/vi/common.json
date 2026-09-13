@@ -224,6 +224,7 @@
       "dark": "Tối",
       "notAvailable": "Không khả dụng",
       "enabled": "Đã bật",
+      "disabled": "Đã tắt",
       "restartPending": "Chờ khởi động lại",
       "ready": "Sẵn sàng",
       "privateEngine": "Bộ máy riêng",

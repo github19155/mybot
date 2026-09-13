@@ -224,6 +224,7 @@
       "dark": "다크",
       "notAvailable": "사용 불가",
       "enabled": "활성화됨",
+      "disabled": "비활성화됨",
       "restartPending": "재시작 대기",
       "ready": "준비됨",
       "privateEngine": "비공개 엔진",

@@ -10,15 +10,30 @@ nanobot has one small core loop and several ways to enter it:
 
 | Part | What it does |
 |---|---|
-| Agent loop | Builds context, selects the session, calls the provider, runs tools, and publishes replies |
+| Agent loop | Builds context, selects the session, calls the provider, runs model-visible tools, and publishes replies |
 | Runtime resolver | Turns Main/Subagent/Dream model selections into immutable `LLMRuntime` values |
 | Providers | LLM backends such as OpenRouter, Anthropic, OpenAI, Bedrock, Ollama, vLLM, and other OpenAI-compatible APIs |
 | Channels | User-facing transports such as CLI, WebUI/WebSocket, Telegram, Discord, Slack, Feishu, WeChat, Email, Mattermost, and others |
-| Tools | Capabilities the model may call, including files, shell, web search/fetch, MCP, cron, image generation, and subagents |
+| Tools | Capabilities exposed according to the current execution subject; Main gets orchestration controls while workers get execution tools |
 | Memory | Workspace files and session history that keep useful context across turns |
 | Gateway | Long-running process that connects enabled channels and serves the health endpoint |
 
 The simplest path is `nanobot agent -m "Hello!"`: one inbound message goes through the agent loop and prints the reply in your terminal. The long-running path is `nanobot gateway`: channels receive messages from chat apps or the WebUI, publish them to the same agent loop, and send replies back to the originating channel.
+
+## Main and Subagent Responsibilities
+
+The core mental model is a hard responsibility split:
+
+- **Main Agent** handles conversation, decisions, task decomposition, delegation, coordination, and final synthesis.
+- **Subagents** perform execution-heavy work such as filesystem inspection/changes, shell commands, web research, browser work, code changes, builds, and tests.
+
+Main delegates through the unified `subagent` tool. The old `spawn` interface is not part of the current design.
+
+Main does not receive worker execution tools in its model-facing tool list. The runtime may still keep those tools registered internally so trusted product features can use them, but internal registration does not grant the Main model authority to call them.
+
+Main also has a small orchestration budget: after two valid tool calls in one user turn, its model-facing tools are withdrawn for that turn so it must return a user-visible response. This limit applies to Main, not to worker execution loops.
+
+`PermissionManager` remains the canonical capability authority. The Main/Subagent split is an additional responsibility boundary, not a replacement for permission checks.
 
 ## Config vs Workspace
 
@@ -69,9 +84,9 @@ A normal turn follows this flow:
 
 1. A channel receives a user message and publishes it to the message bus.
 2. The agent loop chooses a session key and builds context from the effective project workspace, agent-owned profile/skills/memory, recent messages, channel metadata, and runtime settings.
-3. The provider receives the model request.
-4. If the model asks for tools, the runner executes them and feeds results back to the model.
-5. The final reply is saved to the session and sent back through the channel.
+3. The provider receives the Main model request.
+4. Main may use orchestration/control tools or delegate execution-heavy work to a Subagent. Worker tool results are returned to Main for coordination and synthesis.
+5. Main produces the final user-facing reply, which is saved to the session and sent back through the channel.
 
 That flow is the same whether the message starts in the CLI, WebUI, Telegram, Discord, or another channel.
 
@@ -152,7 +167,7 @@ replacing them:
 |---|---|
 | Agent Plugin | Installable package that can bundle skills, MCP servers, or both |
 | Skill | Workflow guidance loaded progressively or invoked with `$skill-name` |
-| MCP server | Runtime tools exposed to the agent |
+| MCP server | Runtime tools exposed to the appropriate execution subject |
 | CLI App | Locally managed executable whose adapter is packaged and activated like a plugin |
 | Apps | WebUI surface for reviewing and managing these capabilities |
 
@@ -164,15 +179,16 @@ the package contract.
 
 ## Tools and Safety
 
-Tools are discovered automatically from built-in modules and plugin entry points. Common tool groups include:
+Tools are discovered automatically from built-in modules and plugin entry points, but discovery does not mean every model sees every tool.
 
-- file read/write/edit and patching;
-- shell execution with configurable sandboxing;
-- web search and web fetch with SSRF checks;
-- MCP servers;
-- cron reminders, local triggers, and heartbeat tasks;
-- image generation;
-- subagents and runtime self-inspection.
+Main normally sees orchestration/control capabilities such as Subagent delegation, messaging, session/context/model/cron/goal controls, and applicable image tools. Execution-heavy capabilities belong to workers, including:
+
+- file read/write/edit, patching, and search;
+- shell/CLI execution;
+- web search/fetch and browser work;
+- code changes, builds, and tests.
+
+The internal registry can contain both groups while `ToolRegistry` exposes only the model-appropriate subset. A Main model call to a worker-only tool is rejected even when that tool exists internally.
 
 `PermissionManager` is the canonical runtime authority for capabilities. Roles and tool declarations describe work and availability; they do not grant authority by themselves. Security-sensitive controls live in [`configuration.md#security`](./configuration.md#security). For production or shared chat apps, also configure channel access controls such as `allowFrom`, pairing, or WebSocket tokens.
 

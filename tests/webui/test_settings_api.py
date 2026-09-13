@@ -15,8 +15,6 @@ from nanobot.llm_usage.models import LLMCallRecord
 from nanobot.providers.base import LLMUsage
 from nanobot.providers.oauth_model_catalog import OAuthModelCatalogSnapshot
 from nanobot.providers.registry import ProviderModelSpec, find_by_name
-from nanobot.session.manager import SessionManager
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.webui.settings_api import (
     WebUISettingsError,
     _docs_version,
@@ -29,13 +27,11 @@ from nanobot.webui.settings_api import (
     delete_model_configuration,
     login_oauth_provider,
     logout_oauth_provider,
-    migrate_model_configurations,
     provider_models_payload,
     settings_payload,
     settings_usage_payload,
     update_agent_settings,
     update_api_settings,
-    update_model_call_order,
     update_model_configuration,
     update_network_safety_settings,
     update_provider_settings,
@@ -486,27 +482,6 @@ def test_update_model_configuration_rolls_back_sessions_when_config_save_fails(
 
 
 
-
-
-def test_schema_default_is_not_exposed_or_materialized_as_legacy_configuration(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = settings_payload()
-
-    assert payload["model_configuration_migratable"] is False
-    assert payload["model_call_order_editable"] is False
-    with pytest.raises(WebUISettingsError) as error:
-        migrate_model_configurations()
-
-    assert error.value.status == 409
-    saved = load_config(config_path)
-    assert saved.agents.defaults.model_preset is None
-    assert saved.model_presets == {}
 
 
 def test_model_configuration_advanced_options_round_trip(
@@ -2297,41 +2272,6 @@ def test_azure_openai_spec_no_longer_requires_api_key() -> None:
     spec = find_by_name("azure_openai")
     assert spec is not None
     assert _provider_requires_api_key(spec) is False
-
-
-def test_update_model_call_order_selects_exactly_one_preset(tmp_path) -> None:
-    config = Config.model_validate({
-        "agents": {"defaults": {"modelPreset": "primary"}},
-        "modelPresets": {
-            "primary": {"model": "openai/gpt-4.1", "provider": "openai"},
-            "backup": {"model": "deepseek/deepseek-chat", "provider": "deepseek"},
-        },
-        "providers": {"openai": {"apiKey": "sk-test"}, "deepseek": {"apiKey": "sk-test"}},
-    })
-    path = tmp_path / "config.json"
-    from nanobot.config.loader import save_config
-    save_config(config, path)
-    payload = update_model_call_order({"order": [json.dumps(["backup"])]}, config_path=path)
-    assert payload["model_call_order"] == ["backup"]
-    saved = load_config(path)
-    assert saved.agents.defaults.model_preset == "backup"
-    assert not hasattr(saved.agents.defaults, "fallback_models")
-
-
-def test_update_model_call_order_rejects_multiple_presets(tmp_path) -> None:
-    config = Config.model_validate({
-        "agents": {"defaults": {"modelPreset": "primary"}},
-        "modelPresets": {
-            "primary": {"model": "openai/gpt-4.1", "provider": "openai"},
-            "other": {"model": "openai/gpt-4o-mini", "provider": "openai"},
-        },
-        "providers": {"openai": {"apiKey": "sk-test"}},
-    })
-    path = tmp_path / "config.json"
-    from nanobot.config.loader import save_config
-    save_config(config, path)
-    with pytest.raises(WebUISettingsError, match="exactly one"):
-        update_model_call_order({"order": [json.dumps(["primary", "other"])]}, config_path=path)
 
 
 def test_legacy_fallback_models_are_ignored_by_schema() -> None:

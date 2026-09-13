@@ -344,34 +344,6 @@ def _rename_model_configuration(config: Config, old_name: str, new_name: str) ->
     return True
 
 
-def _model_call_order_state(config: Config) -> tuple[list[str], bool]:
-    primary = config.agents.defaults.model_preset
-    if not primary or primary == "default" or primary not in config.model_presets:
-        return [], False
-    return [primary], True
-
-
-def _legacy_model_configuration_migratable(config: Config, oauth_status: OAuthStatusReader) -> bool:
-    _, editable = _model_call_order_state(config)
-    if editable:
-        return False
-    defaults = config.agents.defaults
-    provider_name = defaults.provider
-    if provider_name == "auto":
-        model_prefix = defaults.model.split("/", 1)[0] if "/" in defaults.model else ""
-        if model_prefix and resolve_provider(config, model_prefix) is not None:
-            provider_name = model_prefix
-        else:
-            provider_name = config.get_provider_name(defaults.model, preset=config.resolve_default_preset()) or ""
-    if not provider_name or provider_name == "auto":
-        return False
-    resolved = resolve_provider(config, provider_name)
-    if resolved is None:
-        return False
-    spec, _, provider_config = resolved
-    return provider_configured(spec, provider_config, oauth_status)
-
-
 def _validate_configured_provider(config: Config, provider: str, oauth_status: OAuthStatusReader) -> None:
     if provider == "auto":
         return
@@ -398,7 +370,7 @@ def create_model_configuration(config: Config, query: QueryParams, *, oauth_stat
     if _model_configuration_name_exists(config, name):
         raise ModelSettingsError("configuration already exists", status=409)
     _validate_configured_provider(config, provider, oauth_status)
-    activate_as_primary = not config.model_presets and not _legacy_model_configuration_migratable(config, oauth_status)
+    activate_as_primary = not config.model_presets
     base = config.resolve_preset()
     max_tokens = _parse_positive_int(_query_first_alias(query, "max_tokens", "maxTokens"), "max_tokens")
     context_window_tokens = _parse_positive_int(_query_first_alias(query, "context_window_tokens", "contextWindowTokens"), "context_window_tokens")

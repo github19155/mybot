@@ -70,8 +70,6 @@ class ModelSettingsOperations:
     create_model: SettingsOperation
     update_model: SettingsOperation
     delete_model: SettingsOperation
-    migrate_models: SettingsOperation
-    update_call_order: SettingsOperation
     update_prompt_overrides: SettingsOperation
     update_provider: SettingsOperation
     create_provider: SettingsOperation
@@ -91,9 +89,6 @@ class ModelSettingsPayload(TypedDict):
     model_presets: list[dict[str, Any]]
     image_analysis: dict[str, Any]
     system_prompt_overrides: list[dict[str, Any]]
-    model_call_order: list[str]
-    model_call_order_editable: bool
-    model_configuration_migratable: bool
     providers: list[dict[str, Any]]
     subagent_roles: list[dict[str, Any]]
     max_concurrent_subagents: int
@@ -908,70 +903,6 @@ def _provider_display_name_exists(
     return False
 
 
-def _unique_model_configuration_name(config: Config, label: str) -> str:
-    """Return a stable, unused preset name for a migrated model configuration."""
-    try:
-        base = _model_configuration_slug(label)
-    except WebUISettingsError:
-        base = "model"
-    candidate = base
-    suffix = 2
-    while _model_configuration_name_exists(config, candidate):
-        candidate = f"{base}-{suffix}"
-        suffix += 1
-    return candidate
-
-
-def _model_configuration_label(model: str) -> str:
-    return model.rsplit("/", 1)[-1] or model
-
-
-def _model_call_order_state(config: Config) -> tuple[list[str], bool]:
-    primary = config.agents.defaults.model_preset
-    if not primary or primary == "default" or primary not in config.model_presets:
-        return [], False
-    return [primary], True
-
-
-def _legacy_model_configuration_migratable(
-    config: Config,
-    oauth_status: OAuthStatusReader,
-) -> bool:
-    """Return whether the implicit default represents usable legacy configuration.
-
-    A pristine config still carries schema defaults for backwards compatibility.
-    Those defaults are not user configuration and must not be materialized as a
-    preset. Inline fallbacks, or a default whose matching provider is configured,
-    are evidence that there is real legacy state to preserve.
-    """
-    _, editable = _model_call_order_state(config)
-    if editable:
-        return False
-
-    defaults = config.agents.defaults
-    provider_name = defaults.provider
-    if provider_name == "auto":
-        model_prefix = defaults.model.split("/", 1)[0] if "/" in defaults.model else ""
-        if model_prefix and resolve_settings_provider(config, model_prefix) is not None:
-            provider_name = model_prefix
-        else:
-            provider_name = (
-                config.get_provider_name(
-                    defaults.model,
-                    preset=config.resolve_default_preset(),
-                )
-                or ""
-            )
-    if not provider_name or provider_name == "auto":
-        return False
-
-    resolved_provider = resolve_settings_provider(config, provider_name)
-    if resolved_provider is None:
-        return False
-    spec, _, provider_config = resolved_provider
-    return provider_configured_for_settings(spec, provider_config, oauth_status)
-
-
 def _validate_configured_provider(
     config: Config,
     provider: str,
@@ -1106,7 +1037,6 @@ def model_settings_payload(
             }
         )
 
-    model_call_order, model_call_order_editable = _model_call_order_state(config)
     return {
         "agent": {
             "model": effective_preset.model,
@@ -1130,16 +1060,10 @@ def model_settings_payload(
             "max_image_mb": config.tools.image_analysis.max_image_mb,
             "max_images": config.tools.image_analysis.max_images,
         },
-        "model_call_order": model_call_order,
         "system_prompt_overrides": [
             {"prompt": row.prompt, "models": list(row.models)}
             for row in config.system_prompt_overrides
         ],
-        "model_call_order_editable": model_call_order_editable,
-        "model_configuration_migratable": _legacy_model_configuration_migratable(
-            config,
-            oauth_status,
-        ),
         "providers": providers,
         "subagent_roles": [
             {
@@ -1264,9 +1188,7 @@ def create_model_configuration(
         raise WebUISettingsError("configuration already exists", status=409)
     _validate_configured_provider(config, provider, oauth_status)
 
-    activate_as_primary = not config.model_presets and not _legacy_model_configuration_migratable(
-        config, oauth_status
-    )
+    activate_as_primary = not config.model_presets
 
     base = config.resolve_preset()
     max_tokens = _parse_positive_int(
@@ -1417,50 +1339,6 @@ def update_model_configuration(
     return changed
 
 
-def update_model_call_order(
-    config: Config,
-    query: QueryParams,
-    *,
-    oauth_status: OAuthStatusReader,
-) -> bool:
-    """Select exactly one active model preset.
-
-    The legacy endpoint name is retained as an HTTP compatibility seam, but it
-    no longer represents or stores an ordered failover chain.
-    """
-    raw_order = query_first_alias(query, "order", "presetNames")
-    if raw_order is None:
-        raise WebUISettingsError("model selection is required")
-    try:
-        order: object = json.loads(raw_order)
-    except json.JSONDecodeError:
-        raise WebUISettingsError("model selection must be a JSON array") from None
-    if (
-        not isinstance(order, list)
-        or len(order) != 1
-        or not isinstance(order[0], str)
-        or not order[0].strip()
-    ):
-        raise WebUISettingsError("select exactly one model preset")
-
-    selected = cast(str, order[0]).strip()
-    if selected not in config.model_presets:
-        raise WebUISettingsError(f"unknown model preset: {selected}")
-
-    _, editable = _model_call_order_state(config)
-    if not editable and _legacy_model_configuration_migratable(config, oauth_status):
-        raise WebUISettingsError(
-            "convert the existing model configuration to a preset first",
-            status=409,
-        )
-
-    defaults = config.agents.defaults
-    changed = defaults.model_preset != selected
-    if changed:
-        defaults.model_preset = selected
-    return changed
-
-
 def update_model_prompt_overrides(config: Config, query: QueryParams) -> bool:
     """Replace the system prompt override table from a WebUI mutation."""
     raw_overrides = query_first_alias(query, "overrides", "systemPromptOverrides")
@@ -1510,38 +1388,6 @@ def update_model_prompt_overrides(config: Config, query: QueryParams) -> bool:
     if changed:
         config.system_prompt_overrides = rows
     return changed
-
-
-def migrate_model_configurations(
-    config: Config,
-    *,
-    oauth_status: OAuthStatusReader,
-) -> bool:
-    """Materialize the implicit legacy model settings as one named preset."""
-    _, editable = _model_call_order_state(config)
-    if editable:
-        return False
-    if not _legacy_model_configuration_migratable(config, oauth_status):
-        raise WebUISettingsError("there is no legacy model configuration to convert", status=409)
-
-    defaults = config.agents.defaults
-    primary = config.resolve_preset()
-    if defaults.model_preset and defaults.model_preset != "default":
-        return False
-    label = _model_configuration_label(primary.model)
-    name = _unique_model_configuration_name(config, label)
-    config.model_presets[name] = ModelPresetConfig(
-        model=primary.model,
-        provider=primary.provider,
-        max_tokens=primary.max_tokens,
-        context_window_tokens=primary.context_window_tokens,
-        temperature=primary.temperature,
-        reasoning_effort=primary.reasoning_effort,
-        supports_vision=primary.supports_vision,
-        supports_image_generation=primary.supports_image_generation,
-    )
-    defaults.model_preset = name
-    return True
 
 
 def delete_model_configuration(config: Config, query: QueryParams) -> None:
@@ -1934,8 +1780,6 @@ class ModelSettingsHandler:
             mutation = {
                 "model-create": operations.create_model,
                 "model-delete": operations.delete_model,
-                "models-migrate": operations.migrate_models,
-                "call-order-update": operations.update_call_order,
                 "prompt-overrides-update": operations.update_prompt_overrides,
                 "provider-create": operations.create_provider,
                 "subagent-roles-update": operations.update_subagent_roles,

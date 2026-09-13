@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import GoalStatusEvent, TurnModelUpdatedEvent, UserInputEvent
 from nanobot.bus.runtime_events import (

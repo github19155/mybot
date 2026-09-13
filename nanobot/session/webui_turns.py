@@ -11,7 +11,6 @@ from uuid import uuid4
 
 from loguru import logger
 
-from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.turn_delivery import TurnRoute
 from nanobot.bus import progress as bus_progress
 from nanobot.bus.events import InboundMessage

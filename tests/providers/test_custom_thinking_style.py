@@ -81,30 +81,3 @@ class TestCustomProviderThinkingStyle:
         after.providers.model_extra["tenant"].thinking_style = "enable_thinking"
 
         assert provider_signature(before) != provider_signature(after)
-
-    def test_provider_signature_tracks_dynamic_fallback_thinking_style(self) -> None:
-        before = Config.model_validate(
-            {
-                "agents": {
-                    "defaults": {
-                        "modelPreset": "primary",
-                        "fallbackModels": ["fallback"],
-                    }
-                },
-                "modelPresets": {
-                    "primary": {"model": "openai/gpt-4.1", "provider": "openai"},
-                    "fallback": {"model": "tenant-model", "provider": "tenant"},
-                },
-                "providers": {
-                    "openai": {"apiKey": "sk-openai"},
-                    "tenant": {
-                        "apiBase": "https://example.com/v1",
-                        "thinkingStyle": "thinking_type",
-                    },
-                },
-            }
-        )
-        after = before.model_copy(deep=True)
-        after.providers.model_extra["tenant"].thinking_style = "enable_thinking"
-
-        assert provider_signature(before) != provider_signature(after)

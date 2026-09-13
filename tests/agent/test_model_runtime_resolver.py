@@ -140,7 +140,6 @@ def test_direct_model_rebuilds_a_canonical_snapshot_from_parent_settings() -> No
     assert preset.to_generation_settings() == parent.generation
     assert preset.context_window_tokens == parent.context_window_tokens
     assert preset.supports_vision is False
-    assert "include_fallbacks" not in call.kwargs
     assert resolved.provider is canonical.provider
     assert resolved.snapshot_signature == canonical.signature
     assert resolved.system_prompt_prefix == canonical.system_prompt_prefix

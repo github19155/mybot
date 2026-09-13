@@ -2184,44 +2184,6 @@ class TestModelPresetWizard:
         assert preset_mutated["n"] == 1
         assert "test" in result.config.model_presets
 
-    def test_fallback_models_field_add(self, monkeypatch):
-        """_handle_fallback_models_field should add a preset name."""
-        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_fallback_models_field
-        from nanobot.config.schema import AgentDefaults
-
-        _MODEL_PRESET_CACHE.clear()
-        _MODEL_PRESET_CACHE.update({"fast", "default"})
-
-        select_responses = iter(["fast"])
-        questionary_responses = iter(["[+] Add preset", "[Done]"])
-
-        class FakePrompt:
-            def __init__(self, response):
-                self.response = response
-
-            def ask(self):
-                if isinstance(self.response, BaseException):
-                    raise self.response
-                return self.response
-
-        def fake_questionary_select(*_args, **_kwargs):
-            return FakePrompt(next(questionary_responses))
-
-        def fake_select_with_back(*_args, **_kwargs):
-            return next(select_responses)
-
-        monkeypatch.setattr(
-            onboard_wizard, "questionary",
-            SimpleNamespace(select=fake_questionary_select, press_any_key_to_continue=lambda: FakePrompt(None)),
-        )
-        monkeypatch.setattr(onboard_wizard, "_select_with_back", fake_select_with_back)
-        monkeypatch.setattr(onboard_wizard, "console", SimpleNamespace(clear=lambda: None, print=lambda *a, **kw: None))
-
-        defaults = AgentDefaults()
-        _handle_fallback_models_field(defaults, "fallback_models", "Fallback Models", [])
-        assert defaults.fallback_models == ["fast"]
-        _MODEL_PRESET_CACHE.clear()
-
     def test_provider_field_handler(self, monkeypatch):
         """_handle_provider_field should set provider from choices."""
         from nanobot.cli.onboard import _handle_provider_field

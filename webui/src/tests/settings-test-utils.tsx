@@ -43,8 +43,6 @@ export function settingsPayload(): SettingsPayload {
       temperature: 0.1,
       reasoning_effort: null,
     }],
-    model_call_order: ["primary"],
-    model_call_order_editable: true,
     providers: [],
     web_search: {
       provider: "duckduckgo",

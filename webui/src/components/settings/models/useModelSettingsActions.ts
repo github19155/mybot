@@ -22,8 +22,6 @@ import {
   deleteModelConfiguration,
   loginProviderOAuth,
   logoutProviderOAuth,
-  migrateModelConfigurations,
-  updateModelCallOrder,
   updateModelConfiguration,
   updateSettings,
   updateSystemPromptOverrides,
@@ -98,10 +96,8 @@ export function useModelSettingsActions({
   const {
     expandedProvider,
     form,
-    modelCallOrder,
-    modelCallOrderSaving,
+    modelPresetSelecting,
     modelConfigurationSaving,
-    modelMigrationSaving,
     promptOverrides,
     promptOverridesSaving,
     roleBindingsDraft,
@@ -121,10 +117,8 @@ export function useModelSettingsActions({
     setExpandedProvider,
     setForm,
     setImageAnalysisSaving,
-    setModelCallOrder,
-    setModelCallOrderSaving,
+    setModelPresetSelecting,
     setModelConfigurationSaving,
-    setModelMigrationSaving,
     setPromptOverrides,
     setPromptOverridesSaving,
     setRoleBindingsDraft,
@@ -175,7 +169,7 @@ export function useModelSettingsActions({
     if (
       !settings ||
       saving ||
-      modelCallOrderSaving ||
+      modelPresetSelecting ||
       modelConfigurationSaving
     ) {
       return;
@@ -215,7 +209,6 @@ export function useModelSettingsActions({
           supportsImageGeneration: form.supportsImageGeneration,
         });
         const createdPreset = payload.created_model_preset;
-        const nextOrder = createdPreset ? [createdPreset] : null;
         applyPayload(payload);
         if (createdPreset) {
           setForm(agentDraftFromPayload(payload, createdPreset));
@@ -223,10 +216,9 @@ export function useModelSettingsActions({
         }
 
         let finalPayload = payload;
-        if (nextOrder) {
-          const orderedPayload = await updateModelCallOrder(client, nextOrder);
-          applyPayload(orderedPayload);
-          finalPayload = orderedPayload;
+        if (createdPreset && payload.agent.model_preset !== createdPreset) {
+          finalPayload = await updateSettings(client, { modelPreset: createdPreset });
+          applyPayload(finalPayload);
         }
         if (createdPreset) {
           setForm(agentDraftFromPayload(finalPayload, createdPreset));
@@ -296,9 +288,9 @@ export function useModelSettingsActions({
   };
 
   const beginModelPresetCreation = () => {
-    if (!settings || saving || modelCallOrderSaving || modelConfigurationSaving) return;
+    if (!settings || saving || modelPresetSelecting || modelConfigurationSaving) return;
     const primaryPreset = settings.model_presets.find(
-      (preset) => !preset.is_default && preset.name === settings.model_call_order?.[0],
+      (preset) => !preset.is_default && preset.active,
     );
     const currentProvider = primaryPreset?.provider === "auto"
       ? primaryPreset.resolved_provider ?? settings.agent.resolved_provider
@@ -352,33 +344,19 @@ export function useModelSettingsActions({
     }
   };
 
-  const changeModelCallOrder = async (nextOrder: string[]) => {
-    const unchanged =
-      nextOrder.length === modelCallOrder.length &&
-      nextOrder.every((name, index) => name === modelCallOrder[index]);
-    if (
-      !settings ||
-      saving ||
-      modelCallOrderSaving ||
-      modelConfigurationSaving ||
-      nextOrder.length === 0 ||
-      unchanged
-    ) {
-      return;
-    }
-    const previousOrder = [...modelCallOrder];
-    setModelCallOrder(nextOrder);
-    setModelCallOrderSaving(true);
+  const selectActiveModelPreset = async (name: string) => {
+    if (!settings || saving || modelPresetSelecting || modelConfigurationSaving) return;
+    if (settings.agent.model_preset === name) return;
+    setModelPresetSelecting(true);
     try {
-      const payload = await updateModelCallOrder(client, nextOrder);
+      const payload = await updateSettings(client, { modelPreset: name });
       applyPayload(payload, { preserveAgentForm: true });
       onModelNameChange(payload.agent.model || null);
       setError(null);
     } catch (err) {
-      setModelCallOrder(previousOrder);
       setError((err as Error).message);
     } finally {
-      setModelCallOrderSaving(false);
+      setModelPresetSelecting(false);
     }
   };
 
@@ -425,26 +403,12 @@ export function useModelSettingsActions({
     }
   };
 
-  const handleMigrateModelConfigurations = async () => {
-    if (modelMigrationSaving) return;
-    setModelMigrationSaving(true);
-    try {
-      const payload = await migrateModelConfigurations(client);
-      applyPayload(payload);
-      onModelNameChange(payload.agent.model || null);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setModelMigrationSaving(false);
-    }
-  };
 
   const handleDeleteModelConfiguration = async () => {
     if (
       !modelPresetPendingDelete ||
       saving ||
-      modelCallOrderSaving ||
+      modelPresetSelecting ||
       modelConfigurationSaving
     ) {
       return;
@@ -685,13 +649,12 @@ export function useModelSettingsActions({
   return {
     beginModelPresetCreation,
     cancelModelPresetCreation,
-    changeModelCallOrder,
+    selectActiveModelPreset,
     savePromptOverrides,
     saveRoleBindings,
     completeProviderOAuthResponse,
     createCustomProvider,
     handleDeleteModelConfiguration,
-    handleMigrateModelConfigurations,
     handleToggleProvider,
     resetProviderDraft,
     runProviderOAuth,

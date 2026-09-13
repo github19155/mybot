@@ -1002,18 +1002,6 @@ export async function deleteModelConfiguration(
   );
 }
 
-export async function migrateModelConfigurations(
-  transport: WebUIMutationTransport,
-): Promise<SettingsPayload> {
-  return mutation<SettingsPayload>(transport, "settings.model_configuration.migrate");
-}
-
-export async function updateModelCallOrder(
-  transport: WebUIMutationTransport,
-  order: string[],
-): Promise<SettingsPayload> {
-  return mutation<SettingsPayload>(transport, "settings.model_call_order.update", { order });
-}
 
 export async function updateSystemPromptOverrides(
   transport: WebUIMutationTransport,

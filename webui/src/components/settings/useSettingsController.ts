@@ -101,15 +101,15 @@ export function useSettingsController({
   const [localPrefs, setLocalPrefs] = useState<LocalPreferences>(() => readLocalPreferences());
   const modelState = useModelSettingsState(initialSettings);
   const {
-    editingProviderKeys, expandedProvider, form, modelCallOrder, modelCallOrderSaving,
-    imageAnalysisSaving, modelConfigurationSaving, modelMigrationSaving, modelPresetBeforeCreateRef,
+    editingProviderKeys, expandedProvider, form, modelPresetSelecting,
+    imageAnalysisSaving, modelConfigurationSaving, modelPresetBeforeCreateRef,
     promptOverrides, promptOverridesSaving,
     roleBindingsDraft, roleBindingsSaving, setRoleBindingsDraft,
     modelPresetCreating, modelPresetEditingName, modelPresetNameError, modelPresetPendingDelete,
     providerForms, providerOAuthCompleting,
     providerOAuthDialogError, providerOAuthFlow, providerOAuthFlowRef, providerOAuthResponse,
     providerSaving, saving, setForm,
-    setModelCallOrder, setModelPresetCreating, setModelPresetEditingName, setModelPresetNameError,
+    setModelPresetCreating, setModelPresetEditingName, setModelPresetNameError,
     setPromptOverrides,
     setModelPresetPendingDelete,
     setProviderForms, setProviderOAuthCompleting, setProviderOAuthDialogError,
@@ -167,7 +167,6 @@ export function useSettingsController({
         setModelPresetEditingName(nextForm.modelPreset);
         setModelPresetCreating(false);
       }
-      setModelCallOrder(payload.model_call_order ?? []);
       setPromptOverrides(payload.system_prompt_overrides ?? []);
       setWebSearchForm((prev) => webSearchFormFromPayload(payload, prev));
       setImageGenerationForm(imageGenerationFormFromPayload(payload));
@@ -437,11 +436,10 @@ export function useSettingsController({
   const {
     beginModelPresetCreation,
     cancelModelPresetCreation,
-    changeModelCallOrder,
+    selectActiveModelPreset,
     completeProviderOAuthResponse,
     createCustomProvider,
     handleDeleteModelConfiguration,
-    handleMigrateModelConfigurations,
     handleToggleProvider,
     runProviderOAuth,
     saveImageAnalysisModel,
@@ -495,7 +493,7 @@ export function useSettingsController({
     automationsSort,
     beginModelPresetCreation,
     cancelModelPresetCreation,
-    changeModelCallOrder,
+    selectActiveModelPreset,
     channelsQuery,
     cliApps,
     cliAppsAction,
@@ -524,7 +522,6 @@ export function useSettingsController({
     handleMcpOAuthOpen,
     handleMcpPresetAction,
     handleMcpToolsChange,
-    handleMigrateModelConfigurations,
     handleNanobotFeatureAction,
     handleSaveCustomMcp,
     handleToggleProvider,
@@ -550,11 +547,9 @@ export function useSettingsController({
     mcpPresetAction,
     mcpPresets,
     mcpPresetsLoading,
-    modelCallOrder,
-    modelCallOrderSaving,
+    modelPresetSelecting,
     modelConfigurationSaving,
     modelDirty,
-    modelMigrationSaving,
     modelPresetBeforeCreateRef,
     modelPresetCreating,
     modelPresetEditingName,

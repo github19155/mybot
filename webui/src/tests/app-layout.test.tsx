@@ -94,8 +94,6 @@ function baseSettingsPayload() {
       temperature: 0.1,
       reasoning_effort: null,
     }],
-    model_call_order: [],
-    model_call_order_editable: false,
     providers: [],
     web_search: {
       provider: "duckduckgo",
@@ -502,7 +500,6 @@ describe("App layout", () => {
           model_preset: "",
         },
         model_presets: [],
-        model_call_order: [],
       },
     });
 
@@ -2393,8 +2390,6 @@ describe("App layout", () => {
                   reasoning_effort: "high",
                 },
               ],
-              model_call_order: ["primary", "deep"],
-              model_call_order_editable: true,
               providers: [
                 {
                   name: "openai",

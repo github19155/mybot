@@ -338,8 +338,6 @@ function modelSettings(model: string, provider: string): SettingsPayload {
       temperature: 0.7,
       reasoning_effort: null,
     }],
-    model_call_order: [],
-    model_call_order_editable: false,
     providers: [
       { name: "deepseek", label: "DeepSeek", configured: true },
       { name: "openai_codex", label: "OpenAI Codex", configured: true },
@@ -777,7 +775,6 @@ describe("ThreadShell", () => {
       active: false,
       is_default: false,
     });
-    settings.model_call_order = ["fast"];
 
     const view = (preset: string) => wrap(client, (
       <ThreadShell
@@ -845,75 +842,6 @@ describe("ThreadShell", () => {
 
     expect(await screen.findByTitle("fast · gpt-4 · Company Proxy")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Choose your AI" })).not.toBeInTheDocument();
-  });
-
-  it("shows the effective fallback model in the composer badge", async () => {
-    const client = makeClient();
-    render(wrap(
-      client,
-      <ThreadShell
-        session={session("fallback-model")}
-        title="Fallback model"
-        onToggleSidebar={() => {}}
-        settingsSnapshot={modelSettings("openai-codex/gpt-5.5", "openai_codex")}
-      />,
-      "openai-codex/gpt-5.5",
-    ));
-
-    expect(await screen.findByText("Default")).toBeInTheDocument();
-    const configuredLogo = await screen.findByTestId("composer-model-logo-openai_codex");
-    const configuredBadge = configuredLogo.parentElement;
-    expect(configuredBadge).not.toBeNull();
-    expect(configuredBadge).toHaveClass("composer-model-badge");
-    expect(configuredBadge).not.toHaveAttribute("data-fallback");
-
-    act(() => {
-      client._emitChat("fallback-model", {
-        event: "turn_model_updated",
-        chat_id: "fallback-model",
-        model_name: "openai-codex/gpt-5.5",
-        model_preset: "Default",
-      });
-    });
-
-    expect(configuredBadge).not.toHaveAttribute("data-fallback");
-    expect(screen.getByText("Default")).toBeInTheDocument();
-
-    act(() => {
-      client._emitChat("fallback-model", {
-        event: "turn_model_updated",
-        chat_id: "fallback-model",
-        model_name: "deepseek/deepseek-chat",
-        fallback: true,
-      });
-    });
-
-    const logo = await screen.findByTestId("composer-model-logo-deepseek");
-    const badge = logo.parentElement;
-    expect(badge).not.toBeNull();
-    expect(badge).toBe(configuredBadge);
-    expect(screen.queryByText("Default")).not.toBeInTheDocument();
-    expect(screen.getByText("deepseek-chat")).toBeInTheDocument();
-    expect(badge).toHaveAttribute("data-fallback", "true");
-    expect(badge).toHaveAttribute(
-      "title",
-      "Default · using deepseek/deepseek-chat",
-    );
-    expect(logo).toBeInTheDocument();
-
-    act(() => {
-      client._emitChat("fallback-model", {
-        event: "turn_end",
-        chat_id: "fallback-model",
-      });
-    });
-
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("composer-model-logo-openai_codex").parentElement,
-      ).not.toHaveAttribute("data-fallback");
-    });
-    expect(screen.getByText("Default")).toBeInTheDocument();
   });
 
   it("opens model settings directly without clearing the draft", async () => {
@@ -1241,7 +1169,6 @@ describe("ThreadShell", () => {
   it("applies the selected landing preset before sending the first prompt", async () => {
     const client = makeClient();
     const settings = settingsWithFastPreset();
-    settings.model_call_order = ["fast"];
     let resolveModelCommand!: () => void;
     client.sendSystemCommand.mockImplementation(
       () => new Promise<void>((resolve) => {

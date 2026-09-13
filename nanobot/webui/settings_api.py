@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import httpx
 
 from nanobot import __version__
+from nanobot import model_settings as core_models
 from nanobot.config.loader import get_config_path, load_config, save_config
 from nanobot.config.schema import Config
 from nanobot.webui import settings_capabilities as capabilities
@@ -38,7 +39,6 @@ _model_catalog_kind = models.model_catalog_kind
 _oauth_provider_status = models.oauth_provider_status
 _provider_requires_api_key = models.provider_requires_api_key
 _reasoning_effort_values_for = models.reasoning_effort_values_for
-
 
 _RUNTIME_CAPABILITIES = {
     "can_restart_engine": False,
@@ -89,6 +89,14 @@ def _settings_config_path(config_path: Path | None) -> Path:
 
 def _normalize_surface(surface: str | None) -> RuntimeSurface:
     return "native" if surface in {"native", "desktop"} else "browser"
+
+
+def _core_model_call(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Map core validation failures onto the established WebUI HTTP contract."""
+    try:
+        return operation(*args, **kwargs)
+    except core_models.ModelSettingsError as exc:
+        raise WebUISettingsError(exc.message, status=exc.status) from exc
 
 
 def runtime_capabilities(
@@ -219,10 +227,14 @@ def create_model_configuration(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    name = models.create_model_configuration(
-        config,
-        query,
-        oauth_status=_oauth_provider_status,
+    name = cast(
+        str,
+        _core_model_call(
+            core_models.create_model_configuration,
+            config,
+            query,
+            oauth_status=core_models.oauth_provider_status,
+        ),
     )
     _save_settings_config(config, config_path)
     payload = settings_payload(config_path=config_path)
@@ -238,10 +250,13 @@ def update_model_configuration(
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
     names_before = set(config.model_presets)
-    changed = models.update_model_configuration(
-        config,
-        query,
-        oauth_status=_oauth_provider_status,
+    changed = bool(
+        _core_model_call(
+            core_models.update_model_configuration,
+            config,
+            query,
+            oauth_status=core_models.oauth_provider_status,
+        )
     )
     if changed:
         removed = names_before - set(config.model_presets)
@@ -295,7 +310,7 @@ def update_subagent_roles(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    models.update_subagent_roles(config, query)
+    _core_model_call(core_models.update_subagent_roles, config, query)
     _save_settings_config(config, config_path)
     return settings_payload(config_path=config_path)
 
@@ -320,7 +335,7 @@ def delete_model_configuration(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    models.delete_model_configuration(config, query)
+    _core_model_call(core_models.delete_model_configuration, config, query)
     _save_settings_config(config, config_path)
     return settings_payload(config_path=config_path)
 
@@ -331,7 +346,10 @@ def create_provider_settings(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    provider_key = models.create_provider_settings(config, query)
+    provider_key = cast(
+        str,
+        _core_model_call(core_models.create_provider_settings, config, query),
+    )
     _save_settings_config(config, config_path)
     payload = settings_payload(config_path=config_path)
     payload["created_provider"] = provider_key
@@ -344,7 +362,10 @@ def update_provider_settings(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    changed, restart_required = models.update_provider_settings(config, query)
+    changed, restart_required = cast(
+        tuple[bool, bool],
+        _core_model_call(core_models.update_provider_settings, config, query),
+    )
     if changed:
         _save_settings_config(config, config_path)
     return settings_payload(

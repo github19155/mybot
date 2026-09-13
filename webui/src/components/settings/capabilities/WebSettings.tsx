@@ -55,6 +55,10 @@ export function webSearchProviderRequiresApiKey(provider?: WebSearchProviderOpti
   return provider?.credential === "api_key";
 }
 
+export function webSearchProviderAcceptsBaseUrl(provider?: WebSearchProviderOption): boolean {
+  return provider?.credential === "base_url" || provider?.name === "tavily";
+}
+
 export function WebSettings({
   settings,
   form,
@@ -219,7 +223,7 @@ export function WebSettings({
             </SettingsRow>
           ) : null}
 
-          {selectedProvider?.credential === "base_url" ? (
+          {webSearchProviderAcceptsBaseUrl(selectedProvider) ? (
             <SettingsRow
               title={t("settings.byok.webSearch.baseUrl")}
               description={t("settings.byok.webSearch.baseUrlHelp")}

@@ -57,7 +57,6 @@ class WebUIOutboundTransport(Protocol):
         model_name: str,
         model_preset: str | None = None,
         context_window_tokens: int | None = None,
-        fallback: bool = False,
     ) -> None: ...
 
     async def send_user_input(
@@ -167,7 +166,6 @@ class WebUIOutboundProjector:
                     model_name=event.model,
                     model_preset=event.model_preset,
                     context_window_tokens=event.context_window_tokens,
-                    fallback=event.fallback,
                 )
             return
         if isinstance(event, UserInputEvent):

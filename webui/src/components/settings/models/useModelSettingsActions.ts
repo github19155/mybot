@@ -215,7 +215,7 @@ export function useModelSettingsActions({
           supportsImageGeneration: form.supportsImageGeneration,
         });
         const createdPreset = payload.created_model_preset;
-        const nextOrder = createdPreset ? [...modelCallOrder, createdPreset] : null;
+        const nextOrder = createdPreset ? [createdPreset] : null;
         applyPayload(payload);
         if (createdPreset) {
           setForm(agentDraftFromPayload(payload, createdPreset));

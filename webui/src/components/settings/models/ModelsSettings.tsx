@@ -622,7 +622,7 @@ export function ModelsSettings({
               >
                 {tx(
                   "settings.models.removeBeforeDelete",
-                  "Remove this preset from the call order before deleting it.",
+                  "Select another preset before deleting this one.",
                 )}
               </span>
             ) : null}
@@ -672,7 +672,7 @@ export function ModelsSettings({
                   <p className="mt-0.5 max-w-[34rem] text-[12px] leading-5 text-muted-foreground">
                     {tx(
                       "settings.models.convertHelp",
-                      "Turn the existing primary and fallback models into presets so their order can be managed here.",
+                      "Turn the existing model setup into a named preset so it can be managed here.",
                     )}
                   </p>
                 </div>
@@ -872,7 +872,7 @@ export function ModelsSettings({
                           if (ordered) {
                             removeCallOrderItem(orderIndex);
                           } else if (preset) {
-                            onChangeCallOrder([...callOrder, preset.name]);
+                            onChangeCallOrder([preset.name]);
                           }
                         }}
                         className={cn(

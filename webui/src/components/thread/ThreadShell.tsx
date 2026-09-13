@@ -753,7 +753,6 @@ export function ThreadShell({
     );
     return typeof response.path === "string" ? response.path : null;
   }, [client]);
-  const [fallbackModelName, setFallbackModelName] = useState<string | null>(null);
   const [booting, setBooting] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const cliApps = useInstalledSettingItems({
@@ -1576,7 +1575,6 @@ export function ThreadShell({
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
-          fallbackModelName={fallbackModelName}
           onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
           onManageModels={onOpenModelSettings}
           contextUsage={composerContextUsage}
@@ -1626,7 +1624,6 @@ export function ThreadShell({
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
-          fallbackModelName={fallbackModelName}
           onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
           onManageModels={onOpenModelSettings}
           contextUsage={composerContextUsage}

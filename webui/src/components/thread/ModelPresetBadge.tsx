@@ -91,7 +91,6 @@ interface ModelPresetBadgeProps {
   providerLabel?: string | null;
   needsSetup?: boolean;
   attentionRequest?: number;
-  fallbackModelName?: string | null;
   isHero: boolean;
   onClick?: () => void;
 }
@@ -108,7 +107,6 @@ export function ModelPresetBadge({
   providerLabel,
   needsSetup = false,
   attentionRequest = 0,
-  fallbackModelName,
   isHero,
   onClick,
 }: ModelPresetBadgeProps) {
@@ -126,20 +124,9 @@ export function ModelPresetBadge({
     model: modelDetail ?? modelPresets[listedIndex]?.model,
     provider: provider || modelPresets[listedIndex]?.provider,
   };
-  const fallbackPreset = fallbackModelName
-    ? modelPresets.find((preset) => preset.model?.trim() === fallbackModelName.trim())
-    : undefined;
-  const fallbackDisplayLabel = fallbackPreset?.name
-    || fallbackModelName?.trim().split(/[/:]/).pop()
-    || null;
-  const displayLabel = fallbackDisplayLabel || label;
-  const displayModelDetail = fallbackPreset
-    ? fallbackPreset.model
-    : fallbackModelName
-      ? null
-      : modelDetail;
-  const displayProvider = fallbackPreset?.provider
-    || (fallbackModelName ? inferProviderFromModelName(fallbackModelName) : provider);
+  const displayLabel = label;
+  const displayModelDetail = modelDetail;
+  const displayProvider = provider;
   const presets = !activeName
     ? modelPresets
     : listedIndex < 0
@@ -278,11 +265,9 @@ export function ModelPresetBadge({
       label={displayLabel}
       modelDetail={displayModelDetail}
       provider={displayProvider}
-      providerLabel={fallbackModelName ? null : providerLabel}
+      providerLabel={providerLabel}
       needsSetup={needsSetup}
       needsAttention={needsSetup && attentionRequest > 0}
-      fallbackModelName={fallbackModelName}
-      fallbackFromLabel={fallbackModelName ? label : null}
       isHero={isHero}
     />
   );
@@ -291,7 +276,7 @@ export function ModelPresetBadge({
     const Container = opensSetup ? "button" : "span";
     return (
       <Container
-        aria-label={fallbackModelName ? `${displayLabel} (fallback from ${label})` : label}
+        aria-label={label}
         type={opensSetup ? "button" : undefined}
         onClick={opensSetup ? onClick : undefined}
         className={cn(
@@ -498,8 +483,6 @@ function PresetPill({
   providerLabel,
   needsSetup = false,
   needsAttention = false,
-  fallbackModelName,
-  fallbackFromLabel,
   isHero,
   offset,
   scale,
@@ -510,8 +493,6 @@ function PresetPill({
   providerLabel?: string | null;
   needsSetup?: boolean;
   needsAttention?: boolean;
-  fallbackModelName?: string | null;
-  fallbackFromLabel?: string | null;
   isHero: boolean;
   offset?: number;
   scale?: number;
@@ -522,9 +503,6 @@ function PresetPill({
     ? null
     : provider || inferProviderFromModelName(modelDetail || label);
   const title = [...new Set([label, modelDetail, providerLabel].filter(Boolean))].join(" · ");
-  const fallbackTitle = fallbackModelName
-    ? `${fallbackFromLabel || label} · using ${fallbackModelName}`
-    : title;
 
   useLayoutEffect(() => {
     const node = labelRef.current;
@@ -538,10 +516,9 @@ function PresetPill({
 
   return (
     <span
-      data-fallback={fallbackModelName ? "true" : undefined}
       data-needs-setup={needsSetup ? "true" : undefined}
       data-preset-offset={offset}
-      title={fallbackTitle || undefined}
+      title={title || undefined}
       className={cn(
         "composer-model-badge composer-model-pill inline-flex h-full max-w-full min-w-0 shrink-0 items-center rounded-full border border-border/55 bg-card font-medium text-foreground/70",
         "w-fit",

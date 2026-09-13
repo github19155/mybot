@@ -28,7 +28,6 @@ from nanobot.agent.subagent_roles import SUBAGENT_ROLES
 from nanobot.config.loader import resolve_config_env_vars
 from nanobot.config.schema import (
     Config,
-    FallbackCandidate,
     ModelPresetConfig,
     ProviderConfig,
     SubagentRoleConfig,
@@ -863,10 +862,6 @@ def _rename_model_configuration(config: Config, old_name: str, new_name: str) ->
     defaults = config.agents.defaults
     if defaults.model_preset == old_name:
         defaults.model_preset = new_name
-    defaults.fallback_models = [
-        new_name if fallback == old_name else fallback
-        for fallback in defaults.fallback_models
-    ]
     if defaults.dream.model_override == old_name:
         defaults.dream.model_override = new_name
     for binding in config.subagent_roles.values():
@@ -932,16 +927,10 @@ def _model_configuration_label(model: str) -> str:
 
 
 def _model_call_order_state(config: Config) -> tuple[list[str], bool]:
-    defaults = config.agents.defaults
-    primary = defaults.model_preset
+    primary = config.agents.defaults.model_preset
     if not primary or primary == "default" or primary not in config.model_presets:
         return [], False
-    order = [primary]
-    for fallback in defaults.fallback_models:
-        if not isinstance(fallback, str):
-            return [], False
-        order.append(fallback)
-    return order, True
+    return [primary], True
 
 
 def _legacy_model_configuration_migratable(
@@ -960,9 +949,6 @@ def _legacy_model_configuration_migratable(
         return False
 
     defaults = config.agents.defaults
-    if defaults.fallback_models:
-        return True
-
     provider_name = defaults.provider
     if provider_name == "auto":
         model_prefix = defaults.model.split("/", 1)[0] if "/" in defaults.model else ""
@@ -1330,7 +1316,6 @@ def create_model_configuration(
     )
     if activate_as_primary:
         config.agents.defaults.model_preset = name
-        config.agents.defaults.fallback_models = []
     return name
 
 
@@ -1438,44 +1423,41 @@ def update_model_call_order(
     *,
     oauth_status: OAuthStatusReader,
 ) -> bool:
+    """Select exactly one active model preset.
+
+    The legacy endpoint name is retained as an HTTP compatibility seam, but it
+    no longer represents or stores an ordered failover chain.
+    """
     raw_order = query_first_alias(query, "order", "presetNames")
     if raw_order is None:
-        raise WebUISettingsError("model call order is required")
+        raise WebUISettingsError("model selection is required")
     try:
         order: object = json.loads(raw_order)
     except json.JSONDecodeError:
-        raise WebUISettingsError("model call order must be a JSON array") from None
+        raise WebUISettingsError("model selection must be a JSON array") from None
     if (
         not isinstance(order, list)
-        or not order
-        or any(
-            not isinstance(name, str) or not name.strip()
-            for name in cast(list[object], order)
-        )
+        or len(order) != 1
+        or not isinstance(order[0], str)
+        or not order[0].strip()
     ):
-        raise WebUISettingsError("model call order must contain at least one preset")
+        raise WebUISettingsError("select exactly one model preset")
 
-    normalized_order = [cast(str, name).strip() for name in cast(list[object], order)]
-    unknown = [name for name in normalized_order if name not in config.model_presets]
-    if unknown:
-        raise WebUISettingsError(f"unknown model preset: {unknown[0]}")
+    selected = cast(str, order[0]).strip()
+    if selected not in config.model_presets:
+        raise WebUISettingsError(f"unknown model preset: {selected}")
 
     _, editable = _model_call_order_state(config)
     if not editable and _legacy_model_configuration_migratable(config, oauth_status):
         raise WebUISettingsError(
-            "convert the existing model configuration to presets first",
+            "convert the existing model configuration to a preset first",
             status=409,
         )
 
     defaults = config.agents.defaults
-    fallback_models: list[FallbackCandidate] = list(normalized_order[1:])
-    changed = (
-        defaults.model_preset != normalized_order[0]
-        or defaults.fallback_models != fallback_models
-    )
+    changed = defaults.model_preset != selected
     if changed:
-        defaults.model_preset = normalized_order[0]
-        defaults.fallback_models = fallback_models
+        defaults.model_preset = selected
     return changed
 
 
@@ -1535,7 +1517,7 @@ def migrate_model_configurations(
     *,
     oauth_status: OAuthStatusReader,
 ) -> bool:
-    """Materialize legacy primary/inline model settings as named presets."""
+    """Materialize the implicit legacy model settings as one named preset."""
     _, editable = _model_call_order_state(config)
     if editable:
         return False
@@ -1544,56 +1526,22 @@ def migrate_model_configurations(
 
     defaults = config.agents.defaults
     primary = config.resolve_preset()
-    created: list[str] = []
-
-    if not defaults.model_preset or defaults.model_preset == "default":
-        label = _model_configuration_label(primary.model)
-        name = _unique_model_configuration_name(config, label)
-        config.model_presets[name] = ModelPresetConfig(
-            model=primary.model,
-            provider=primary.provider,
-            max_tokens=primary.max_tokens,
-            context_window_tokens=primary.context_window_tokens,
-            temperature=primary.temperature,
-            reasoning_effort=primary.reasoning_effort,
-            supports_vision=primary.supports_vision,
-            supports_image_generation=primary.supports_image_generation,
-        )
-        defaults.model_preset = name
-        created.append(name)
-
-    fallback_models: list[FallbackCandidate] = []
-    for fallback in defaults.fallback_models:
-        if isinstance(fallback, str):
-            fallback_models.append(fallback)
-            continue
-        label = _model_configuration_label(fallback.model)
-        name = _unique_model_configuration_name(config, label)
-        config.model_presets[name] = ModelPresetConfig(
-            model=fallback.model,
-            provider=fallback.provider,
-            max_tokens=(
-                fallback.max_tokens if fallback.max_tokens is not None else primary.max_tokens
-            ),
-            context_window_tokens=(
-                fallback.context_window_tokens
-                if fallback.context_window_tokens is not None
-                else primary.context_window_tokens
-            ),
-            temperature=(
-                fallback.temperature
-                if fallback.temperature is not None
-                else primary.temperature
-            ),
-            reasoning_effort=fallback.reasoning_effort,
-            supports_vision=fallback.supports_vision,
-        )
-        fallback_models.append(name)
-        created.append(name)
-
-    if created:
-        defaults.fallback_models = fallback_models
-    return bool(created)
+    if defaults.model_preset and defaults.model_preset != "default":
+        return False
+    label = _model_configuration_label(primary.model)
+    name = _unique_model_configuration_name(config, label)
+    config.model_presets[name] = ModelPresetConfig(
+        model=primary.model,
+        provider=primary.provider,
+        max_tokens=primary.max_tokens,
+        context_window_tokens=primary.context_window_tokens,
+        temperature=primary.temperature,
+        reasoning_effort=primary.reasoning_effort,
+        supports_vision=primary.supports_vision,
+        supports_image_generation=primary.supports_image_generation,
+    )
+    defaults.model_preset = name
+    return True
 
 
 def delete_model_configuration(config: Config, query: QueryParams) -> None:
@@ -1609,12 +1557,9 @@ def delete_model_configuration(config: Config, query: QueryParams) -> None:
             status=409,
         )
     defaults = config.agents.defaults
-    referenced = defaults.model_preset == name or any(
-        fallback == name for fallback in defaults.fallback_models
-    )
-    if referenced:
+    if defaults.model_preset == name:
         raise WebUISettingsError(
-            "remove the model preset from the call order first",
+            "select another model preset before deleting it",
             status=409,
         )
     if config.tools.image_analysis.model_preset == name:

@@ -1516,7 +1516,6 @@ class WebSocketChannel(BaseChannel):
         model_name: Any,
         model_preset: Any = None,
         context_window_tokens: Any = None,
-        fallback: bool = False,
     ) -> None:
         """Notify one chat's subscribers which model is handling its current request."""
         conns = list(self._subs.get(chat_id, ()))
@@ -1535,8 +1534,6 @@ class WebSocketChannel(BaseChannel):
             body["model_preset"] = model_preset.strip()
         if isinstance(context_window_tokens, int) and context_window_tokens > 0:
             body["context_window_tokens"] = context_window_tokens
-        if fallback:
-            body["fallback"] = True
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" turn_model_updated ")

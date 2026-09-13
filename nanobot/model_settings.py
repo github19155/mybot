@@ -336,7 +336,6 @@ def _rename_model_configuration(config: Config, old_name: str, new_name: str) ->
     defaults = config.agents.defaults
     if defaults.model_preset == old_name:
         defaults.model_preset = new_name
-    defaults.fallback_models = [new_name if fallback == old_name else fallback for fallback in defaults.fallback_models]
     if defaults.dream.model_override == old_name:
         defaults.dream.model_override = new_name
     for binding in config.subagent_roles.values():
@@ -346,16 +345,10 @@ def _rename_model_configuration(config: Config, old_name: str, new_name: str) ->
 
 
 def _model_call_order_state(config: Config) -> tuple[list[str], bool]:
-    defaults = config.agents.defaults
-    primary = defaults.model_preset
+    primary = config.agents.defaults.model_preset
     if not primary or primary == "default" or primary not in config.model_presets:
         return [], False
-    order = [primary]
-    for fallback in defaults.fallback_models:
-        if not isinstance(fallback, str):
-            return [], False
-        order.append(fallback)
-    return order, True
+    return [primary], True
 
 
 def _legacy_model_configuration_migratable(config: Config, oauth_status: OAuthStatusReader) -> bool:
@@ -363,8 +356,6 @@ def _legacy_model_configuration_migratable(config: Config, oauth_status: OAuthSt
     if editable:
         return False
     defaults = config.agents.defaults
-    if defaults.fallback_models:
-        return True
     provider_name = defaults.provider
     if provider_name == "auto":
         model_prefix = defaults.model.split("/", 1)[0] if "/" in defaults.model else ""
@@ -429,7 +420,6 @@ def create_model_configuration(config: Config, query: QueryParams, *, oauth_stat
     )
     if activate_as_primary:
         config.agents.defaults.model_preset = name
-        config.agents.defaults.fallback_models = []
     return name
 
 
@@ -499,8 +489,8 @@ def delete_model_configuration(config: Config, query: QueryParams) -> None:
     if bound_roles:
         raise ModelSettingsError("Rebind or clear these subagent roles before deleting the preset: " + ", ".join(bound_roles), status=409)
     defaults = config.agents.defaults
-    if defaults.model_preset == name or any(fallback == name for fallback in defaults.fallback_models):
-        raise ModelSettingsError("remove the model preset from the call order first", status=409)
+    if defaults.model_preset == name:
+        raise ModelSettingsError("select another model preset before deleting it", status=409)
     if config.tools.image_analysis.model_preset == name:
         raise ModelSettingsError("clear the image analysis model preset before deleting it", status=409)
     del config.model_presets[name]

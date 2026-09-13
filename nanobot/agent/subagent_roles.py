@@ -76,9 +76,12 @@ _BROWSER_TOOLS = {
     "browser_status": "subagent_browser",
     "browser_close": "subagent_browser",
 }
+_PROGRESS_TOOLS = {
+    "report_progress": "report_progress",
+}
 _EXEC_TOOLS = {**_EXEC_BASE_TOOLS, **_BROWSER_TOOLS}
 
-TOOL_MODULES = _EXEC_TOOLS
+TOOL_MODULES = {**_EXEC_TOOLS, **_PROGRESS_TOOLS}
 ALL_SUBAGENT_TOOL_NAMES = frozenset(TOOL_MODULES)
 
 
@@ -166,7 +169,9 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         requested_tools = tuple(TOOL_MODULES)
     else:
         requested_tools = tuple(override.tools) if override.tools is not None else tuple(TOOL_MODULES)
-    tools = requested_tools
+    # Milestone reporting is transport metadata, not worker authority. Keep it
+    # available even when a Specialist narrows its actual work capabilities.
+    tools = tuple(dict.fromkeys((*requested_tools, "report_progress")))
     workspace = workspace_from_config(config)
     usage = role_usage(workspace, normalized) if workspace is not None else {}
 

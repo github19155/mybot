@@ -1,0 +1,27 @@
+name: Fallback impact scan
+
+on:
+  push:
+    branches:
+      - refactor/remove-model-fallback
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan fallback references
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== SOURCE / TEST / DOC / WEBUI MATCHES ==='
+          git grep -n -I -E 'fallback|fallback_models|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate' -- . ':!nanobot/web/dist/**' || true
+          echo '=== GENERATED WEB DIST FILES WITH MATCHES ==='
+          git grep -l -I -E 'fallback|fallback_models|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate' -- nanobot/web/dist 2>/dev/null || true
+          echo '=== FALLBACK-NAMED TRACKED PATHS ==='
+          git ls-files | grep -i fallback || true

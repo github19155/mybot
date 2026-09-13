@@ -2,7 +2,8 @@
 
 The Browser implementation remains in ``browser.py``. This module only exposes
 that same tool family to ToolLoader's ``subagent`` scope and supplies the parent
-message bus so human handoff notifications can reach the originating user.
+message bus so human handoff and progress notifications can reach the originating
+user.
 """
 
 from __future__ import annotations
@@ -40,15 +41,20 @@ def _workspace_key(workspace: str | Path) -> str:
 
 
 def bind_subagent_browser_bus(workspace: str | Path, bus: MessageBus) -> None:
-    """Bind the stable agent workspace to the bus used for handoff notices."""
+    """Bind the stable agent workspace to the bus used for child notifications."""
     _BUSES[_workspace_key(workspace)] = bus
+
+
+def subagent_bus_for_workspace(workspace: str | Path) -> MessageBus | None:
+    """Return the parent bus bound to a subagent workspace, when available."""
+    return _BUSES.get(_workspace_key(workspace))
 
 
 def _runtime(ctx: ToolContext) -> browser_tools._BrowserRuntime:  # pyright: ignore[reportPrivateUsage]
     return browser_tools._BrowserRuntime(  # pyright: ignore[reportPrivateUsage]
         browser_tools.BrowserRuntimeConfig.from_env(),
         ctx.workspace,
-        ctx.bus or _BUSES.get(_workspace_key(ctx.workspace)),
+        ctx.bus or subagent_bus_for_workspace(ctx.workspace),
     )
 
 

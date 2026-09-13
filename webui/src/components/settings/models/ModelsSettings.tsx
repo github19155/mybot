@@ -49,11 +49,22 @@ export interface AgentSettingsDraft {
   temperature: number;
   reasoningEffort: string;
   supportsVision: boolean;
+  supportsImageGeneration: boolean;
   timezone: string;
   toolHintMaxLength: number;
 }
 
 const CONTEXT_WINDOW_TOKEN_OPTIONS = [65_536, 200_000, 262_144, 500_000, 1_048_576] as const;
+
+type ModelPresetWithImageCapability = SettingsPayload["model_presets"][number] & {
+  supports_image_generation?: boolean;
+};
+
+function modelPresetSupportsImageGeneration(
+  preset: SettingsPayload["model_presets"][number] | null | undefined,
+): boolean {
+  return (preset as ModelPresetWithImageCapability | null | undefined)?.supports_image_generation === true;
+}
 
 function modelPresetValue(payload: SettingsPayload): string {
   return (
@@ -92,6 +103,7 @@ export const DEFAULT_AGENT_SETTINGS_DRAFT: AgentSettingsDraft = {
   temperature: 0.1,
   reasoningEffort: "",
   supportsVision: false,
+  supportsImageGeneration: false,
   timezone: "UTC",
   toolHintMaxLength: 40,
 };
@@ -116,6 +128,7 @@ export function agentDraftFromPayload(
     temperature: activePreset?.temperature ?? payload.agent.temperature,
     reasoningEffort: activePreset?.reasoning_effort ?? "",
     supportsVision: activePreset?.supports_vision ?? payload.agent.supports_vision ?? false,
+    supportsImageGeneration: modelPresetSupportsImageGeneration(activePreset),
     timezone: payload.agent.timezone,
     toolHintMaxLength: payload.agent.tool_hint_max_length,
   };
@@ -359,6 +372,7 @@ export function ModelsSettings({
       temperature: preset.temperature,
       reasoningEffort: preset.reasoning_effort ?? "",
       supportsVision: preset.supports_vision === true,
+      supportsImageGeneration: modelPresetSupportsImageGeneration(preset),
     }));
     setEditorRowKey(rowKey);
     setEditorOpen(true);
@@ -567,6 +581,7 @@ export function ModelsSettings({
             temperature={form.temperature}
             reasoningEffort={form.reasoningEffort}
             supportsVision={form.supportsVision}
+            supportsImageGeneration={form.supportsImageGeneration}
             onChange={(value) => setForm((prev) => ({ ...prev, ...value }))}
           />
         </div>
@@ -1118,6 +1133,7 @@ function ModelAdvancedFields({
   temperature,
   reasoningEffort,
   supportsVision,
+  supportsImageGeneration,
   onChange,
 }: {
   maxTokens: number;
@@ -1125,11 +1141,17 @@ function ModelAdvancedFields({
   temperature: number;
   reasoningEffort: string;
   supportsVision: boolean;
+  supportsImageGeneration: boolean;
   onChange: (
     value: Partial<
       Pick<
         AgentSettingsDraft,
-        "maxTokens" | "contextWindowTokens" | "temperature" | "reasoningEffort" | "supportsVision"
+        | "maxTokens"
+        | "contextWindowTokens"
+        | "temperature"
+        | "reasoningEffort"
+        | "supportsVision"
+        | "supportsImageGeneration"
       >
     >,
   ) => void;
@@ -1191,17 +1213,30 @@ function ModelAdvancedFields({
           }
         />
       </div>
-      <label className="flex items-center gap-2 text-[13px] text-foreground">
-        <input
-          type="checkbox"
-          checked={supportsVision}
-          onChange={(event) => onChange({ supportsVision: event.target.checked })}
-          className="h-4 w-4 rounded border-input"
-        />
-        <span>
-          {tx("settings.models.supportsVision", "This model supports native image input")}
-        </span>
-      </label>
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-[13px] text-foreground">
+          <input
+            type="checkbox"
+            checked={supportsVision}
+            onChange={(event) => onChange({ supportsVision: event.target.checked })}
+            className="h-4 w-4 rounded border-input"
+          />
+          <span>
+            {tx("settings.models.supportsVision", "This model supports native image input")}
+          </span>
+        </label>
+        <label className="flex items-center gap-2 text-[13px] text-foreground">
+          <input
+            type="checkbox"
+            checked={supportsImageGeneration}
+            onChange={(event) => onChange({ supportsImageGeneration: event.target.checked })}
+            className="h-4 w-4 rounded border-input"
+          />
+          <span>
+            {tx("settings.models.supportsImageGeneration", "This model supports image generation")}
+          </span>
+        </label>
+      </div>
       <label className="block">
         <span className="mb-1.5 block text-[12px] font-medium text-muted-foreground">
           {tx("settings.models.reasoningEffort", "Reasoning effort")}

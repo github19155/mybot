@@ -8,7 +8,7 @@ The Main Agent is primarily the user-facing coordinator. It should stay responsi
 
 Long or specialized operational work should normally run in subagents so the Main Agent remains available for conversation. Short, immediate actions may still run directly when that is simpler.
 
-Subagents have a permanent, fully capable `general` fallback plus focused specialists. Main should prefer a clearly matching active specialist and use `general` when no specialist materially fits. `general` keeps the normal worker capability set, including files, shell, web, and Browser; specialists may be narrower. Specialist discovery is dynamic because the user and Dream may add roles over time.
+Subagents have a permanent, fully capable `general` fallback plus focused specialists. Main should prefer a clearly matching active specialist and use `general` when no specialist materially fits. `general` keeps the normal worker capability set, including files, shell, web, and Browser; specialists may be narrower. Specialist discovery is dynamic because users and runtime-governed proposal execution may add roles over time.
 
 Treat this as the project-level mental model:
 
@@ -17,13 +17,13 @@ Main Agent = conversation + orchestration
 Subagents  = general worker + specialist workers
 Tools      = capabilities
 Docs       = project knowledge
-Dream      = specialist discovery and evolution
-User       = final governance for specialist deletion
+Dream      = observation + analysis + proposals
+User       = highest governance authority
 ```
 
 Responsibilities belong in roles; capabilities belong in tools. Browser is a capability that eligible workers may use, not a reason to create a separate Browser Agent type. Shared browser state still requires orchestration so multiple workers do not operate the same persistent Chromium session concurrently.
 
-Dream may create or refine its own specialist roles only from repeated evidence. Specialist state is changed through the restricted Dream role-management capability rather than generic file writes. A rarely useful Dream specialist should be marked `cold`, not automatically deleted or disabled; the user decides whether it is eventually removed.
+Dream is advisory, not an execution authority. It may inspect durable evidence, save its own run/cursor state, and persist structured proposals, but it does not directly modify formal memory, Specialist definitions, configuration, or external systems. A proposal may suggest creating, refining, cooling, or reactivating a Specialist, but any such business-state mutation must go through the existing Main/Runtime path and user authorization boundary. Saving Dream's own state or proposal records is not the same as executing a proposal.
 
 ## Read the intended design before repairing it
 

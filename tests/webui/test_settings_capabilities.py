@@ -60,3 +60,19 @@ def test_capability_domain_updates_representative_settings() -> None:
     assert payload["api"]["port"] == 8900
     assert payload["image_generation"]["enabled"] is True
     assert payload["transcription"]["provider"] == "openrouter"
+
+
+def test_tavily_web_search_keeps_custom_base_url() -> None:
+    config = Config()
+
+    changed, _restart = update_web_search_settings(
+        config,
+        {
+            "provider": ["tavily"],
+            "api_key": ["tavily-key"],
+            "base_url": ["https://tavily.example"],
+        },
+    )
+
+    assert changed is True
+    assert config.tools.web.search.base_url == "https://tavily.example"

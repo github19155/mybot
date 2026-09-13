@@ -323,7 +323,11 @@ def update_web_search_settings(config: Config, query: QueryParams) -> tuple[bool
         if credential == "api_key" and not api_key:
             raise WebUISettingsError("api_key is required")
         set_search_value("api_key", api_key or "")
-        set_search_value("base_url", "")
+        raw_base_url = query_first_alias(query, "base_url", "baseUrl")
+        base_url = raw_base_url.strip() if raw_base_url is not None else None
+        if base_url is None and provider_name == "tavily" and previous_provider == provider_name:
+            base_url = search_config.base_url
+        set_search_value("base_url", (base_url or "") if provider_name == "tavily" else "")
     else:
         raise WebUISettingsError("unknown web search credential type")
 

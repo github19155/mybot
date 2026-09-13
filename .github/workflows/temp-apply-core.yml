@@ -5,32 +5,30 @@ on:
     branches: [refactor/remove-model-fallback]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  develop:
+  targeted:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
-      - name: Apply when triggered
-        shell: bash
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v4
+      - run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
+      - run: uv sync --all-extras --dev
+      - name: Run affected Python tests
         run: |
-          set -euo pipefail
-          message="$(git log -1 --pretty=%B)"
-          if [ "$message" != "chore: apply remaining fallback removal" ]; then
-            echo "Not the apply trigger; skipping."
-            exit 0
-          fi
-          python scripts/remove_model_fallback_remaining.py
-          git diff --check
-          python -m compileall -q nanobot
-          echo '=== PRODUCT RESIDUALS ==='
-          git grep -n -I -E 'fallback_models|fallbackModels|FallbackProvider|include_fallbacks|InlineFallbackConfig|FallbackCandidate|fallback_model_observer|build_webui_fallback_model_observer|fallbackModelName' -- nanobot webui || true
-          git status --short
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add nanobot webui
-          git commit -m 'refactor: remove remaining model fallback surfaces'
-          git push origin HEAD:refactor/remove-model-fallback
+          uv run python -m pytest -q \
+            tests/agent/test_model_runtime_resolver.py \
+            tests/agent/test_runtime_refresh.py \
+            tests/agent/test_dream_control_plane.py \
+            tests/agent/test_runtime_resolution_integration.py \
+            tests/agent/test_onboard_logic.py \
+            tests/providers/test_custom_thinking_style.py \
+            tests/providers/test_llm_usage_observer.py \
+            tests/providers/test_provider_retry.py \
+            tests/utils/test_webui_turn_helpers.py \
+            tests/webui/test_settings_api.py \
+            tests/webui/test_settings_routes.py

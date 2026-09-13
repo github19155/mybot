@@ -233,7 +233,7 @@ def create_model_configuration(
             core_models.create_model_configuration,
             config,
             query,
-            oauth_status=core_models.oauth_provider_status,
+            oauth_status=_oauth_provider_status,
         ),
     )
     _save_settings_config(config, config_path)
@@ -255,7 +255,7 @@ def update_model_configuration(
             core_models.update_model_configuration,
             config,
             query,
-            oauth_status=core_models.oauth_provider_status,
+            oauth_status=_oauth_provider_status,
         )
     )
     if changed:

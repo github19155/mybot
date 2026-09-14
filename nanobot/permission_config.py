@@ -89,6 +89,8 @@ class PermissionConfig(Base):
             "web",
             "browser.control",
             "vision.delegate",
+            "image.generate",
+            "external.call",
             "tool.use",
         )
     )
@@ -111,7 +113,8 @@ class PermissionConfig(Base):
         default_factory=lambda: {
             "general": _policy(
                 "workspace.read", "workspace.write", "exec", "web",
-                "browser.control", "vision.delegate", "tool.use",
+                "browser.control", "vision.delegate", "image.generate",
+                "external.call", "tool.use",
             ),
             "researcher": _policy("workspace.read", "web", "vision.delegate", "tool.use"),
             "planner": _policy("workspace.read", "web", "tool.use"),

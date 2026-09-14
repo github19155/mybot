@@ -117,7 +117,7 @@ class ContextBuilder:
         include_memory: bool = True,
         system_prompt_prefix: str | None = None,
     ) -> str:
-        """Build the system prompt from identity, bootstrap files, memory, and skills."""
+        """Build the Main prompt from identity, user-owned context, memory, and catalogs."""
         root = workspace or self.workspace
         parts = [self._get_identity(channel=channel, workspace=root)]
 
@@ -131,8 +131,8 @@ class ContextBuilder:
         if project_path != self.workspace.expanduser().resolve():
             parts.append(
                 "# Current Project\n\n"
-                f"Working directory: {project_path}\n"
-                "Use it as the default root for project files and relative tool paths."
+                f"Project scope for delegated work: {project_path}\n"
+                "Preserve this scope when dispatching Workers; Main does not operate project files itself."
             )
 
         if include_memory:
@@ -140,16 +140,7 @@ class ContextBuilder:
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
                 parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
 
-        active_skills = self.skills.get_always_skills()
-        if active_skills:
-            active_content = self.skills.load_skills_for_context(active_skills)
-            if active_content:
-                parts.append(f"# Active Skills\n\n{active_content}")
-
-        skills_summary = self.skills.build_skills_summary(
-            exclude=set(active_skills),
-            workspace=root,
-        )
+        skills_summary = self.skills.build_skills_summary(workspace=root)
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
@@ -343,7 +334,17 @@ class ContextBuilder:
             blocks.extend(runtime_context_blocks or ())
             skill_context = self.skills.build_explicit_skill_runtime_context(current_message)
             if skill_context is not None and skill_context not in blocks:
-                blocks.append(skill_context)
+                blocks.append(
+                    RuntimeContextBlock(
+                        source=skill_context.source,
+                        content=(
+                            "[Worker-only skill guidance — preserve this when delegating; "
+                            "Main must not execute it directly]\n"
+                            f"{skill_context.content}\n"
+                            "[/Worker-only skill guidance]"
+                        ),
+                    )
+                )
         merged, runtime_context_meta = append_runtime_context(content, blocks)
         current: dict[str, Any] = {"role": current_role, "content": merged}
         if current_role == "user" and runtime_context_meta is not None:

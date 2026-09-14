@@ -249,10 +249,14 @@ def test_prompts_define_current_orchestration_and_governance() -> None:
     ).read_text(encoding="utf-8")
 
     assert "Main Agent / Orchestrator" in identity
-    assert "Main owns the conversation" in tool_contract
-    assert "permanent `general`" in tool_contract
-    assert "Browser is a worker capability" in tool_contract
-    assert "role.list" in tool_contract
+    assert "Main is the user-facing control plane" in tool_contract
+    assert "Prefer a matching active Specialist" in tool_contract
+    assert "Use a WorkAgent" in tool_contract
+    assert "permanent General" in tool_contract
+    assert "`subagent`" in tool_contract
+    assert "`role.list`" in tool_contract
+    assert "`role.get`" in tool_contract
+    assert "Children do not create further Workers" in tool_contract
 
     assert "## Specialist discovery" in dream
     assert "specialist_candidate" in dream

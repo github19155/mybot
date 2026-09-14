@@ -2,32 +2,38 @@
 
 These rules govern architectural decisions. When adding a feature or fixing a bug, prefer paths that respect these boundaries.
 
-## Main Agent orchestrates; subagents execute
+## Main Agent orchestrates; Workers execute
 
-The Main Agent is primarily the user-facing coordinator. It should stay responsive, understand intent, consult project docs, split work, choose workers, track progress, and summarize results.
+The Main Agent is the user-facing control plane. It stays responsive, understands intent, decomposes work, judges required capabilities, chooses Workers, coordinates shared resources, tracks delegated work when needed, and synthesizes results.
 
-Long or specialized operational work should normally run in subagents so the Main Agent remains available for conversation. Short, immediate actions may still run directly when that is simpler.
+Main does not perform operational execution itself, including filesystem reads/searches/edits, shell/process execution, web or Browser work, code changes, builds, tests, or image/media processing. Operational work is delegated even when it is tiny or near-instant.
 
-Subagents have a permanent, fully capable `general` fallback plus focused specialists. Main should prefer a clearly matching active specialist and use `general` when no specialist materially fits. `general` keeps the normal worker capability set, including files, shell, web, and Browser; specialists may be narrower. Specialist discovery is dynamic because users and runtime-governed proposal execution may add roles over time.
+Keep three layers separate: the system Tool Catalog, each Worker's effective capabilities, and the control-plane tools callable by Main. Discovery does not grant callability or authority. PermissionManager remains the runtime authority.
+
+Workers have a permanent, fully capable `general` fallback, focused persistent Specialists, and task-scoped WorkAgents. Main should prefer a clearly matching active Specialist, use WorkAgent for one-off custom capability/runtime needs, and use `general` otherwise. All three use the same SubagentManager/AgentRunner lifecycle and the same common Worker execution prompt.
+
+Every Worker dispatch is asynchronous. Main ends the dispatching turn after successful launch, does not poll for completion, and receives completion through a new Main turn. There is no special two-call orchestration budget in the architecture.
 
 Treat this as the project-level mental model:
 
 ```text
 Main Agent = conversation + orchestration
-Subagents  = general worker + specialist workers
+General    = permanent fallback Worker
+WorkAgent  = ephemeral customized Worker
+Specialist = persistent focused Worker
 Tools      = capabilities
 Docs       = project knowledge
 Dream      = observation + analysis + proposals
 User       = highest governance authority
 ```
 
-Responsibilities belong in roles; capabilities belong in tools. Browser is a capability that eligible workers may use, not a reason to create a separate Browser Agent type. Shared browser state still requires orchestration so multiple workers do not operate the same persistent Chromium session concurrently.
+Responsibilities belong in roles; capabilities belong in tools. Browser is a capability that eligible Workers may use, not a reason to create a separate Browser Agent type. Shared browser state still requires orchestration so multiple Workers do not operate the same persistent Chromium session concurrently. Concurrent file mutations likewise require Main coordination.
 
-Dream is advisory, not an execution authority. It may inspect durable evidence, save its own run/cursor state, and persist structured proposals, but it does not directly modify formal memory, Specialist definitions, configuration, or external systems. A proposal may suggest creating, refining, cooling, or reactivating a Specialist, but any such business-state mutation must go through the existing Main/Runtime path and user authorization boundary. Saving Dream's own state or proposal records is not the same as executing a proposal.
+Dream is advisory, not an execution authority. It may inspect durable evidence, save its own run/cursor state, and persist structured proposals, but it does not directly modify formal memory, Specialist definitions, configuration, or external systems. A proposal may suggest creating, refining, cooling, or reactivating a Specialist, but any such business-state mutation must go through the existing governed Main/Runtime path and user authorization boundary. Saving Dream's own state or proposal records is not the same as executing a proposal.
 
 ## Read the intended design before repairing it
 
-For architecture-sensitive failures, first locate the relevant project documentation and diagnose the intended topology before inventing a parallel workaround.
+For architecture-sensitive failures, first locate the relevant project knowledge and diagnose the intended topology before inventing a parallel workaround. Main routes the investigation; Workers perform repository/document inspection that requires file or search tools.
 
 Start with `docs/design-principles.md` and `docs/README.md`, then follow the subsystem guide. In particular:
 
@@ -48,11 +54,13 @@ Runtime state fan-out follows the same boundary. `AgentLoop` may publish generic
 
 Prefer simple, readable code over new framework layers and indirection. Add structure only when it removes real complexity, protects an important boundary, or matches an established local pattern. The best fix is often a smaller prompt, a tighter tool contract, a channel-local change, or one focused regression test.
 
-Prefer informed flexibility over broad prohibitions. Give agents enough project knowledge to choose the correct path; add hard constraints only for real safety, security, or shared-resource invariants.
+Prefer informed flexibility over broad prohibitions. Give Main enough capability knowledge to route correctly and Workers enough task knowledge to execute; add hard constraints only for real safety, security, permission, or shared-resource invariants.
 
 ## Prefer duplication over premature abstraction
 
 Channels and providers are allowed to repeat similar logic (send retries, media handling, message splitting). Do not introduce complex base classes or shared helpers just to eliminate duplication across channel files. Each channel file should remain self-contained and readable on its own. The same applies to provider implementations.
+
+Worker execution policy is the exception only because General, Specialist, and WorkAgent intentionally share one execution lifecycle and one public execution contract; do not copy that contract into three role prompts.
 
 ## Minimal change that solves the real problem
 

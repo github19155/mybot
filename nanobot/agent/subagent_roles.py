@@ -76,13 +76,22 @@ _BROWSER_TOOLS = {
     "browser_status": "subagent_browser",
     "browser_close": "subagent_browser",
 }
+_IMAGE_TOOLS = {
+    "image_analyze": "image_analysis",
+    "generate_image": "image_generation",
+}
 _PROGRESS_TOOLS = {
     "report_progress": "report_progress",
 }
 _EXEC_TOOLS = {**_EXEC_BASE_TOOLS, **_BROWSER_TOOLS}
 
-TOOL_MODULES = {**_EXEC_TOOLS, **_PROGRESS_TOOLS}
+TOOL_MODULES = {**_EXEC_TOOLS, **_IMAGE_TOOLS, **_PROGRESS_TOOLS}
 ALL_SUBAGENT_TOOL_NAMES = frozenset(TOOL_MODULES)
+
+
+def is_subagent_tool_name(name: str) -> bool:
+    """Return whether a static or configured dynamic tool name may be delegated."""
+    return name in ALL_SUBAGENT_TOOL_NAMES or name.startswith("mcp_")
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +136,7 @@ class ResolvedSubagentRole:
 
 def _validate_role_tools(role: "SubagentRoleConfig") -> None:
     requested = set(role.tools or ())
-    unknown = requested - ALL_SUBAGENT_TOOL_NAMES
+    unknown = {name for name in requested if not is_subagent_tool_name(name)}
     if "subagent" in requested:
         unknown.add("subagent")
     if unknown:

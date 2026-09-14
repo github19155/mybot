@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.agent.subagent_roles import ALL_SUBAGENT_TOOL_NAMES, ResolvedSubagentRole
+from nanobot.agent.subagent_roles import ResolvedSubagentRole, is_subagent_tool_name
 
 
 def _nonempty(value: str | None, field: str) -> str | None:
@@ -39,7 +39,7 @@ def build_work_role_definition(
     # Milestone reporting is task transport metadata rather than execution
     # authority, so it remains available even on a narrowly scoped WorkAgent.
     requested_tools = tuple(dict.fromkeys((*requested_tools, "report_progress")))
-    unknown = set(requested_tools) - ALL_SUBAGENT_TOOL_NAMES
+    unknown = {name for name in requested_tools if not is_subagent_tool_name(name)}
     if "subagent" in requested_tools:
         unknown.add("subagent")
     if unknown:
@@ -103,9 +103,7 @@ async def run_work_agent(
     manager: Any,
     *,
     role_definition: ResolvedSubagentRole,
-    wait: bool,
     **launch: Any,
 ) -> str:
-    """Run one WorkAgent through the manager's native ephemeral lifecycle."""
-    method = manager.run_inline_ephemeral if wait else manager.spawn_ephemeral
-    return await method(role_definition=role_definition, **launch)
+    """Dispatch one WorkAgent through the manager's native ephemeral lifecycle."""
+    return await manager.spawn_ephemeral(role_definition=role_definition, **launch)

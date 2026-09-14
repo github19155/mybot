@@ -65,7 +65,7 @@ _TOOL_CAPABILITIES = {
     "web_search": WEB,
     "web_fetch": WEB,
     "image_analyze": VISION_DELEGATE,
-    "image_generate": IMAGE_GENERATE,
+    "generate_image": IMAGE_GENERATE,
     "subagent": SUBAGENT_MANAGE,
     "context": CONTEXT_MANAGE,
     "model_config": MODEL_MANAGE,

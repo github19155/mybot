@@ -967,6 +967,40 @@ class AgentLoop:
             return UNIFIED_SESSION_KEY
         return msg.session_key
 
+    @staticmethod
+    def _is_subagent_result_message(msg: InboundMessage) -> bool:
+        """Return whether *msg* is a completed Worker result for Main."""
+        return (
+            msg.sender_id == "subagent"
+            and msg.metadata.get("injected_event") == "subagent_result"
+        )
+
+    @staticmethod
+    def _subagent_result_already_recorded(
+        session: Session,
+        msg: InboundMessage,
+    ) -> bool:
+        task_id = msg.metadata.get("subagent_task_id")
+        return bool(
+            isinstance(task_id, str)
+            and task_id
+            and any(
+                item.get("injected_event") == "subagent_result"
+                and item.get("subagent_task_id") == task_id
+                for item in session.messages
+            )
+        )
+
+    def _existing_session_for_subagent_result(
+        self,
+        session_key: str,
+    ) -> Session | None:
+        """Load an existing result target without creating a deleted session."""
+        return (
+            self.sessions.get_cached(session_key)
+            or self.sessions.read_session_snapshot(session_key)
+        )
+
     def _remember_unified_session_route(
         self,
         session: Session,
@@ -1095,17 +1129,6 @@ class AgentLoop:
                         row["_meta"] = {
                             RUNTIME_CONTEXT_MESSAGE_META: runtime_marker,
                         }
-                if (
-                    pending_msg.sender_id == "subagent"
-                    and metadata.get("injected_event") == "subagent_result"
-                ):
-                    subagent_marker: dict[str, Any] = {"kind": "subagent_result"}
-                    task_id = metadata.get("subagent_task_id")
-                    if isinstance(task_id, str) and task_id:
-                        subagent_marker["subagent_task_id"] = task_id
-                        row["subagent_task_id"] = task_id
-                    row[HIDDEN_HISTORY_META] = subagent_marker
-                    row["injected_event"] = "subagent_result"
                 followup_id = metadata.get(PENDING_FOLLOWUP_ID_KEY)
                 if isinstance(followup_id, str) and followup_id:
                     row[PENDING_FOLLOWUP_ID_KEY] = followup_id
@@ -1353,6 +1376,7 @@ class AgentLoop:
                         msg,
                         session_key_override=effective_key,
                     )
+                is_subagent_result = self._is_subagent_result_message(routed_msg)
                 # A newer WebUI message must supersede an explicit recovery
                 # before it is injected into that recovery's pending queue.
                 # Without this admission point, a recovered turn could finish
@@ -1365,9 +1389,13 @@ class AgentLoop:
                 ):
                     continue
                 # If this session already has an active pending queue (i.e. a task
-                # is processing this session), route the message there for mid-turn
-                # injection instead of creating a competing task.
-                if effective_key in self._pending_queues:
+                # is processing this session), route ordinary follow-ups there for
+                # mid-turn injection. Worker results instead wait on the session
+                # lock and start a fresh Main turn after this turn fully finishes.
+                if (
+                    effective_key in self._pending_queues
+                    and not is_subagent_result
+                ):
                     # Non-priority commands must not be queued for injection;
                     # dispatch them directly (same pattern as priority commands).
                     if msg.channel != "system" and self.commands.is_dispatchable_command(raw):
@@ -1395,7 +1423,7 @@ class AgentLoop:
                             "Pending queue full for session {}, falling back to queued task",
                             effective_key,
                         )
-                        msg = pending_msg
+                        routed_msg = pending_msg
                     else:
                         logger.info(
                             "Routed follow-up message to pending queue for session {}",
@@ -1404,7 +1432,7 @@ class AgentLoop:
                         continue
                 # Compute the effective session key before dispatching
                 # This ensures /stop command can find tasks correctly when unified session is enabled
-                task = asyncio.create_task(self._dispatch(msg))
+                task = asyncio.create_task(self._dispatch(routed_msg))
                 self._track_active_task(effective_key, task)
         finally:
             await self.aclose()
@@ -1424,6 +1452,7 @@ class AgentLoop:
         session_key = self._effective_session_key(msg)
         if session_key != msg.session_key:
             msg = dataclasses.replace(msg, session_key_override=session_key)
+        is_subagent_result = self._is_subagent_result_message(msg)
         recovery_task_registered = False
         recovery_admission = self._recovery_admission
         current_task: asyncio.Task[Any] | None = None
@@ -1446,6 +1475,23 @@ class AgentLoop:
         pending: asyncio.Queue[InboundMessage] | None = None
         try:
             async with lock, gate:
+                if is_subagent_result:
+                    existing_session = self._existing_session_for_subagent_result(
+                        session_key
+                    )
+                    if existing_session is None:
+                        logger.info(
+                            "Dropped subagent result for deleted session {}",
+                            session_key,
+                        )
+                        return
+                    if self._subagent_result_already_recorded(existing_session, msg):
+                        logger.info(
+                            "Skipped duplicate subagent result {} for session {}",
+                            msg.metadata.get("subagent_task_id"),
+                            session_key,
+                        )
+                        return
                 # Only the task that owns the session lock may publish the
                 # active mid-turn injection queue for this session.
                 pending = asyncio.Queue(maxsize=20)
@@ -2374,19 +2420,9 @@ class AgentLoop:
         deduped (same ``subagent_task_id`` already in session) or carries no
         content worth persisting.
         """
-        if not msg.content:
+        if not msg.content or self._subagent_result_already_recorded(session, msg):
             return False
-        metadata_value = cast(object, msg.metadata)
-        task_id = (
-            msg.metadata.get("subagent_task_id")
-            if isinstance(metadata_value, dict)
-            else None
-        )
-        if task_id and any(
-            m.get("injected_event") == "subagent_result" and m.get("subagent_task_id") == task_id
-            for m in session.messages
-        ):
-            return False
+        task_id = msg.metadata.get("subagent_task_id")
         session.add_message(
             "assistant",
             msg.content,

@@ -1,86 +1,45 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.config.loader import set_config_path
-from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.providers.image_generation import GeneratedImageResponse
-
-PNG_DATA_URL = (
-    "data:image/png;base64,"
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-)
-
-
-class FakeImageClient:
-    def __init__(self, **kwargs: Any) -> None:
-        pass
-
-    async def generate(self, **kwargs: Any) -> GeneratedImageResponse:
-        return GeneratedImageResponse(images=[PNG_DATA_URL], content="", raw={})
+from nanobot.agent.tools.context import RequestContext, request_context
+from nanobot.agent.tools.message import MessageTool
+from nanobot.bus.events import OutboundMessage
 
 
 @pytest.mark.asyncio
-async def test_outbound_no_longer_carries_generated_media(
+async def test_generated_worker_artifact_can_be_delivered_by_main_message_tool(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Media delivery is now the LLM's responsibility via the message tool."""
-    set_config_path(tmp_path / "config.json")
-    monkeypatch.setattr(
-        "nanobot.agent.tools.image_generation.get_image_gen_provider",
-        lambda name: FakeImageClient if name == "openrouter" else None,
-    )
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    provider.generation.max_tokens = 4096
-    provider.chat_with_retry = AsyncMock(
-        side_effect=[
-            LLMResponse(
-                content="",
-                finish_reason="tool_calls",
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_img",
-                        name="generate_image",
-                        arguments={"prompt": "draw a tiny icon"},
-                    )
-                ],
-            ),
-            LLMResponse(content="Done", finish_reason="stop"),
-        ]
-    )
-    provider.chat_stream_with_retry = AsyncMock()
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
+    """Main delivers a Worker-generated artifact through its control-plane message tool."""
+    artifact = tmp_path / "generated" / "image.png"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"generated-image")
+    send = AsyncMock()
+    tool = MessageTool(
+        send_callback=send,
         workspace=tmp_path,
-        model="test-model",
-        tools_config=ToolsConfig(
-            image_generation=ImageGenerationToolConfig(enabled=True),
-        ),
-        image_generation_provider_config=ProviderConfig(api_key="sk-or-test"),
+        restrict_to_workspace=True,
     )
 
-    result = await loop._process_message(
-        InboundMessage(
-            channel="websocket",
-            sender_id="user",
-            chat_id="chat-image",
-            content="draw an icon",
+    with request_context(RequestContext(
+        channel="websocket",
+        chat_id="chat-image",
+        session_key="websocket:chat-image",
+        allowed_tools=frozenset({"message"}),
+    )):
+        result = await tool.execute(
+            content="Generated image",
+            media=[str(artifact)],
         )
-    )
 
-    assert result is not None
-    assert result.content == "Done"
-    # OutboundMessage no longer carries generated media —
-    # the LLM sends images via the message tool instead.
-    assert result.media == []
+    assert result == "Message sent to websocket:chat-image with 1 attachments"
+    send.assert_awaited_once()
+    outbound = send.await_args.args[0]
+    assert isinstance(outbound, OutboundMessage)
+    assert outbound.channel == "websocket"
+    assert outbound.chat_id == "chat-image"
+    assert outbound.media == [str(artifact.resolve())]

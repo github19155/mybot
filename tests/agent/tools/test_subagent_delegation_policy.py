@@ -20,13 +20,12 @@ def test_tool_contract_prefers_background_subagents_for_long_work():
     assert "trivial, near-instant child checks" in content
 
 
-def test_subagent_tool_description_exposes_nonblocking_policy():
+def test_subagent_tool_description_exposes_async_only_policy():
     description = SubagentTool(MagicMock()).description
 
-    assert "Main is async-first" in description
-    assert "wait=false" in description
-    assert "filesystem, shell, web, browser" in description
-    assert "code, build, test, and other multi-step work" in description
-    assert "background results are delivered automatically" in description
-    assert "do not repeatedly poll status or sleep-and-check" in description
-    assert "wait=true only for trivial near-instant child work" in description
+    assert "Every run is asynchronous" in description
+    assert "returns immediately" in description
+    assert "task identifier" in description
+    assert "Background results are delivered automatically" in description
+    assert "do not poll or sleep-and-check" in description
+    assert "Children cannot create children" in description

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.registry import ToolRegistry
@@ -26,6 +27,7 @@ from nanobot.bus.events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.config.paths import get_media_dir
 from nanobot.config_base import Base
+from nanobot.model_domain import ModelConfig, require_model_capability
 from nanobot.providers.image_generation import (
     ImageGenerationError,
     ImageGenerationProvider,
@@ -48,9 +50,11 @@ if TYPE_CHECKING:
 
 class ImageGenerationToolConfig(Base):
     """Image generation tool configuration."""
+
+    model_config = ConfigDict(**Base.model_config, extra="forbid")
+
     enabled: bool = False
-    provider: str = "openrouter"
-    model: str = "openai/gpt-5.4-image-2"
+    model_id: str | None = None
     default_aspect_ratio: str = "1:1"
     default_image_size: str = "1K"
     max_images_per_turn: int = Field(default=4, ge=1, le=8)
@@ -82,7 +86,7 @@ class ImageGenerationToolConfig(Base):
     )
 )
 class ImageGenerationTool(Tool):
-    """Generate persistent image artifacts through the configured image provider."""
+    """Generate persistent image artifacts through a canonical model route."""
 
     config_key = "image_generation"
     _scopes = {"core", "subagent"}
@@ -97,10 +101,20 @@ class ImageGenerationTool(Tool):
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
+        root_config = (
+            ctx.model_management.config_snapshot
+            if ctx.model_management is not None
+            else None
+        )
+        models = ctx.models or (root_config.models if root_config is not None else {})
+        provider_configs = ctx.image_generation_provider_configs
+        if not provider_configs and root_config is not None:
+            provider_configs = image_gen_provider_configs(root_config)
         return cls(
             workspace=ctx.workspace,
             config=ctx.config.image_generation,
-            provider_configs=ctx.image_generation_provider_configs,
+            models=models,
+            provider_configs=provider_configs,
         )
 
     def __init__(
@@ -108,14 +122,13 @@ class ImageGenerationTool(Tool):
         *,
         workspace: str | Path,
         config: ImageGenerationToolConfig,
-        provider_config: ProviderConfig | None = None,
-        provider_configs: dict[str, ProviderConfig] | None = None,
+        models: Mapping[str, ModelConfig] | None = None,
+        provider_configs: Mapping[str, ProviderConfig] | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser()
         self.config = config
+        self.models = models or {}
         self.provider_configs = dict(provider_configs or {})
-        if provider_config is not None and "openrouter" not in self.provider_configs:
-            self.provider_configs["openrouter"] = provider_config
 
     @property
     def name(self) -> str:
@@ -129,14 +142,35 @@ class ImageGenerationTool(Tool):
             "or user image paths as reference_images."
         )
 
-    def _provider_config(self) -> ProviderConfig | None:
-        return self.provider_configs.get(self.config.provider)
+    def _resolve_model(self) -> tuple[str, ModelConfig]:
+        model_id = (self.config.model_id or "").strip()
+        if not model_id:
+            raise ImageGenerationError(
+                "no image generation model_id is configured; set tools.imageGeneration.modelId"
+            )
+        try:
+            model = require_model_capability(
+                self.models,
+                model_id,
+                "image_generation",
+            )
+        except (KeyError, ValueError) as exc:
+            raise ImageGenerationError(str(exc)) from exc
+        return model_id, model
 
-    def _provider_client(self) -> ImageGenerationProvider | None:
-        provider = self._provider_config()
-        cls = get_image_gen_provider(self.config.provider)
+    def _provider_client(
+        self,
+        model_id: str,
+        model: ModelConfig,
+    ) -> ImageGenerationProvider:
+        provider_name = model.provider
+        cls = get_image_gen_provider(provider_name)
         if cls is None:
-            return None
+            raise ImageGenerationError(
+                f"provider {provider_name!r} has no image-generation adapter "
+                f"for model_id {model_id!r}"
+            )
+        provider = self.provider_configs.get(provider_name)
         kwargs: dict[str, Any] = {
             "api_key": provider.api_key if provider and isinstance(provider.api_key, str) else None,
             "api_base": provider.api_base if provider and isinstance(provider.api_base, str) else None,
@@ -186,10 +220,6 @@ class ImageGenerationTool(Tool):
         count: int | None = None,
         **kwargs: Any,
     ) -> str:
-        client = self._provider_client()
-        if client is None:
-            return ToolResult.error(f"Error: unsupported image generation provider '{self.config.provider}'")
-
         requested = count or 1
         if requested > self.config.max_images_per_turn:
             return ToolResult.error(
@@ -198,12 +228,14 @@ class ImageGenerationTool(Tool):
             )
 
         try:
+            model_id, model = self._resolve_model()
+            client = self._provider_client(model_id, model)
             refs = self._resolve_reference_images(reference_images)
             artifacts: list[dict[str, Any]] = []
             while len(artifacts) < requested:
                 response = await client.generate(
                     prompt=prompt,
-                    model=self.config.model,
+                    model=model.model,
                     reference_images=refs,
                     aspect_ratio=aspect_ratio or self.config.default_aspect_ratio,
                     image_size=image_size or self.config.default_image_size,
@@ -212,10 +244,10 @@ class ImageGenerationTool(Tool):
                     artifact = store_generated_image_artifact(
                         image_data_url,
                         prompt=prompt,
-                        model=self.config.model,
+                        model=model.model,
                         source_images=refs,
                         save_dir=self.config.save_dir,
-                        provider=self.config.provider,
+                        provider=model.provider,
                     )
                     artifacts.append(artifact)
                     if len(artifacts) >= requested:
@@ -233,6 +265,7 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
         config = resolve_config_env_vars(load_config())
         tool_config = config.tools.image_generation
         provider_configs = image_gen_provider_configs(config)
+        models = dict(config.models)
     except Exception as exc:
         logger.warning("Image generation hot reload could not read config: {}", exc)
         return {
@@ -246,6 +279,7 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
         ImageGenerationTool(  # pyright: ignore[reportAbstractUsage]
             workspace=state.workspace,
             config=tool_config,
+            models=models,
             provider_configs=provider_configs,
         )
         if tool_config.enabled
@@ -254,23 +288,22 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
 
     state.tools_config.image_generation = tool_config
     state._image_generation_provider_configs = provider_configs
+    state._models = models
     if next_tool is not None:
         registry.register(next_tool)
     else:
         registry.unregister("generate_image")
 
     logger.info(
-        "Image generation config reloaded: enabled={} provider={} model={}",
+        "Image generation config reloaded: enabled={} model_id={}",
         tool_config.enabled,
-        tool_config.provider,
-        tool_config.model,
+        tool_config.model_id,
     )
     return {
         "ok": True,
         "message": "Image generation settings applied without restarting nanobot.",
         "enabled": tool_config.enabled,
-        "provider": tool_config.provider,
-        "model": tool_config.model,
+        "model_id": tool_config.model_id,
         "requires_restart": False,
     }
 

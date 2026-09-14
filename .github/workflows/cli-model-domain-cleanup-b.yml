@@ -1,4 +1,5 @@
 name: CLI Model Domain Cleanup B
+# Temporary branch-only verifier; removed by the verified cleanup commit.
 
 on:
   push:

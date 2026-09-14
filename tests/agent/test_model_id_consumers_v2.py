@@ -10,7 +10,7 @@ from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.subagent_roles import resolve_role
 from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.subagent import SubagentTool, _SUBAGENT_PARAMETERS
+from nanobot.agent.tools.subagent import _SUBAGENT_PARAMETERS, SubagentTool
 from nanobot.agent.work_agent import build_work_role_definition
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config

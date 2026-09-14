@@ -16,7 +16,10 @@ from nanobot.audio.transcription import (
     resolve_transcription_config,
     transcribe_audio_file,
 )
-from nanobot.audio.transcription_registry import get_transcription_provider, transcription_provider_names
+from nanobot.audio.transcription_registry import (
+    get_transcription_provider,
+    transcription_provider_names,
+)
 from nanobot.config.schema import Config, TranscriptionConfig
 from nanobot.providers.transcription import (
     AssemblyAITranscriptionProvider,

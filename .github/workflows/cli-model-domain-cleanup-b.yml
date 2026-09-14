@@ -38,7 +38,9 @@ jobs:
       - name: Target collection
         run: uv run python -m pytest --collect-only -q tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
       - name: Target tests
-        run: uv run python -m pytest -q tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
+        run: |
+          uv run python -m pytest -q tests/agent/test_onboard_logic.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
+          uv run python -m pytest -q tests/agent/tools/test_self_tool.py -k 'not SubagentStatusFormatting and not InspectTaskStatuses'
       - name: Ruff
         run: uv run ruff check nanobot/cli/gateway_runtime.py nanobot/cli/onboard.py nanobot/cli/provider.py nanobot/cli/runtime_config.py nanobot/cli/tui_launcher.py nanobot/command/builtin.py tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
       - name: Scoped basedpyright

@@ -16,6 +16,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: refactor/model-domain-v2
+      - name: Apply cleanup candidate
+        run: python .github/scripts/apply-model-domain-cleanup.py
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

@@ -10,7 +10,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nanobot.config.timezone import detect_system_timezone
 from nanobot.config_base import Base
-from nanobot.model_domain import ModelCapabilities, ModelConfig, get_model, validate_model_id
+from nanobot.model_domain import (
+    ModelCapabilities,
+    ModelConfig,
+    get_model,
+    require_model_capability,
+    validate_model_id,
+)
 from nanobot.permission_config import PermissionConfig
 
 if TYPE_CHECKING:
@@ -536,6 +542,20 @@ class Config(BaseSettings):
                 raise ValueError(f"{path} references unknown model_id {model_id!r}") from None
             raise ValueError(f"{path} has invalid model_id {model_id!r}: {exc}") from None
 
+    @staticmethod
+    def _require_model_capability_reference(
+        models: dict[str, ModelConfig],
+        model_id: str,
+        capability: Literal["vision", "image_generation"],
+        path: str,
+    ) -> None:
+        try:
+            require_model_capability(models, model_id, capability)
+        except KeyError:
+            raise ValueError(f"{path} references unknown model_id {model_id!r}") from None
+        except ValueError as exc:
+            raise ValueError(f"{path}: {exc}") from None
+
     @model_validator(mode="after")
     def _validate_model_references(self) -> "Config":
         for model_id in self.models:
@@ -565,6 +585,23 @@ class Config(BaseSettings):
                 self.models,
                 self.transcription.model_id,
                 "transcription.model_id",
+            )
+
+        image_analysis_model_id = self.tools.image_analysis.model_id
+        if image_analysis_model_id:
+            self._require_model_capability_reference(
+                self.models,
+                image_analysis_model_id,
+                "vision",
+                "tools.image_analysis.model_id",
+            )
+        image_generation_model_id = self.tools.image_generation.model_id
+        if image_generation_model_id:
+            self._require_model_capability_reference(
+                self.models,
+                image_generation_model_id,
+                "image_generation",
+                "tools.image_generation.model_id",
             )
 
         for role in _BUILTIN_SUBAGENT_ROLE_NAMES:

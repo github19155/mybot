@@ -288,6 +288,14 @@ class ModelFleetStore:
                 );
                 """
             )
+            offering_columns = {
+                str(row["name"])
+                for row in self._db.execute("PRAGMA table_info(offerings)")
+            }
+            if "preset_name" in offering_columns and "model_id" not in offering_columns:
+                self._db.execute(
+                    "ALTER TABLE offerings RENAME COLUMN preset_name TO model_id"
+                )
 
     def upsert_offering(self, offering: ModelOffering) -> None:
         with self._lock, self._db:

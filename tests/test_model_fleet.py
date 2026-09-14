@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import time
 from pathlib import Path
 
@@ -259,3 +260,97 @@ def test_disabled_fleet_keeps_plain_provider() -> None:
     config.model_fleet.enabled = False
     provider = make_provider(config, model_id="main")
     assert not isinstance(provider, FleetControlledProvider)
+
+
+
+def _offering_columns(path: Path) -> list[str]:
+    with sqlite3.connect(path) as db:
+        return [str(row[1]) for row in db.execute("PRAGMA table_info(offerings)")]
+
+
+def test_fleet_store_fresh_db_uses_model_id_column(tmp_path: Path) -> None:
+    path = tmp_path / "fleet.db"
+    store = ModelFleetStore(path)
+    assert "model_id" in _offering_columns(path)
+    assert "preset_name" not in _offering_columns(path)
+    store._db.close()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_fleet_store_migrates_legacy_preset_name_column_and_preserves_telemetry(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "fleet.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            """
+            CREATE TABLE offerings (
+                offering_id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL,
+                preset_name TEXT, pools_json TEXT NOT NULL DEFAULT '[]',
+                input_cost_per_million REAL, output_cost_per_million REAL,
+                cached_input_cost_per_million REAL, supports_vision INTEGER NOT NULL DEFAULT 0,
+                context_window_tokens INTEGER, updated_at_ms INTEGER NOT NULL
+            );
+            CREATE TABLE calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, offering_id TEXT NOT NULL,
+                started_at_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL,
+                input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,
+                generation_ms INTEGER, ttft_ms INTEGER, finish_reason TEXT NOT NULL,
+                error_status_code INTEGER, error_kind TEXT, estimated_cost REAL
+            );
+            CREATE TABLE quality_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, offering_id TEXT NOT NULL,
+                dimension TEXT NOT NULL, outcome REAL NOT NULL, weight REAL NOT NULL,
+                evidence TEXT, created_at_ms INTEGER NOT NULL
+            );
+            CREATE TABLE score_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, offering_id TEXT NOT NULL,
+                calculated_at_ms INTEGER NOT NULL, quality REAL, speed REAL,
+                reliability REAL, cost REAL, confidence REAL NOT NULL, trend REAL NOT NULL,
+                samples INTEGER NOT NULL, metrics_json TEXT NOT NULL
+            );
+            CREATE TABLE aggregates (
+                offering_id TEXT NOT NULL, bucket_kind TEXT NOT NULL,
+                bucket_start_ms INTEGER NOT NULL, calls INTEGER NOT NULL,
+                successes INTEGER NOT NULL, rate_limits INTEGER NOT NULL,
+                avg_duration_ms REAL, avg_ttft_ms REAL, avg_generation_ms REAL,
+                total_cost REAL,
+                PRIMARY KEY(offering_id, bucket_kind, bucket_start_ms)
+            );
+            INSERT INTO offerings VALUES (
+                'offer-1', 'cpa', 'openai/gpt-5.6', 'fast-model', '[]',
+                NULL, NULL, NULL, 0, NULL, 1
+            );
+            INSERT INTO calls(
+                offering_id, started_at_ms, duration_ms, finish_reason
+            ) VALUES ('offer-1', 1, 2, 'stop');
+            INSERT INTO quality_events(
+                offering_id, dimension, outcome, weight, evidence, created_at_ms
+            ) VALUES ('offer-1', 'general', 1.0, 1.0, 'kept', 1);
+            INSERT INTO score_snapshots(
+                offering_id, calculated_at_ms, confidence, trend, samples, metrics_json
+            ) VALUES ('offer-1', 1, 0.5, 0.0, 1, '{}');
+            INSERT INTO aggregates(
+                offering_id, bucket_kind, bucket_start_ms, calls, successes, rate_limits
+            ) VALUES ('offer-1', 'hour', 1, 1, 1, 0);
+            """
+        )
+
+    assert "preset_name" in _offering_columns(path)
+    assert "model_id" not in _offering_columns(path)
+
+    first = ModelFleetStore(path)
+    columns = _offering_columns(path)
+    assert "model_id" in columns
+    assert "preset_name" not in columns
+    row = first.offerings()[0]
+    assert row["model_id"] == "fast-model"
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM quality_events").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM score_snapshots").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0] == 1
+    first._db.close()  # pyright: ignore[reportPrivateUsage]
+
+    second = ModelFleetStore(path)
+    assert second.offerings()[0]["model_id"] == "fast-model"
+    second._db.close()  # pyright: ignore[reportPrivateUsage]

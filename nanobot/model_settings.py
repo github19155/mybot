@@ -11,7 +11,7 @@ from typing import Any, Callable, cast
 
 from nanobot.agent.subagent_roles import SUBAGENT_ROLES
 from nanobot.config.schema import Config, ProviderConfig, SubagentRoleConfig, SubagentRoleName
-from nanobot.model_domain import ModelConfig, validate_model_id
+from nanobot.model_domain import ModelConfig, get_model, validate_model_id
 from nanobot.providers.image_generation import get_image_gen_provider
 from nanobot.providers.registry import PROVIDERS, create_dynamic_spec, find_by_name
 
@@ -352,7 +352,15 @@ def update_provider_settings(config: Config, query: QueryParams) -> tuple[bool, 
     if changed:
         setattr(config.providers, provider_key, updated_provider_config)
     image_config = config.tools.image_generation
-    restart_required = changed and image_config.enabled and image_config.provider == provider_key and get_image_gen_provider(provider_key) is not None
+    image_provider: str | None = None
+    if image_config.model_id is not None:
+        image_provider = get_model(config.models, image_config.model_id).provider
+    restart_required = (
+        changed
+        and image_config.enabled
+        and image_provider == provider_key
+        and get_image_gen_provider(provider_key) is not None
+    )
     return changed, restart_required
 
 

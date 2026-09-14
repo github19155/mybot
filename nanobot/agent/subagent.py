@@ -330,11 +330,13 @@ class SubagentManager:
         )
         cfg = tools_config if tools_config is not None else self._subagent_tools_config()
         resolver = self.runtime_resolver
+        config_snapshot = self._role_config()
         ctx = ToolContext(
             config=cfg,
             workspace=str(root.resolve()),
             exec_session_manager=self._exec_session_manager,
             file_state_store=FileStates(),
+            models=config_snapshot.models if config_snapshot is not None else {},
             provider_snapshot_loader=(
                 getattr(resolver, "_provider_snapshot_loader", None)
                 if resolver is not None

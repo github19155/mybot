@@ -32,12 +32,8 @@ class ModelManagement:
         self,
         config: Config,
         *,
-        runtime_resolver: Any | None = None,
         invalidate: Callable[[], None] | None = None,
     ) -> None:
-        # Compatibility glue while B/E callers migrate. Model Management does
-        # not execute runtimes and deliberately does not use this resolver.
-        del runtime_resolver
         self.config = config
         self._store = ConfigStore(config.source_path) if config.source_path is not None else None
         self._invalidate = invalidate
@@ -57,14 +53,8 @@ class ModelManagement:
 
     @staticmethod
     def _canonical_offering(config: Config, model_id: str):
-        """Delegate canonical ModelConfig -> Fleet offering construction to B."""
-        try:
-            return offering_from_config(config, model_id=model_id)  # type: ignore[call-arg]
-        except TypeError as exc:
-            raise ModelSettingsError(
-                "canonical Model Fleet adapter is unavailable; integrate refactor/model-runtime-fleet-v2",
-                status=503,
-            ) from exc
+        """Delegate canonical ModelConfig -> Fleet offering construction."""
+        return offering_from_config(config, model_id=model_id)
 
     @classmethod
     def _sync_fleet_catalog(cls, config: Config):

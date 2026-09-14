@@ -171,6 +171,11 @@ class SubagentTool(Tool):
             return self._dynamic_mcp_catalog()
 
         config = config_builder()
+        config_snapshot_loader = getattr(self._manager, "_role_config", None)
+        config_snapshot = (
+            config_snapshot_loader() if callable(config_snapshot_loader) else None
+        )
+        models = config_snapshot.models if config_snapshot is not None else {}
         resolver = getattr(self._manager, "runtime_resolver", None)
         provider_configs_loader = getattr(
             self._manager,
@@ -190,6 +195,7 @@ class SubagentTool(Tool):
             bus=getattr(self._manager, "bus", None),
             subagent_manager=self._manager,
             exec_session_manager=getattr(self._manager, "_exec_session_manager", None),
+            models=models,
             provider_snapshot_loader=(
                 getattr(resolver, "_provider_snapshot_loader", None)
                 if resolver is not None
@@ -218,11 +224,16 @@ class SubagentTool(Tool):
         }
         if "image_analyze" in available and ctx.provider_snapshot_loader is None:
             available.discard("image_analyze")
-        if "generate_image" in available and (
-            not image_provider_configs
-            or config.image_generation.provider not in image_provider_configs
-        ):
-            available.discard("generate_image")
+        if "generate_image" in available:
+            model_id = config.image_generation.model_id
+            image_model = models.get(model_id) if model_id is not None else None
+            if (
+                image_model is None
+                or not image_model.capabilities.image_generation
+                or not image_provider_configs
+                or image_model.provider not in image_provider_configs
+            ):
+                available.discard("generate_image")
         available.update(self._dynamic_mcp_catalog())
         return available
 

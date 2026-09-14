@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/runtime-fleet-migrate.yml'
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -15,6 +18,17 @@ jobs:
         with:
           ref: refactor/model-runtime-fleet-v2
           fetch-depth: 0
+      - name: Migrate session manager key reference
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('nanobot/session/manager.py')
+          text = path.read_text()
+          old = 'SESSION_MODEL_PRESET_METADATA_KEY'
+          assert old in text
+          path.write_text(text.replace(old, 'SESSION_MODEL_ID_METADATA_KEY'))
+          PY
+          git diff --check
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -23,26 +37,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
       - name: Install dependencies
         run: uv sync --all-extras --dev
-      - name: Ruff changed runtime scope
+      - name: Validate and test
         run: |
-          uv run ruff check \
-            nanobot/providers/factory.py \
-            nanobot/model_fleet.py \
-            nanobot/agent/model_runtime.py \
-            nanobot/agent/loop.py \
-            nanobot/agent/tools/runtime_control.py \
-            nanobot/agent/tools/self.py \
-            nanobot/bus/runtime_events.py \
-            nanobot/session/model_selection.py \
-            nanobot/utils/llm_runtime.py \
-            tests/agent/test_model_runtime_resolver.py \
+          uv run ruff check nanobot/session/manager.py \
+            nanobot/providers/factory.py nanobot/model_fleet.py \
+            nanobot/agent/model_runtime.py nanobot/agent/loop.py \
+            nanobot/agent/tools/runtime_control.py nanobot/agent/tools/self.py \
+            nanobot/bus/runtime_events.py nanobot/session/model_selection.py \
+            nanobot/utils/llm_runtime.py tests/agent/test_model_runtime_resolver.py \
             tests/agent/test_runtime_resolution_integration.py \
-            tests/agent/test_runtime_refresh.py \
-            tests/agent/test_session_model_runtime.py \
-            tests/test_model_fleet.py \
-            tests/agent/test_self_model_id.py
-      - name: Targeted runtime fleet tests
-        run: |
+            tests/agent/test_runtime_refresh.py tests/agent/test_session_model_runtime.py \
+            tests/test_model_fleet.py tests/agent/test_self_model_id.py
           uv run python -m pytest -q \
             tests/agent/test_model_runtime_resolver.py \
             tests/agent/test_runtime_resolution_integration.py \
@@ -50,3 +55,10 @@ jobs:
             tests/agent/test_session_model_runtime.py \
             tests/test_model_fleet.py \
             tests/agent/test_self_model_id.py
+      - name: Commit session reference
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add nanobot/session/manager.py
+          git commit -m 'refactor(session): use canonical model id metadata key'
+          git push origin HEAD:refactor/model-runtime-fleet-v2

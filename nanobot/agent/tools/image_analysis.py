@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.schema import ArraySchema, StringSchema, tool_parameters_schema
 from nanobot.config.paths import get_media_dir
 from nanobot.config_base import Base
+from nanobot.model_domain import ModelConfig, require_model_capability
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
 from nanobot.utils.helpers import detect_image_mime
@@ -24,8 +26,10 @@ if TYPE_CHECKING:
 class ImageAnalysisToolConfig(Base):
     """Configuration for the fallback image analysis tool."""
 
+    model_config = ConfigDict(**Base.model_config, extra="forbid")
+
     enabled: bool = True
-    model_preset: str | None = None
+    model_id: str | None = None
     max_image_mb: float = Field(default=10.0, gt=0, le=50)
     max_images: int = Field(default=4, ge=1, le=8)
 
@@ -45,8 +49,8 @@ class ImageAnalysisToolConfig(Base):
             "What to inspect or extract from the image(s).",
             min_length=1,
         ),
-        model_preset=StringSchema(
-            "Optional vision-capable model preset. Overrides tools.imageAnalysis.modelPreset.",
+        model_id=StringSchema(
+            "Optional vision-capable canonical model_id. Overrides tools.imageAnalysis.modelId.",
             min_length=1,
         ),
         required=["image_paths", "prompt"],
@@ -71,6 +75,7 @@ class ImageAnalysisTool(Tool):
         return cls(
             workspace=ctx.workspace,
             config=ctx.config.image_analysis,
+            models=ctx.models,
             provider_snapshot_loader=ctx.provider_snapshot_loader,
         )
 
@@ -79,10 +84,12 @@ class ImageAnalysisTool(Tool):
         *,
         workspace: str | Path,
         config: ImageAnalysisToolConfig,
+        models: Mapping[str, ModelConfig] | None = None,
         provider_snapshot_loader: Any = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser()
         self.config = config
+        self.models = models or {}
         self.provider_snapshot_loader = provider_snapshot_loader
 
     @property
@@ -133,7 +140,7 @@ class ImageAnalysisTool(Tool):
         self,
         image_paths: list[str],
         prompt: str,
-        model_preset: str | None = None,
+        model_id: str | None = None,
         **kwargs: Any,
     ) -> str:
         if not isinstance(image_paths, list):
@@ -152,32 +159,27 @@ class ImageAnalysisTool(Tool):
             )
         if self.provider_snapshot_loader is None:
             return ToolResult.error(
-                "Error: no image analysis model is configured. "
-                "Set tools.imageAnalysis.modelPreset to a vision-capable model preset."
+                "Error: no image analysis runtime loader is configured."
             )
 
-        requested_preset = model_preset if isinstance(model_preset, str) else None
-        selected = (requested_preset or self.config.model_preset or "").strip()
-        if not selected:
+        requested_model_id = model_id if isinstance(model_id, str) else None
+        selected_model_id = (requested_model_id or self.config.model_id or "").strip()
+        if not selected_model_id:
             return ToolResult.error(
-                "Error: no image analysis model is configured. "
-                "Pass model_preset or set tools.imageAnalysis.modelPreset."
+                "Error: no image analysis model_id is configured. "
+                "Pass model_id or set tools.imageAnalysis.modelId."
             )
 
         try:
+            require_model_capability(self.models, selected_model_id, "vision")
             images = [self._resolve_image(value) for value in paths]
             if not images:
                 return ToolResult.error("Error: at least one image path is required.")
             snapshot: ProviderSnapshot = self.provider_snapshot_loader(
-                preset_name=selected,
+                model_id=selected_model_id,
             )
         except (KeyError, ValueError, OSError) as exc:
             return ToolResult.error(f"Error: {exc}")
-
-        if not snapshot.supports_vision:
-            return ToolResult.error(
-                f"Error: model preset '{selected}' is not marked supportsVision=true."
-            )
 
         content: list[dict[str, Any]] = []
         for path, mime, raw in images:

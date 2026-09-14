@@ -5,13 +5,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from nanobot.bus.queue import MessageBus
 from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config, ModelPresetConfig
+from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -33,17 +34,30 @@ def _manager(tmp_path, **kwargs) -> SubagentManager:
     )
 
 
+def _models() -> dict[str, dict[str, object]]:
+    return {
+        "main": {
+            "displayName": "Main",
+            "provider": "test",
+            "model": "parent/model",
+        },
+        "coding": {
+            "displayName": "Coding",
+            "provider": "test",
+            "model": "provider/coder",
+        },
+    }
+
+
 def test_config_accepts_custom_role_and_full_role_defaults() -> None:
     config = Config(
-        modelPresets={
-            "coding": ModelPresetConfig(model="provider/coder"),
-        },
+        models=_models(),
         subagentRoles={
             "backend-coder": {
                 "description": "Backend implementation",
                 "systemPrompt": "Implement and test backend changes.",
                 "tools": ["read_file", "write_file", "exec"],
-                "modelPreset": "coding",
+                "modelId": "coding",
                 "thinking": "high",
                 "temperature": 0.1,
                 "timeoutSeconds": 1800,
@@ -55,21 +69,29 @@ def test_config_accepts_custom_role_and_full_role_defaults() -> None:
     role = config.subagent_roles["backend-coder"]
     assert role.system_prompt == "Implement and test backend changes."
     assert role.tools == ["read_file", "write_file", "exec"]
-    assert role.model_preset == "coding"
+    assert role.model_id == "coding"
     assert role.thinking == "high"
     assert role.timeout_seconds == 1800
     assert role.context == "fork"
 
 
-def test_role_model_and_preset_are_mutually_exclusive() -> None:
-    with pytest.raises(ValueError, match="model.*model_preset|model_preset.*model"):
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        {"model": "provider/model"},
+        {"modelPreset": "coding"},
+        {"model_preset": "coding"},
+    ],
+)
+def test_role_rejects_removed_model_identity_fields(legacy) -> None:
+    with pytest.raises(ValidationError):
         Config(
+            models=_models(),
             subagentRoles={
                 "custom": {
                     "description": "Custom role",
                     "systemPrompt": "Do the work.",
-                    "model": "provider/model",
-                    "modelPreset": "coding",
+                    **legacy,
                 },
             },
         )
@@ -193,35 +215,27 @@ async def test_run_snapshots_thinking_and_fork_context(tmp_path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("role_selection", "run_model", "run_preset", "expected_model", "expected_preset", "calls"),
+    ("role_selection", "expected_model_id", "calls"),
     [
-        ({"model": "provider/role"}, "provider/run", None, "provider/run", None, 1),
-        ({"modelPreset": "fast"}, None, None, None, "fast", 1),
-        ({}, None, None, None, None, 0),
+        ({"modelId": "coding"}, "coding", 1),
+        ({}, None, 0),
     ],
 )
-async def test_subagent_runtime_precedence_uses_one_frozen_role(
+async def test_subagent_role_model_id_or_inherits_current_runtime(
     tmp_path,
     monkeypatch,
     role_selection,
-    run_model,
-    run_preset,
-    expected_model,
-    expected_preset,
+    expected_model_id,
     calls,
 ) -> None:
-    from nanobot.agent.model_management import ModelManagement
     from nanobot.agent.subagent_roles import resolve_role as real_resolve_role
 
-    config = Config(
-        modelPresets={"fast": {"model": "provider/fast"}},
-        subagentRoles={"coder": role_selection},
-    )
+    config = Config(models=_models(), subagentRoles={"coder": role_selection})
     parent = _runtime()
     resolver = MagicMock()
     resolver.runtime = parent
     resolver.resolve_selection.return_value = parent
-    management = ModelManagement(config, runtime_resolver=resolver)
+    management = SimpleNamespace(config=config, config_snapshot=lambda: config)
     role_resolver = MagicMock(side_effect=real_resolve_role)
     monkeypatch.setattr("nanobot.agent.subagent.resolve_role", role_resolver)
     manager = _manager(
@@ -238,8 +252,6 @@ async def test_subagent_runtime_precedence_uses_one_frozen_role(
         "runtime precedence",
         runtime=parent,
         role="coder",
-        model=run_model,
-        model_preset=run_preset,
     )
     tasks = list(manager._running_tasks.values())
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -250,8 +262,7 @@ async def test_subagent_runtime_precedence_uses_one_frozen_role(
     if calls:
         resolver.resolve_selection.assert_called_once_with(
             parent,
-            model=expected_model,
-            model_preset=expected_preset,
+            model_id=expected_model_id,
         )
     await manager.close()
 

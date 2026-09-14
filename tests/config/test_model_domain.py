@@ -1,16 +1,32 @@
 import pytest
 
-from nanobot.model_domain import ModelConfig
+from nanobot.model_domain import (
+    MODEL_CAPABILITIES,
+    ModelConfig,
+    get_model,
+    require_model_capability,
+    validate_model_id,
+)
 
 
-def test_model_config_groups_capabilities_generation_and_pricing() -> None:
-    model = ModelConfig.model_validate({
-        "model": "openai/gpt-5.6",
+def _model(**overrides):
+    values = {
+        "display_name": "Main",
         "provider": "openai",
+        "model": "gpt-5.6",
+    }
+    values.update(overrides)
+    return ModelConfig(**values)
+
+
+def test_model_config_keeps_machine_display_and_upstream_identity_distinct() -> None:
+    model = ModelConfig.model_validate({
+        "displayName": "Primary GPT",
+        "provider": "openai",
+        "model": "gpt-5.6",
         "capabilities": {
+            "text": True,
             "vision": True,
-            "tools": True,
-            "reasoning": True,
         },
         "contextWindowTokens": 400_000,
         "pricing": {
@@ -26,9 +42,11 @@ def test_model_config_groups_capabilities_generation_and_pricing() -> None:
         "pools": ["General", "dream", "general"],
     })
 
+    assert model.display_name == "Primary GPT"
+    assert model.provider == "openai"
+    assert model.model == "gpt-5.6"
+    assert model.capabilities.text is True
     assert model.capabilities.vision is True
-    assert model.capabilities.tools is True
-    assert model.capabilities.reasoning is True
     assert model.context_window_tokens == 400_000
     assert model.pricing.input == 1.25
     assert model.pricing.output == 10.0
@@ -39,62 +57,96 @@ def test_model_config_groups_capabilities_generation_and_pricing() -> None:
     assert model.pools == ["general", "dream"]
 
 
-def test_model_config_accepts_staged_flat_shape_without_duplicate_state() -> None:
-    model = ModelConfig.model_validate({
-        "model": "anthropic/claude-sonnet",
-        "provider": "anthropic",
-        "supportsVision": True,
-        "supportsImageGeneration": False,
-        "maxTokens": 4096,
-        "temperature": 0.3,
-        "reasoningEffort": "medium",
-        "fleetPools": ["General", "general"],
-        "inputCostPerMillion": 3.0,
-        "outputCostPerMillion": 15.0,
-    })
-
-    assert model.capabilities.vision is True
-    assert model.generation_defaults.max_tokens == 4096
-    assert model.generation_defaults.temperature == 0.3
-    assert model.generation_defaults.reasoning_effort == "medium"
-    assert model.pools == ["general"]
-    assert model.pricing.input == 3.0
-    assert model.pricing.output == 15.0
-
-    dumped = model.model_dump(mode="json", by_alias=True)
-    assert "supportsVision" not in dumped
-    assert "maxTokens" not in dumped
-    assert "fleetPools" not in dumped
-    assert dumped["capabilities"]["vision"] is True
-    assert dumped["generationDefaults"]["maxTokens"] == 4096
-    assert dumped["pools"] == ["general"]
+def test_capabilities_are_limited_to_current_consumers() -> None:
+    assert MODEL_CAPABILITIES == (
+        "text",
+        "vision",
+        "image_generation",
+        "transcription",
+    )
+    fields = set(type(_model().capabilities).model_fields)
+    assert fields == set(MODEL_CAPABILITIES)
 
 
-def test_generation_defaults_are_not_capabilities() -> None:
-    model = ModelConfig(model="local/test", provider="custom")
+def test_capabilities_are_explicit_and_default_false() -> None:
+    model = _model()
 
-    model.temperature = 0.8
-    model.max_tokens = 2048
+    assert model.capabilities.text is False
+    assert model.capabilities.vision is False
+    assert model.capabilities.image_generation is False
+    assert model.capabilities.transcription is False
 
-    assert model.generation_defaults.temperature == 0.8
-    assert model.generation_defaults.max_tokens == 2048
-    assert "temperature" not in model.capabilities.model_dump()
-    assert "max_tokens" not in model.capabilities.model_dump()
+
+def test_canonical_provider_must_be_concrete() -> None:
+    with pytest.raises(ValueError, match="concrete provider ID"):
+        _model(provider="auto")
+    with pytest.raises(ValueError, match="provider must not be blank"):
+        _model(provider="   ")
+
+
+def test_display_name_and_upstream_model_cannot_be_blank() -> None:
+    with pytest.raises(ValueError, match="display_name must not be blank"):
+        _model(display_name="   ")
+    with pytest.raises(ValueError, match="model must not be blank"):
+        _model(model="   ")
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["main", "gpt-5-6", "coder_v2", "image", "m1"],
+)
+def test_model_id_accepts_stable_lowercase_slugs(model_id: str) -> None:
+    assert validate_model_id(model_id) == model_id
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["", "Main", " main", "main ", "1main", "main.model", "main/model", "a" * 65],
+)
+def test_model_id_rejects_noncanonical_values(model_id: str) -> None:
+    with pytest.raises(ValueError, match="model_id must match"):
+        validate_model_id(model_id)
+
+
+def test_get_model_is_the_shared_model_id_lookup_contract() -> None:
+    models = {"main": _model(display_name="Primary")}
+
+    resolved = get_model(models, "main")
+
+    assert resolved is models["main"]
+    assert resolved.display_name == "Primary"
+    with pytest.raises(KeyError, match="model_id 'missing' not found"):
+        get_model(models, "missing")
+
+
+def test_require_model_capability_returns_model_when_supported() -> None:
+    models = {
+        "vision": _model(
+            display_name="Vision",
+            capabilities={"text": True, "vision": True},
+        )
+    }
+
+    resolved = require_model_capability(models, "vision", "vision")
+
+    assert resolved is models["vision"]
+
+
+def test_require_model_capability_rejects_missing_capability() -> None:
+    models = {"main": _model(capabilities={"text": True})}
+
+    with pytest.raises(ValueError, match="does not support vision"):
+        require_model_capability(models, "main", "vision")
 
 
 def test_pool_membership_is_normalized_but_remains_model_offering_fact() -> None:
-    model = ModelConfig(
-        model="openrouter/model",
-        provider="openrouter",
-        pools=[" Dream ", "GENERAL", "dream", ""],
-    )
+    model = _model(pools=[" Dream ", "GENERAL", "dream", ""])
 
     assert model.pools == ["dream", "general"]
     assert not hasattr(model, "allowed_models")
 
 
-def test_model_identity_fields_cannot_be_blank() -> None:
-    with pytest.raises(ValueError, match="must not be blank"):
-        ModelConfig(model="   ", provider="openai")
-    with pytest.raises(ValueError, match="must not be blank"):
-        ModelConfig(model="openai/gpt", provider="   ")
+def test_pricing_contains_only_current_fleet_inputs() -> None:
+    model = _model()
+
+    assert set(type(model.pricing).model_fields) == {"input", "output", "cache_read"}

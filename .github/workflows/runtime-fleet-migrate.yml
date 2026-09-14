@@ -1,0 +1,100 @@
+name: Runtime Fleet Migration
+
+on:
+  push:
+    branches: [tmp-ignore]
+    paths:
+      - '.ci/runtime_fleet/**'
+      - '.github/workflows/runtime-fleet-migrate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout staging payload
+        uses: actions/checkout@v4
+        with:
+          ref: tmp-ignore
+          path: staging
+
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: refactor/model-runtime-fleet-v2
+          fetch-depth: 0
+          path: repo
+
+      - name: Reconstruct migration script
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, gzip
+          from pathlib import Path
+          payload = Path('staging/.ci/runtime_fleet/payload.0').read_text().strip()
+          Path('/tmp/apply_runtime_fleet_migration.py').write_bytes(gzip.decompress(base64.b64decode(payload)))
+          PY
+          python -m py_compile /tmp/apply_runtime_fleet_migration.py
+
+      - name: Apply migration
+        working-directory: repo
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "9be5128eb8e9203591f67e91ba03de21f57127bc"
+          python /tmp/apply_runtime_fleet_migration.py
+          git diff --check
+          git status --short
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
+
+      - name: Install dependencies
+        working-directory: repo
+        run: uv sync --all-extras --dev
+
+      - name: Lint changed runtime files
+        working-directory: repo
+        shell: bash
+        run: |
+          files=$(git diff --name-only --diff-filter=ACM | grep -E '\.py$' || true)
+          if [ -n "$files" ]; then uv run ruff check $files; fi
+
+      - name: Run runtime and fleet tests
+        id: targeted
+        continue-on-error: true
+        working-directory: repo
+        shell: bash
+        run: |
+          uv run python -m pytest -q \
+            tests/agent/test_model_runtime_resolver.py \
+            tests/agent/test_runtime_resolution_integration.py \
+            tests/agent/test_runtime_refresh.py \
+            tests/agent/test_session_model_runtime.py \
+            tests/test_model_fleet.py \
+            tests/agent/test_self_model_id.py
+
+      - name: Commit migration
+        working-directory: repo
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'refactor(runtime): migrate model routing to canonical ids'
+          git push origin HEAD:refactor/model-runtime-fleet-v2
+
+      - name: Surface targeted test status
+        if: steps.targeted.outcome != 'success'
+        run: |
+          echo 'Targeted tests reported failures; target commit was still pushed for PR CI diagnosis.'

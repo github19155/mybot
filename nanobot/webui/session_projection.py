@@ -8,7 +8,7 @@ from loguru import logger as default_logger
 
 from nanobot.providers.base import LLMUsage
 from nanobot.session.goal_state import goal_state_ws_blob
-from nanobot.session.model_selection import model_preset_from_metadata
+from nanobot.session.model_selection import model_id_from_metadata
 from nanobot.session.recovery import recovery_state_from_metadata
 from nanobot.session.webui_turns import websocket_turn_id, websocket_turn_wall_started_at
 
@@ -41,10 +41,10 @@ class WebUISessionProjection:
 
         fields: dict[str, Any] = {}
         try:
-            fields["model_preset"] = model_preset_from_metadata(metadata)
+            fields["model_id"] = model_id_from_metadata(metadata)
         except ValueError:
-            self._log.warning("ignoring invalid model preset metadata for session_key={}", session_key)
-            fields["model_preset"] = None
+            self._log.warning("ignoring invalid model id metadata for session_key={}", session_key)
+            fields["model_id"] = None
         if metadata is None:
             return fields
 

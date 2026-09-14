@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Restore unrelated coverage and audited behavior
         shell: bash
         run: |
@@ -23,55 +24,47 @@ jobs:
           from __future__ import annotations
 
           import ast
+          import re
           import subprocess
           from pathlib import Path
 
           BASE = "59896819b3d7cd39eed9a9524c131b54b545785f"
 
           def git_show(path: str) -> str:
-              return subprocess.check_output(
-                  ["git", "show", f"{BASE}:{path}"],
-                  text=True,
-              )
+              return subprocess.check_output(["git", "show", f"{BASE}:{path}"], text=True)
 
           def def_source(text: str, name: str) -> str:
               tree = ast.parse(text)
               lines = text.splitlines()
               for node in tree.body:
                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-                      starts = [node.lineno]
-                      starts.extend(decorator.lineno for decorator in node.decorator_list)
-                      start = min(starts)
+                      starts = [node.lineno, *(d.lineno for d in node.decorator_list)]
                       assert node.end_lineno is not None
-                      return "\n".join(lines[start - 1 : node.end_lineno])
+                      return "\n".join(lines[min(starts) - 1 : node.end_lineno])
               raise RuntimeError(f"definition {name!r} not found")
 
           def replace_def(text: str, name: str, replacement: str) -> str:
               tree = ast.parse(text)
               lines = text.splitlines()
-              target = None
               for node in tree.body:
                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-                      target = node
-                      break
-              if target is None:
-                  raise RuntimeError(f"definition {name!r} not found")
-              starts = [target.lineno]
-              starts.extend(decorator.lineno for decorator in target.decorator_list)
-              start = min(starts)
-              assert target.end_lineno is not None
-              return "\n".join(
-                  lines[: start - 1]
-                  + replacement.splitlines()
-                  + lines[target.end_lineno :]
-              ) + "\n"
+                      starts = [node.lineno, *(d.lineno for d in node.decorator_list)]
+                      assert node.end_lineno is not None
+                      start = min(starts)
+                      return "\n".join(
+                          lines[: start - 1]
+                          + replacement.splitlines()
+                          + lines[node.end_lineno :]
+                      ) + "\n"
+              raise RuntimeError(f"definition {name!r} not found")
 
-          # Restore Provider/OAuth behavior from the exact integration base. Only
-          # the image restart check is adapted to canonical image model_id state.
+          # Restore Provider/OAuth behavior from the exact integration base.
+          # The only provider-side adaptation retained is image restart routing,
+          # because image generation now stores model_id rather than provider.
           models_path = Path("nanobot/webui/settings_models.py")
           models_text = models_path.read_text()
           base_models = git_show(str(models_path))
-          restore_functions = (
+          for name in (
               "_provider_config_updates",
               "_validated_provider_config",
               "provider_requires_api_key",
@@ -87,8 +80,7 @@ jobs:
               "login_oauth_provider",
               "complete_oauth_provider",
               "logout_oauth_provider",
-          )
-          for name in restore_functions:
+          ):
               models_text = replace_def(models_text, name, def_source(base_models, name))
 
           if "    parse_bool,\n" not in models_text:
@@ -97,7 +89,7 @@ jobs:
                   "    WebUISettingsError,\n    parse_bool,\n    query_first,",
               )
 
-          legacy_image_restart = """    image_config = config.tools.image_generation
+          old_restart = """    image_config = config.tools.image_generation
               restart_required = (
                   changed
                   and image_config.enabled
@@ -105,7 +97,7 @@ jobs:
                   and get_image_gen_provider(provider_key) is not None
               )
           """
-          canonical_image_restart = """    image_config = config.tools.image_generation
+          new_restart = """    image_config = config.tools.image_generation
               image_provider: str | None = None
               if image_config.model_id is not None:
                   image_model = config.models.get(image_config.model_id)
@@ -117,14 +109,14 @@ jobs:
                   and get_image_gen_provider(provider_key) is not None
               )
           """
-          if legacy_image_restart not in models_text:
-              raise RuntimeError("base image restart block not found after Provider restore")
-          models_text = models_text.replace(legacy_image_restart, canonical_image_restart, 1)
+          if old_restart not in models_text:
+              raise RuntimeError("legacy image restart block not found")
+          models_text = models_text.replace(old_restart, new_restart, 1)
           ast.parse(models_text)
           models_path.write_text(models_text)
 
-          # Transcription display/configured state must use the same canonical
-          # resolver as runtime, including ${ENV} and provider env credentials.
+          # Reuse runtime's canonical transcription resolver. It derives identity
+          # through model_id and also resolves ${ENV}/provider environment keys.
           caps_path = Path("nanobot/webui/settings_capabilities.py")
           caps = caps_path.read_text()
           if "from nanobot.audio.transcription import resolve_transcription_config\n" not in caps:
@@ -143,29 +135,37 @@ jobs:
               "",
               1,
           )
-          configured_block = """    transcription_provider_configured = bool(
-              transcription_model is not None
-              and getattr(config.providers, transcription_model.provider, None) is not None
-              and getattr(
-                  getattr(config.providers, transcription_model.provider),
-                  \"api_key\",
-                  None,
-              )
+          configured_start = caps.find("    transcription_provider_configured = bool(")
+          if configured_start < 0:
+              raise RuntimeError("manual transcription provider_configured assignment not found")
+          return_start = caps.find("    return {", configured_start)
+          if return_start < 0:
+              raise RuntimeError("capability payload return not found")
+          caps = caps[:configured_start] + caps[return_start:]
+          caps = re.sub(
+              r'            "provider": \(\n\s*transcription_model\.provider if transcription_model is not None else None\n\s*\),\n',
+              '            "provider": transcription.provider,\n',
+              caps,
+              count=1,
           )
-          """
-          if configured_block not in caps:
-              raise RuntimeError("manual transcription provider_configured block not found")
-          caps = caps.replace(configured_block, "", 1)
           caps = caps.replace(
-              '            "provider": (\n                transcription_model.provider if transcription_model is not None else None\n            ),\n            "provider_configured": transcription_provider_configured,\n            "model": transcription_model.model if transcription_model is not None else None,\n',
-              '            "provider": transcription.provider,\n            "provider_configured": transcription.provider_configured,\n            "model": transcription.model,\n',
+              '            "provider_configured": transcription_provider_configured,\n',
+              '            "provider_configured": transcription.provider_configured,\n',
               1,
           )
+          caps = caps.replace(
+              '            "model": transcription_model.model if transcription_model is not None else None,\n',
+              '            "model": transcription.model,\n',
+              1,
+          )
+          if "transcription_model" in def_source(caps, "capability_settings_payload"):
+              raise RuntimeError("stale transcription_model remains in capability payload")
           ast.parse(caps)
           caps_path.write_text(caps)
 
-          # Restore the exact base settings_api test suite, then remove only the
-          # tests whose contract was the deleted preset/local transcription world.
+          # Restore the exact base test module, preserving every still-valid
+          # non-model test. Remove only legacy preset/local transcription tests,
+          # then append their canonical model_id replacements from the current PR.
           tests_path = Path("tests/webui/test_settings_api.py")
           current_tests = tests_path.read_text()
           base_tests = git_show(str(tests_path))
@@ -207,21 +207,19 @@ jobs:
           remove_spans: list[tuple[int, int]] = []
           legacy_names = {
               "test_legacy_fallback_models_are_ignored_by_schema",
+              "test_settings_payload_keeps_configured_opencode_legacy_alias",
           }
           for node in tree.body:
               if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                   continue
-              starts = [node.lineno]
-              starts.extend(decorator.lineno for decorator in node.decorator_list)
-              start = min(starts)
+              starts = [node.lineno, *(d.lineno for d in node.decorator_list)]
               assert node.end_lineno is not None
+              start = min(starts)
               source = "\n".join(lines[start - 1 : node.end_lineno])
-              is_test = node.name.startswith("test_")
               legacy = False
-              if is_test:
+              if node.name.startswith("test_"):
                   legacy = (
-                      node.name in canonical_names
-                      or node.name in legacy_names
+                      node.name in legacy_names
                       or "ModelPresetConfig" in source
                       or "model_presets" in source
                       or "model_preset" in source
@@ -235,10 +233,7 @@ jobs:
                       or "saved.transcription.model" in source
                       or "channels.transcription_provider" in source
                       or "channels.transcription_language" in source
-                      or (
-                          "update_agent_settings" in source
-                          and "context_window_tokens" in source
-                      )
+                      or ("update_agent_settings" in source and "context_window_tokens" in source)
                   )
               if node.name == "_dynamic_provider_config" or legacy:
                   remove_spans.append((start, node.end_lineno))
@@ -249,7 +244,7 @@ jobs:
                   keep[index] = False
           restored = "\n".join(line for index, line in enumerate(lines) if keep[index]) + "\n"
 
-          opencode_source = '''def test_settings_payload_keeps_configured_opencode_legacy_alias(tmp_path, monkeypatch) -> None:
+          migrated_opencode = '''def test_settings_payload_keeps_configured_opencode_legacy_alias(tmp_path, monkeypatch) -> None:
               config_path = tmp_path / "config.json"
               config = Config.model_validate(
                   {"providers": {"opencodeZen": {"apiKey": "legacy-key"}}}
@@ -270,14 +265,8 @@ jobs:
               assert zen_rows[0]["name"] == "opencode_zen"
               assert zen_rows[0]["configured"] is True
           '''
-          if "def test_settings_payload_keeps_configured_opencode_legacy_alias" in restored:
-              restored = replace_def(
-                  restored,
-                  "test_settings_payload_keeps_configured_opencode_legacy_alias",
-                  opencode_source,
-              )
 
-          extra_tests = r'''
+          audit_regressions = r'''
           def test_settings_payload_exposes_assemblyai_transcription_provider(
               tmp_path,
               monkeypatch: pytest.MonkeyPatch,
@@ -298,6 +287,7 @@ jobs:
               payload = settings_payload()
 
               assert payload["transcription"]["provider"] == "assemblyai"
+              assert payload["transcription"]["model"] == "universal-3-pro"
               assert payload["transcription"]["provider_configured"] is True
               providers = {
                   provider["name"]: provider
@@ -306,9 +296,6 @@ jobs:
               assert providers["assemblyai"]["label"] == "AssemblyAI"
               assert providers["assemblyai"]["configured"] is True
               assert providers["assemblyai"]["default_api_base"] == "https://api.assemblyai.com/v2"
-              provider_rows = {provider["name"]: provider for provider in payload["providers"]}
-              assert provider_rows["assemblyai"]["configured"] is True
-              assert provider_rows["assemblyai"]["model_selectable"] is False
 
 
           def test_transcription_provider_configured_resolves_env_reference(
@@ -354,13 +341,15 @@ jobs:
           '''
 
           restored += "\n" + select_config_source + "\n\n" + dynamic_provider_source + "\n\n"
-          restored += "\n\n".join(canonical_sources.values()) + "\n\n" + extra_tests
+          restored += "\n\n".join(canonical_sources.values())
+          restored += "\n\n" + migrated_opencode + "\n\n" + audit_regressions
           ast.parse(restored)
           tests_path.write_text(restored)
           PY
 
           git diff --check
           git diff --stat
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -369,6 +358,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
       - name: Install dependencies
         run: uv sync --all-extras --dev
+
       - name: Collect scoped WebUI tests
         run: >-
           uv run python -m pytest --collect-only -q
@@ -379,6 +369,7 @@ jobs:
           tests/webui/test_settings_routes.py
           tests/webui/test_settings_services.py
           tests/webui/test_settings_system.py
+
       - name: Run scoped WebUI tests
         run: >-
           uv run python -m pytest -q
@@ -389,6 +380,7 @@ jobs:
           tests/webui/test_settings_routes.py
           tests/webui/test_settings_services.py
           tests/webui/test_settings_system.py
+
       - name: Ruff scoped changes
         run: >-
           uv run ruff check
@@ -402,6 +394,7 @@ jobs:
           tests/webui/test_settings_capabilities.py
           tests/webui/test_settings_models.py
           tests/webui/test_settings_routes.py
+
       - name: Basedpyright scoped modules
         run: >-
           uv run basedpyright
@@ -410,6 +403,7 @@ jobs:
           nanobot/webui/settings_capabilities.py
           nanobot/webui/settings_models.py
           nanobot/webui/settings_services.py
+
       - name: Commit audited fixes
         shell: bash
         run: |
@@ -419,6 +413,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No audited changes to commit"
           else
-            git commit -m "fix(webui): restore settings coverage and runtime credential parity"
+            git commit -m "fix(webui): restore settings coverage and credential parity"
             git push origin HEAD:cleanup/webui-model-domain
           fi

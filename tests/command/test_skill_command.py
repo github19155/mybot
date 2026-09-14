@@ -11,7 +11,7 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command.builtin import cmd_skill, register_builtin_commands
 from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.config.schema import ModelPresetConfig
+from nanobot.model_domain import ModelConfig
 
 
 def _provider(default_model: str = "test-model") -> MagicMock:
@@ -31,10 +31,11 @@ def _make_loop(tmp_path: Path) -> AgentLoop:
         workspace=tmp_path,
         model="test-model",
         context_window_tokens=8000,
-        model_presets={
-            "default": ModelPresetConfig(
+        models={
+            "main": ModelConfig(
+                display_name="Main",
+                provider="anthropic",
                 model="test-model",
-                max_tokens=4096,
                 context_window_tokens=8000,
             ),
         },

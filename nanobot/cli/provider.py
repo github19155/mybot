@@ -123,6 +123,7 @@ def _set_oauth_provider_as_main(
 ) -> None:
     """Persist an OAuth provider as the active agent provider."""
     from nanobot.config.loader import get_config_path, load_config, save_config, set_config_path
+    from nanobot.model_domain import ModelCapabilities, ModelConfig
 
     resolved_config_path = Path(config_path).expanduser().resolve() if config_path else None
     if resolved_config_path is not None and get_config_path() != resolved_config_path:
@@ -131,14 +132,23 @@ def _set_oauth_provider_as_main(
 
     config = load_config(resolved_config_path)
     selected_model = (model or "").strip() or _OAUTH_PROVIDER_DEFAULT_MODELS[provider_name]
-    config.agents.defaults.model_preset = None
-    config.agents.defaults.provider = provider_name
-    config.agents.defaults.model = selected_model
-    if provider_name == "xai_grok" and selected_model in {
-        "xai-grok/grok-4.5",
-        "xai-grok/grok-4.6",
-    }:
-        config.agents.defaults.context_window_tokens = 500_000
+    model_id = "main"
+    context_window_tokens = (
+        500_000
+        if provider_name == "xai_grok" and selected_model in {
+            "xai-grok/grok-4.5",
+            "xai-grok/grok-4.6",
+        }
+        else 200_000
+    )
+    config.models[model_id] = ModelConfig(
+        display_name="Main",
+        provider=provider_name,
+        model=selected_model,
+        capabilities=ModelCapabilities(text=True),
+        context_window_tokens=context_window_tokens,
+    )
+    config.agents.defaults.model_id = model_id
     save_config(config, resolved_config_path)
 
     saved_path = resolved_config_path or get_config_path()

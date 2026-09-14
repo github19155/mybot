@@ -22,7 +22,8 @@ from nanobot.cli.tui_launcher import (
     _websocket_chat_id,
     launch_tui,
 )
-from nanobot.config.schema import Config, ModelPresetConfig
+from nanobot.config.schema import Config
+from nanobot.model_domain import ModelCapabilities, ModelConfig
 
 
 def _release_archive(
@@ -85,15 +86,20 @@ def test_default_tui_workspace_is_the_launch_directory(
     assert _initial_tui_workspace(str(override)) == override.resolve()
 
 
-def test_launcher_passes_the_canonical_model_preset_to_the_tui(
+def test_launcher_passes_the_canonical_model_id_to_the_tui(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     config = Config(
         channels={"websocket": {"tokenIssueSecret": "bootstrap-secret"}},
     )
-    config.model_presets["Deep Research"] = ModelPresetConfig(model="openai/gpt-5.6")
-    config.agents.defaults.model_preset = "Deep Research"
+    config.models["deep-research"] = ModelConfig(
+        display_name="Deep Research",
+        provider="openai",
+        model="gpt-5.6",
+        capabilities=ModelCapabilities(text=True),
+    )
+    config.agents.defaults.model_id = "deep-research"
     captured: dict[str, str] = {}
     events: list[str] = []
     released: list[bool] = []
@@ -136,8 +142,9 @@ def test_launcher_passes_the_canonical_model_preset_to_the_tui(
     )
 
     assert result == 0
-    assert captured["NANOBOT_TUI_MODEL"] == "openai/gpt-5.6"
-    assert captured["NANOBOT_TUI_MODEL_PRESET"] == "Deep Research"
+    assert captured["NANOBOT_TUI_MODEL"] == "gpt-5.6"
+    assert captured["NANOBOT_TUI_MODEL_ID"] == "deep-research"
+    assert "NANOBOT_TUI_MODEL_PRESET" not in captured
     assert captured["NANOBOT_TUI_WORKSPACE"] == str(Path.cwd().resolve())
     assert captured["NANOBOT_TUI_BOOTSTRAP_URL"] == (
         "http://127.0.0.1:8765/webui/bootstrap"

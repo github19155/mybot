@@ -32,8 +32,12 @@ class ModelManagement:
         self,
         config: Config,
         *,
+        runtime_resolver: Any | None = None,
         invalidate: Callable[[], None] | None = None,
     ) -> None:
+        # Compatibility glue while B/E callers migrate. Model Management does
+        # not execute runtimes and deliberately does not use this resolver.
+        del runtime_resolver
         self.config = config
         self._store = ConfigStore(config.source_path) if config.source_path is not None else None
         self._invalidate = invalidate

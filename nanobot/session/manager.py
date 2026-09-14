@@ -28,7 +28,7 @@ from nanobot.runtime_context import (
     public_history_message,
 )
 from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from nanobot.session.model_selection import SESSION_MODEL_ID_METADATA_KEY
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
@@ -1819,10 +1819,10 @@ class SessionManager:
                 session = cached.get(key) or self._load(key)
                 if (
                     session is None
-                    or session.metadata.get(SESSION_MODEL_PRESET_METADATA_KEY) != old_name
+                    or session.metadata.get(SESSION_MODEL_ID_METADATA_KEY) != old_name
                 ):
                     continue
-                session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = new_name
+                session.metadata[SESSION_MODEL_ID_METADATA_KEY] = new_name
                 changed.append(session)
                 if session.policy.persist:
                     self.save(session, fsync=True)
@@ -1830,7 +1830,7 @@ class SessionManager:
                     self._remember(session)
         except BaseException:
             for session in reversed(changed):
-                session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = old_name
+                session.metadata[SESSION_MODEL_ID_METADATA_KEY] = old_name
                 try:
                     if session.policy.persist:
                         self.save(session, fsync=True)

@@ -292,13 +292,18 @@ class SubagentManager:
         )
 
     def _subagent_tools_config(self) -> ToolsConfig:
-        """Build a ToolsConfig scoped for subagent use."""
-        return ToolsConfig(
-            exec=self.tools_config.exec,
-            web=self.tools_config.web,
-            file=self.tools_config.file,
-            restrict_to_workspace=self.restrict_to_workspace,
-        )
+        """Build an isolated ToolsConfig while preserving configured worker capabilities."""
+        config = self.tools_config.model_copy(deep=True)
+        config.restrict_to_workspace = self.restrict_to_workspace
+        return config
+
+    def _image_generation_provider_configs(self):
+        config = self._role_config()
+        if config is None:
+            return None
+        from nanobot.providers.image_generation import image_gen_provider_configs
+
+        return image_gen_provider_configs(config)
 
     def _build_tools(
         self,
@@ -322,11 +327,18 @@ class SubagentManager:
             permission_subject=subject,
         )
         cfg = tools_config if tools_config is not None else self._subagent_tools_config()
+        resolver = self.runtime_resolver
         ctx = ToolContext(
             config=cfg,
             workspace=str(root.resolve()),
             exec_session_manager=self._exec_session_manager,
             file_state_store=FileStates(),
+            provider_snapshot_loader=(
+                getattr(resolver, "_provider_snapshot_loader", None)
+                if resolver is not None
+                else None
+            ),
+            image_generation_provider_configs=self._image_generation_provider_configs(),
             workspace_sandbox=workspace_sandbox_status(
                 restrict_to_workspace=cfg.restrict_to_workspace,
                 workspace=root,
@@ -356,21 +368,6 @@ class SubagentManager:
         if role_definition.source != "ephemeral":
             raise ValueError("spawn_ephemeral requires an ephemeral role definition")
         return await self.spawn(
-            role=role_definition.name,
-            role_definition=role_definition,
-            **launch,
-        )
-
-    async def run_inline_ephemeral(
-        self,
-        *,
-        role_definition: ResolvedSubagentRole,
-        **launch: Any,
-    ) -> str:
-        """Run one non-persistent worker inline through the normal manager lifecycle."""
-        if role_definition.source != "ephemeral":
-            raise ValueError("run_inline_ephemeral requires an ephemeral role definition")
-        return await self.run_inline(
             role=role_definition.name,
             role_definition=role_definition,
             **launch,
@@ -502,123 +499,6 @@ class SubagentManager:
             if response_state == "queued"
             else f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
         )
-
-    async def run_inline(
-        self,
-        task: str,
-        label: str | None = None,
-        origin_channel: str = "cli",
-        origin_chat_id: str = "direct",
-        session_key: str | None = None,
-        origin_message_id: str | None = None,
-        temperature: float | None = None,
-        workspace_scope: WorkspaceScope | None = None,
-        *,
-        runtime: LLMRuntime,
-        role: str = "coder",
-        model: str | None = None,
-        model_preset: str | None = None,
-        thinking: str | None = None,
-        timeout_seconds: float | None = None,
-        context: str | None = None,
-        allowed_tools: set[str] | frozenset[str] | None = None,
-        fork_history: list[dict[str, Any]] | None = None,
-        role_definition: ResolvedSubagentRole | None = None,
-    ) -> str:
-        """Run a subagent synchronously and return its result to the caller."""
-        fork_history = _portable_fork_history(fork_history)
-        try:
-            role_config = role_definition or self._resolve_role(role)
-            if thinking is not None and thinking not in _THINKING_VALUES:
-                raise ValueError(f"Unknown thinking value '{thinking}'")
-            effective_thinking = thinking if thinking is not None else role_config.thinking
-            effective_timeout = (
-                timeout_seconds if timeout_seconds is not None else role_config.timeout_seconds
-            )
-            effective_context = context if context is not None else role_config.context
-            if effective_context not in ("fresh", "fork"):
-                raise ValueError("context must be 'fresh' or 'fork'")
-            if effective_timeout is not None and effective_timeout <= 0:
-                raise ValueError("timeout_seconds must be greater than zero")
-            runtime = self._resolve_task_runtime(
-                runtime,
-                model=model,
-                model_preset=model_preset,
-                role_definition=role_config,
-            )
-        except ValueError as exc:
-            return ToolResult.error(f"Error: {exc}")
-        effective_temperature = (
-            temperature if temperature is not None else role_config.temperature
-        )
-        if effective_temperature is not None and not 0 <= effective_temperature <= 2:
-            return ToolResult.error("Error: temperature must be between 0 and 2")
-        if effective_temperature is not None or effective_thinking is not None:
-            runtime = runtime.with_generation_overrides(
-                temperature=effective_temperature,
-                reasoning_effort=effective_thinking,
-            )
-        task_id = str(uuid.uuid4())[:8]
-        display_label = label or task[:30] + ("..." if len(task) > 30 else "")
-        origin: _SubagentOrigin = {
-            "channel": origin_channel,
-            "chat_id": origin_chat_id,
-            "session_key": session_key,
-            "llm_usage_source": current_llm_usage_source(),
-        }
-        status = SubagentStatus(
-            task_id=task_id,
-            label=display_label,
-            task_description=task,
-            started_at=time.monotonic(),
-            started_at_ms=int(time.time() * 1000),
-            phase="queued",
-            role=role,
-            model=runtime.model,
-            model_preset=runtime.model_preset,
-            thinking=effective_thinking,
-            timeout_seconds=effective_timeout,
-            context=effective_context,
-            role_snapshot=role_config,
-            origin_channel=origin_channel,
-            origin_chat_id=origin_chat_id,
-            session_key=session_key,
-            origin_message_id=origin_message_id,
-        )
-        self._task_statuses[task_id] = status
-        logger.info("Running inline subagent [{}]: {}", task_id, display_label)
-        inline_task = asyncio.create_task(
-            self._run_subagent(
-                task_id,
-                task,
-                display_label,
-                origin,
-                status,
-                runtime,
-                origin_message_id,
-                workspace_scope,
-                announce=False,
-                allowed_tools=allowed_tools,
-                fork_history=fork_history,
-                role_definition=role_config,
-            )
-        )
-        self._running_tasks[task_id] = inline_task
-        if session_key:
-            self._session_tasks.setdefault(session_key, set()).add(task_id)
-        try:
-            result = await inline_task
-            if status.phase == "error" or status.stop_reason == "error":
-                return ToolResult.error(result)
-            return result
-        finally:
-            self._running_tasks.pop(task_id, None)
-            self._steer_queues.pop(task_id, None)
-            self._record_finished(self._task_statuses.pop(task_id, None))
-            if session_key and (ids := self._session_tasks.get(session_key)):
-                ids.discard(task_id)
-                if not ids:
-                    del self._session_tasks[session_key]
 
     async def _run_subagent(
         self,

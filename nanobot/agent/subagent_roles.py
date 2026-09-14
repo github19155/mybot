@@ -76,12 +76,16 @@ _BROWSER_TOOLS = {
     "browser_status": "subagent_browser",
     "browser_close": "subagent_browser",
 }
+_IMAGE_TOOLS = {
+    "image_analyze": "image_analysis",
+    "generate_image": "image_generation",
+}
 _PROGRESS_TOOLS = {
     "report_progress": "report_progress",
 }
 _EXEC_TOOLS = {**_EXEC_BASE_TOOLS, **_BROWSER_TOOLS}
 
-TOOL_MODULES = {**_EXEC_TOOLS, **_PROGRESS_TOOLS}
+TOOL_MODULES = {**_EXEC_TOOLS, **_IMAGE_TOOLS, **_PROGRESS_TOOLS}
 ALL_SUBAGENT_TOOL_NAMES = frozenset(TOOL_MODULES)
 
 

@@ -136,11 +136,10 @@ class TestRuntimeContract:
         with pytest.raises(TypeError, match="runtime"):
             await sm.spawn("task")
 
-    @pytest.mark.asyncio
-    async def test_run_inline_requires_explicit_runtime(self, tmp_path):
+    def test_run_inline_api_is_removed(self, tmp_path):
         sm = _manager(tmp_path)
-        with pytest.raises(TypeError, match="runtime"):
-            await sm.run_inline("task")
+        assert not hasattr(sm, "run_inline")
+        assert not hasattr(sm, "run_inline_ephemeral")
 
 
 class TestSpawn:

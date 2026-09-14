@@ -149,8 +149,6 @@ def test_override_and_default_selection_share_cross_provider_resolution(
         assert selected.context_window_tokens == parent.context_window_tokens
 
 
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dream_first", [False, True])
 async def test_main_and_dream_share_one_resolved_preset_runtime(runtime_config, dream_first):
@@ -246,16 +244,16 @@ async def test_subagent_freezes_one_role_and_runtime_per_task(
         return "done"
 
     manager._run_subagent = AsyncMock(side_effect=fake_run)
-    task = asyncio.create_task(
-        manager.run_inline(
-            "check runtime",
-            runtime=parent,
-            role="coder",
-            **selection,
-        )
+    dispatch = await manager.spawn(
+        "check runtime",
+        runtime=parent,
+        role="coder",
+        **selection,
     )
+    task = next(iter(manager._running_tasks.values()))
     try:
         await asyncio.wait_for(entered.wait(), timeout=5)
+        assert "id:" in dispatch
         assert role_spy.call_count == 1
         args = captured_call["args"]
         kwargs = captured_call["kwargs"]

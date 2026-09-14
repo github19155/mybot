@@ -15,8 +15,6 @@ if TYPE_CHECKING:
     from nanobot.agent.permissions import PermissionManager
     from nanobot.runtime_context import RuntimeContextProvider
 
-_MAIN_TOOL_CALL_BUDGET = 2
-_MAIN_TOOL_CALL_COUNT_ATTR = "_main_orchestrator_tool_calls"
 _MAIN_ORCHESTRATOR_TOOLS = frozenset({
     "subagent",
     "message",
@@ -30,8 +28,6 @@ _MAIN_ORCHESTRATOR_TOOLS = frozenset({
     "search_sessions",
     "read_session",
     "send_session_message",
-    "image_analyze",
-    "generate_image",
 })
 
 
@@ -104,29 +100,6 @@ class ToolRegistry:
             f"(subject={self.permission_subject!r}, capability={capability!r})"
         ))
 
-    def _main_tool_call_count(self) -> int:
-        if self.permission_subject != MAIN_SUBJECT:
-            return 0
-        request = current_request_context()
-        if request is None:
-            return 0
-        value = request.attributes.get(_MAIN_TOOL_CALL_COUNT_ATTR, 0)
-        return value if isinstance(value, int) and value >= 0 else 0
-
-    def _main_tool_budget_exhausted(self) -> bool:
-        return (
-            self.permission_subject == MAIN_SUBJECT
-            and self._main_tool_call_count() >= _MAIN_TOOL_CALL_BUDGET
-        )
-
-    def _consume_main_tool_call(self) -> None:
-        if self.permission_subject != MAIN_SUBJECT:
-            return
-        request = current_request_context()
-        if request is None:
-            return
-        request.attributes[_MAIN_TOOL_CALL_COUNT_ATTR] = self._main_tool_call_count() + 1
-
     def register(self, tool: Tool) -> None:
         """Register a tool."""
         self._tools[tool.name] = tool
@@ -187,14 +160,11 @@ class ToolRegistry:
     def get_definitions(self) -> list[dict[str, Any]]:
         """Get model-facing tool definitions with stable ordering.
 
-        The internal registry may contain worker tools used by trusted product
-        surfaces (for example explicit user shell execution), but the Main model
-        only sees orchestration/control tools. Subagent registries keep their
-        existing worker tool exposure. Main also stops advertising tools after
-        its small per-turn orchestration budget is consumed.
+        The internal registry keeps the full system tool catalog so worker
+        request contexts can retain their execution ceiling. The Main model
+        sees only orchestration/control tools; normal AgentRunner limits govern
+        how many of those control-plane calls it may make.
         """
-        if self._main_tool_budget_exhausted():
-            return []
         if self._cached_definitions is None:
             definitions = [
                 tool.to_schema()
@@ -263,12 +233,6 @@ class ToolRegistry:
             return tool, cast_params, (
                 ToolResult.error(f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors))
             )
-        if self._main_tool_budget_exhausted():
-            return None, cast_params, str(ToolResult.error(
-                "Error: Main orchestration tool budget exhausted for this turn. "
-                "Respond to the user now; delegate further execution to a subagent on a later turn."
-            ))
-        self._consume_main_tool_call()
         return tool, cast_params, None
 
     @classmethod

@@ -201,15 +201,20 @@ async def test_subagent_recovers_from_tool_error_in_same_run(tmp_path):
         max_tool_result_chars=16_000,
         permission_manager=_permissions(),
     )
+    sm._announce_result = AsyncMock()
 
-    result = await sm.run_inline(
+    dispatch = await sm.spawn(
         task="recover after a missing file",
         session_key="test:direct",
         runtime=_runtime(provider),
     )
+    tasks = list(sm._running_tasks.values())
+    await asyncio.gather(*tasks, return_exceptions=True)
 
-    assert result == "recovered without restarting"
+    assert "id:" in dispatch
     assert provider.chat_with_retry.await_count == 2
+    assert sm._announce_result.await_count == 1
+    assert sm._announce_result.await_args.args[3] == "recovered without restarting"
 
 
 @pytest.mark.asyncio

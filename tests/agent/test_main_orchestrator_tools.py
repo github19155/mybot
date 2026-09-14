@@ -45,6 +45,14 @@ class _ReadTool(_NamedTool):
     NAME = "read_file"
 
 
+class _ImageAnalyzeTool(_NamedTool):
+    NAME = "image_analyze"
+
+
+class _ImageGenerateTool(_NamedTool):
+    NAME = "generate_image"
+
+
 def _definition_names(registry: ToolRegistry) -> list[str]:
     names: list[str] = []
     for schema in registry.get_definitions():
@@ -56,28 +64,38 @@ def _definition_names(registry: ToolRegistry) -> list[str]:
     return names
 
 
-def test_main_registry_keeps_internal_tools_but_model_sees_orchestrator_only(tmp_path) -> None:
+def test_main_registry_keeps_system_catalog_but_model_sees_control_plane_only(tmp_path) -> None:
     registry = ToolRegistry(permission_subject=MAIN_SUBJECT)
-    loader = ToolLoader(test_classes=[_SubagentTool, _ExecTool, _WebTool, _ReadTool])
+    loader = ToolLoader(test_classes=[
+        _SubagentTool,
+        _ExecTool,
+        _WebTool,
+        _ReadTool,
+        _ImageAnalyzeTool,
+        _ImageGenerateTool,
+    ])
     ctx = ToolContext(config=ToolsConfig(), workspace=str(tmp_path))
 
     registered = loader.load(ctx, registry, scope="core")
 
-    assert set(registered) == {"subagent", "exec", "web_search", "read_file"}
-    assert set(registry.tool_names) == {"subagent", "exec", "web_search", "read_file"}
+    assert set(registered) == {
+        "subagent", "exec", "web_search", "read_file", "image_analyze", "generate_image"
+    }
+    assert set(registry.tool_names) == set(registered)
     assert _definition_names(registry) == ["subagent"]
 
 
-def test_main_model_cannot_call_worker_tool() -> None:
+def test_main_model_cannot_call_worker_execution_tools() -> None:
     registry = ToolRegistry(permission_subject=MAIN_SUBJECT)
-    registry.register(_ExecTool())
+    for tool in (_ExecTool(), _WebTool(), _ReadTool(), _ImageAnalyzeTool(), _ImageGenerateTool()):
+        registry.register(tool)
 
-    tool, _, error = registry.prepare_call("exec", {})
-
-    assert tool is None
-    assert error is not None
-    assert "not available to the Main orchestrator" in error
-    assert "Delegate execution to a subagent" in error
+    for name in ("exec", "web_search", "read_file", "image_analyze", "generate_image"):
+        tool, _, error = registry.prepare_call(name, {})
+        assert tool is None
+        assert error is not None
+        assert "not available to the Main orchestrator" in error
+        assert "Delegate execution to a subagent" in error
 
 
 def test_worker_scope_keeps_heavy_tools(tmp_path) -> None:
@@ -94,31 +112,20 @@ def test_worker_scope_keeps_heavy_tools(tmp_path) -> None:
     assert _definition_names(registry) == ["exec"]
 
 
-def test_main_tool_budget_hides_tools_after_two_calls() -> None:
+def test_main_control_plane_has_no_special_per_turn_tool_budget() -> None:
     registry = ToolRegistry(permission_subject=MAIN_SUBJECT)
     registry.register(_SubagentTool())
     request = RequestContext(channel="test", chat_id="chat", attributes={})
 
     with request_context(request):
-        assert registry.get_definitions()
-
-        tool, _, error = registry.prepare_call("subagent", {})
-        assert tool is not None
-        assert error is None
-        assert registry.get_definitions()
-
-        tool, _, error = registry.prepare_call("subagent", {})
-        assert tool is not None
-        assert error is None
-        assert registry.get_definitions() == []
-
-        tool, _, error = registry.prepare_call("subagent", {})
-        assert tool is None
-        assert error is not None
-        assert "budget exhausted" in error
+        for _ in range(5):
+            tool, _, error = registry.prepare_call("subagent", {})
+            assert tool is not None
+            assert error is None
+            assert registry.get_definitions()
 
 
-def test_subagent_registry_has_no_main_tool_budget() -> None:
+def test_subagent_registry_uses_normal_runner_limits() -> None:
     registry = ToolRegistry(permission_subject="work")
     registry.register(_ExecTool())
     request = RequestContext(channel="test", chat_id="chat", attributes={})

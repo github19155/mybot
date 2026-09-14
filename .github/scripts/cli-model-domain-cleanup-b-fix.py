@@ -26,6 +26,10 @@ text = text.replace(
     "test_quick_start_requires_upstream_model_before_setting_defaults",
 )
 text = text.replace('[("Model ID", "", "openrouter")]', '[("Upstream model", "", "openrouter")]')
+text = text.replace(
+    '("Model ID", "openai-codex/gpt-5.6-sol", "openai_codex")',
+    '("Upstream model", "openai-codex/gpt-5.6-sol", "openai_codex")',
+)
 path.write_text(text)
 
 path = Path("nanobot/cli/onboard.py")

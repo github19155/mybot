@@ -131,6 +131,77 @@ async def test_sse_error_event_returns_empty(audio_file: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_sse_ignores_non_data_lines(audio_file: Path) -> None:
+    lines = [
+        "",
+        "event: session.start",
+        f"data: {json.dumps({'type': 'transcript.text.done', 'text': 'result'})}",
+    ]
+    stream = _make_stream(200, lines)
+    with patch("httpx.AsyncClient.stream", stream):
+        assert await StepFunTranscriptionProvider(api_key="k").transcribe(audio_file) == "result"
+    assert stream.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_sse_malformed_json_is_skipped(audio_file: Path) -> None:
+    lines = [
+        "data: not-json",
+        f"data: {json.dumps({'type': 'transcript.text.done', 'text': 'ok'})}",
+    ]
+    stream = _make_stream(200, lines)
+    with patch("httpx.AsyncClient.stream", stream):
+        assert await StepFunTranscriptionProvider(api_key="k").transcribe(audio_file) == "ok"
+    assert stream.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_sse_empty_done_returns_empty_without_retry(audio_file: Path) -> None:
+    lines = [f"data: {json.dumps({'type': 'transcript.text.done', 'text': ''})}"]
+    stream = _make_stream(200, lines)
+    sleep = AsyncMock()
+    with patch("httpx.AsyncClient.stream", stream), patch("asyncio.sleep", sleep):
+        assert await StepFunTranscriptionProvider(api_key="k").transcribe(audio_file) == ""
+    assert stream.call_count == 1
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stepfun_retries_connect_error_then_succeeds(audio_file: Path) -> None:
+    success = [f"data: {json.dumps({'type': 'transcript.text.done', 'text': 'ok'})}"]
+    calls = [0]
+
+    class Response:
+        status_code = 200
+        reason_phrase = "OK"
+
+        async def __aenter__(self) -> "Response":
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            pass
+
+        async def aiter_lines(self) -> Any:
+            for line in success:
+                yield line
+
+        def raise_for_status(self) -> None:
+            pass
+
+    def stream(*args: object, **kwargs: object) -> Response:
+        calls[0] += 1
+        if calls[0] == 1:
+            raise httpx.ConnectError("boom")
+        return Response()
+
+    sleep = AsyncMock()
+    with patch("httpx.AsyncClient.stream", stream), patch("asyncio.sleep", sleep):
+        assert await StepFunTranscriptionProvider(api_key="k").transcribe(audio_file) == "ok"
+    assert calls[0] == 2
+    assert sleep.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_stepfun_retries_transient_status_then_succeeds(audio_file: Path) -> None:
     success = [f"data: {json.dumps({'type': 'transcript.text.done', 'text': 'ok'})}"]
     stream = _make_sequence([503, success])

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.agent.permissions import MAIN_SUBJECT
+from nanobot.agent.permissions import MAIN_SUBJECT, PermissionManager
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import RequestContext, ToolContext, request_context
 from nanobot.agent.tools.loader import ToolLoader
@@ -93,13 +93,15 @@ def test_main_registry_keeps_system_catalog_but_model_sees_control_plane_only(tm
         "image_analyze", "generate_image",
     }
     assert set(registry.tool_names) == set(registered)
-    assert _definition_names(registry) == ["subagent", "model_config"]
+    assert _definition_names(registry) == ["model_config", "subagent"]
 
 
-def test_main_model_can_use_model_config_but_not_execution_or_filesystem_tools() -> None:
-    registry = ToolRegistry(permission_subject=MAIN_SUBJECT)
+def test_main_model_can_use_model_config_without_execution_or_filesystem_permissions() -> None:
     config = Config()
-    registry.bind_permissions(config.permissions and __import__("nanobot.agent.permissions", fromlist=["PermissionManager"]).PermissionManager(config), MAIN_SUBJECT)
+    registry = ToolRegistry(
+        permission_manager=PermissionManager(config),
+        permission_subject=MAIN_SUBJECT,
+    )
     for tool in (
         _ModelConfigTool(),
         _ExecTool(),
@@ -119,7 +121,7 @@ def test_main_model_can_use_model_config_but_not_execution_or_filesystem_tools()
         tool, _, error = registry.prepare_call(name, {})
         assert tool is None
         assert error is not None
-        assert "not available to the Main orchestrator" in error or "Permission denied" in error
+        assert "not available to the Main orchestrator" in error
 
 
 def test_main_model_cannot_call_worker_execution_tools() -> None:

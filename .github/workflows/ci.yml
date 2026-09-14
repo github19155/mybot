@@ -110,7 +110,6 @@ jobs:
       - name: Test Python
         run: >-
           uv run python -m pytest
-          --ignore=tests/agent/test_mcp_reconnect_crash.py
           --deselect=tests/agent/test_hook_composite.py::test_agent_loop_no_hooks_backward_compat
           --deselect=tests/agent/test_loop_runner_integration.py::test_goal_command_can_implement_plan_from_prior_discussion
           --durations=15 --durations-min=1.0

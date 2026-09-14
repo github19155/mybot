@@ -11,7 +11,7 @@ permissions:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,7 +39,14 @@ jobs:
           git push origin HEAD:refactor/model-domain-v2
       - name: Ruff verification
         run: uv run ruff check nanobot tests conftest.py
-      - name: Basedpyright verification
-        run: uv run basedpyright
       - name: Pytest collection
         run: uv run python -m pytest --collect-only -q
+      - name: Basedpyright verification
+        run: uv run basedpyright
+      - name: Legacy and glue diagnostics
+        if: always()
+        run: |
+          echo '=== ModelManagement runtime_resolver callers ==='
+          grep -RIn --exclude-dir=.git 'ModelManagement(\|runtime_resolver=' nanobot tests | head -200 || true
+          echo '=== Legacy model identity terms ==='
+          grep -RIn --exclude-dir=.git -E 'ModelPresetConfig|model_presets|modelPresets|model_preset|modelPreset|preset_name|resolve_preset|resolve_default_preset|model_preset_from_metadata|SESSION_MODEL_PRESET_METADATA_KEY|model_override|fallback_preset|transcription_provider|transcription_language' nanobot tests | head -400 || true

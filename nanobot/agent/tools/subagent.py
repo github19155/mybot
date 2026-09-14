@@ -8,14 +8,14 @@ import copy
 import json
 from typing import TYPE_CHECKING, Any
 
-from nanobot.agent.resource_lease import delegated_resource_parent, request_resource_owner_key
+from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent_role_storage import record_role_use
+from nanobot.agent.subagent_roles import ALL_SUBAGENT_TOOL_NAMES
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.registry import is_tool_error_result
 from nanobot.agent.tools.schema import (
     ArraySchema,
-    BooleanSchema,
     NumberSchema,
     StringSchema,
     tool_parameters_schema,
@@ -70,7 +70,6 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
         "Task-scoped WorkAgent system prompt for run, or role system prompt for role mutations",
         nullable=True,
     ),
-    disabled=BooleanSchema(description="Disable a role", nullable=True),
     model=StringSchema("Explicit provider/model", nullable=True),
     model_preset=StringSchema("Configured model preset", nullable=True),
     thinking=StringSchema("Thinking effort", enum=list(_THINKING), nullable=True),
@@ -86,14 +85,6 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
         nullable=True,
     ),
     context=StringSchema("History mode", enum=["fresh", "fork"], nullable=True),
-    wait=BooleanSchema(
-        description=(
-            "Block for the child result. Main is async-first: normally leave false and reply to "
-            "the user after dispatch. Use true only for trivial near-instant work when same-turn "
-            "output is essential."
-        ),
-        default=False,
-    ),
     values={"type": "object", "additionalProperties": True},
     tools=ArraySchema(
         StringSchema("Allowed child tool name"),
@@ -107,6 +98,10 @@ _SUBAGENT_PARAMETERS["properties"]["description"] = StringSchema(
     "Task-scoped WorkAgent description for run, or role description for role mutations",
     nullable=True,
 ).to_json_schema()
+_SUBAGENT_PARAMETERS["properties"]["disabled"] = {
+    "type": ["boolean", "null"],
+    "description": "Disable a persistent role",
+}
 
 
 @tool_parameters(_SUBAGENT_PARAMETERS)
@@ -140,14 +135,11 @@ class SubagentTool(Tool):
             "model_preset, thinking, temperature, timeout_seconds, or context) to create a temporary "
             "WorkAgent snapshot that is destroyed after the task and never persisted. "
             "Do not combine WorkAgent identity/tool overrides with a persistent role. Use role.list "
-            "to discover current built-in and config-managed specialists. Main is async-first: normal "
-            "delegated work should run with wait=false, including filesystem, shell, web, browser, "
-            "code, build, test, and other multi-step work, even when the eventual answer needs the "
-            "child result. After dispatch, reply to the user promptly; background results are "
-            "delivered automatically, so do not repeatedly poll status or sleep-and-check. Use "
-            "wait=true only for trivial near-instant child work when same-turn output is essential. "
-            "Browser automation is a worker capability, not a separate Agent type. Children cannot "
-            "create children."
+            "or role.get to inspect declared, permission-allowed, and currently available worker "
+            "capabilities. Every run is asynchronous: successful dispatch returns immediately with "
+            "a task identifier. Background results are delivered automatically, so do not poll or "
+            "sleep-and-check. Browser automation is a worker capability, not a separate Agent type. "
+            "Children cannot create children."
         )
 
     @property
@@ -157,6 +149,53 @@ class SubagentTool(Tool):
     @staticmethod
     def _json(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def _tool_available_without_activation(self, name: str) -> bool:
+        """Report loader/config readiness without starting external services."""
+        if name not in ALL_SUBAGENT_TOOL_NAMES:
+            return False
+        config = getattr(self._manager, "tools_config", None)
+        if name == "image_analyze":
+            if config is None or not config.image_analysis.enabled:
+                return False
+            resolver = getattr(self._manager, "runtime_resolver", None)
+            return getattr(resolver, "_provider_snapshot_loader", None) is not None
+        if name == "generate_image":
+            if config is None or not config.image_generation.enabled:
+                return False
+            provider_configs = getattr(self._manager, "image_generation_provider_configs", None)
+            if not provider_configs:
+                return False
+            return config.image_generation.provider in provider_configs
+        # Dynamic MCP tools are intentionally not part of the static worker
+        # catalog until the shared connected-tool lifecycle is injected.
+        if name.startswith("mcp_"):
+            return False
+        return True
+
+    def _role_view(
+        self,
+        role_data: dict[str, Any],
+        request_allowed_tools: set[str],
+    ) -> dict[str, Any]:
+        """Separate declaration, permission and current no-side-effect availability."""
+        view = dict(role_data)
+        declared = list(dict.fromkeys(str(name) for name in view.pop("tools", ()) if name))
+        role_name = str(view.get("name") or "").strip().lower()
+        subject = PermissionManager.specialist_subject(role_name)
+        allowed = [
+            name
+            for name in declared
+            if name in ALL_SUBAGENT_TOOL_NAMES
+            and name in request_allowed_tools
+            and self._manager.permissions.tool_allowed(subject, name)
+        ]
+        available = [name for name in allowed if self._tool_available_without_activation(name)]
+        view["declared_tools"] = declared
+        view["allowed_tools"] = allowed
+        view["available_tools"] = available
+        view["worker_tool_catalog"] = sorted(ALL_SUBAGENT_TOOL_NAMES)
+        return view
 
     async def execute(
         self,
@@ -172,7 +211,6 @@ class SubagentTool(Tool):
         temperature: float | None = None,
         timeout_seconds: float | None = None,
         context: str | None = None,
-        wait: bool = False,
         values: dict[str, Any] | None = None,
         tools: list[str] | None = None,
         description: str | None = None,
@@ -184,6 +222,7 @@ class SubagentTool(Tool):
         if request is None:
             return ToolResult.error("Error: subagent requires an active request context")
         session_key = request.session_key or f"{request.channel}:{request.chat_id}"
+        request_allowed_tools = set(request.allowed_tools)
 
         if action == "run":
             if not task or not task.strip():
@@ -199,7 +238,6 @@ class SubagentTool(Tool):
                     "overrides and cannot be combined with role"
                 )
 
-            request_allowed_tools = set(request.allowed_tools)
             fork_history = _fork_snapshot(request.conversation_history)
             work_override = role is None and has_work_override(
                 description=description,
@@ -230,7 +268,6 @@ class SubagentTool(Tool):
                 allowed_tools=request_allowed_tools,
                 fork_history=fork_history,
             )
-            parent_resource_owner = request_resource_owner_key(request) if wait else None
 
             if work_override:
                 try:
@@ -242,28 +279,14 @@ class SubagentTool(Tool):
                     )
                 except ValueError as exc:
                     return ToolResult.error(f"Error: {exc}")
-                if wait:
-                    with delegated_resource_parent(parent_resource_owner):
-                        return await run_work_agent(
-                            self._manager,
-                            role_definition=role_definition,
-                            wait=True,
-                            **launch,
-                        )
                 return await run_work_agent(
                     self._manager,
                     role_definition=role_definition,
-                    wait=False,
                     **launch,
                 )
 
             selected_role = role or "general"
-            method = self._manager.run_inline if wait else self._manager.spawn
-            if wait:
-                with delegated_resource_parent(parent_resource_owner):
-                    result = await method(role=selected_role, **launch)
-            else:
-                result = await method(role=selected_role, **launch)
+            result = await self._manager.spawn(role=selected_role, **launch)
             if not is_tool_error_result(result):
                 workspace = getattr(self._manager, "workspace", None)
                 if workspace is not None:
@@ -311,19 +334,31 @@ class SubagentTool(Tool):
                 if value is not None:
                     role_values[key] = value
             if action == "role.list":
-                return self._json(self._manager.role_list())
+                return self._json([
+                    self._role_view(item, request_allowed_tools)
+                    for item in self._manager.role_list()
+                ])
             if action == "role.get":
                 if not role:
                     return ToolResult.error("Error: role.get requires role")
-                return self._json(self._manager.role_get(role))
+                return self._json(self._role_view(
+                    self._manager.role_get(role),
+                    request_allowed_tools,
+                ))
             if action == "role.create":
                 if not role or not role_values:
                     return ToolResult.error("Error: role.create requires role and role fields")
-                return self._json(self._manager.role_create(role, role_values))
+                return self._json(self._role_view(
+                    self._manager.role_create(role, role_values),
+                    request_allowed_tools,
+                ))
             if action == "role.update":
                 if not role or not role_values:
                     return ToolResult.error("Error: role.update requires role and role fields")
-                return self._json(self._manager.role_update(role, role_values))
+                return self._json(self._role_view(
+                    self._manager.role_update(role, role_values),
+                    request_allowed_tools,
+                ))
             if action == "role.delete":
                 if not role:
                     return ToolResult.error("Error: role.delete requires role")
@@ -331,7 +366,10 @@ class SubagentTool(Tool):
             if action == "role.reset":
                 if not role:
                     return ToolResult.error("Error: role.reset requires role")
-                return self._json(self._manager.role_reset(role))
+                return self._json(self._role_view(
+                    self._manager.role_reset(role),
+                    request_allowed_tools,
+                ))
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")
 

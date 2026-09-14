@@ -1,4 +1,4 @@
-"""Main-agent-only model/provider, fleet, and subagent role configuration."""
+"""Main-agent-only canonical model/provider and Fleet control plane."""
 
 from __future__ import annotations
 
@@ -16,33 +16,55 @@ if TYPE_CHECKING:
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": [
-            "list", "roles_update", "model_create", "model_update", "model_delete",
+            "list", "model_get", "model_create", "model_update", "model_delete",
             "provider_create", "provider_update", "fleet_status", "fleet_recommend",
-            "fleet_feedback", "fleet_profile_update", "fleet_provider_update",
+            "fleet_feedback", "fleet_model_update", "fleet_provider_update", "roles_update",
         ]},
-        "bindings": {"type": "object", "additionalProperties": {"type": ["string", "null"]}},
-        "name": {"type": "string"},
-        "new_name": {"type": "string"},
-        "model": {"type": "string"},
-        "model_preset": {"type": "string"},
+        "model_id": {"type": "string"},
+        "display_name": {"type": "string"},
         "provider": {"type": "string"},
-        "max_tokens": {"type": "integer", "minimum": 1},
+        "model": {"type": "string"},
+        "capabilities": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "boolean"},
+                "vision": {"type": "boolean"},
+                "image_generation": {"type": "boolean"},
+                "transcription": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
         "context_window_tokens": {"type": "integer", "minimum": 1},
-        "temperature": {"type": "number"},
-        "supports_vision": {"type": "boolean"},
-        "supports_image_generation": {"type": "boolean"},
-        "reasoning_effort": {"type": "string"},
-        "api_key": {"type": "string"},
-        "api_base": {"type": "string"},
-        "api_type": {"type": "string"},
-        "proxy": {"type": "string"},
-        "extra_headers": {"type": "object", "additionalProperties": {"type": "string"}},
-        "offering_id": {"type": "string"},
-        "fleet_pools": {"type": "array", "items": {"type": "string"}},
-        "input_cost_per_million": {"type": "number", "minimum": 0},
-        "output_cost_per_million": {"type": "number", "minimum": 0},
-        "cached_input_cost_per_million": {"type": "number", "minimum": 0},
-        "max_concurrent_requests": {"type": "integer", "minimum": 1},
+        "pricing": {
+            "type": "object",
+            "properties": {
+                "input": {"type": ["number", "null"], "minimum": 0},
+                "output": {"type": ["number", "null"], "minimum": 0},
+                "cache_read": {"type": ["number", "null"], "minimum": 0},
+            },
+            "additionalProperties": False,
+        },
+        "generation_defaults": {
+            "type": "object",
+            "properties": {
+                "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+                "max_tokens": {"type": "integer", "minimum": 1},
+                "reasoning_effort": {"type": ["string", "null"]},
+            },
+            "additionalProperties": False,
+        },
+        "offering_id": {"type": ["string", "null"]},
+        "pools": {"type": "array", "items": {"type": "string"}},
+        "max_concurrent_requests": {"type": ["integer", "null"], "minimum": 1},
+        "bindings": {"type": "object", "additionalProperties": {"type": ["string", "null"]}},
+        "api_key": {"type": ["string", "null"]},
+        "api_base": {"type": ["string", "null"]},
+        "api_type": {"type": "string", "enum": ["auto", "chat_completions", "responses"]},
+        "proxy": {"type": ["string", "null"]},
+        "extra_headers": {"type": ["object", "null"], "additionalProperties": {"type": "string"}},
+        "extra_body": {"type": ["object", "null"]},
+        "extra_query": {"type": ["object", "null"], "additionalProperties": {"type": "string"}},
+        "thinking_style": {"type": ["string", "null"]},
         "rate_limit_scope": {"type": "string", "enum": ["provider", "model"]},
         "pool": {"type": "string"},
         "task_type": {"type": "string"},
@@ -79,16 +101,16 @@ class ModelConfigTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Manage model presets/providers and the runtime Model Fleet without changing your own selected model. "
-            "Model preset capabilities include supports_vision and supports_image_generation; use explicit capability flags instead of inferring them from model names. "
-            "Use fleet_status to inspect each concrete provider+model offering's observed quality/speed/reliability/cost/confidence, capacity, queues and cooldown. "
-            "Use fleet_recommend before dispatch when the user did not explicitly choose a model; pass pool/task_type/capability constraints and prefer its recommended preset. "
-            "A user's explicit model or preset always wins over Fleet recommendations. Do not infer performance from model names. "
-            "fleet_feedback records quality evidence only when there is an objective result such as tests, validators, accepted/rejected task output or required rework; never self-grade. "
-            "fleet_profile_update stores stable facts for a named preset: offering_id, pools, price and optional request cap. "
-            "fleet_provider_update stores provider-account concurrency and whether unknown rate limits are provider- or model-scoped. "
-            "list shows configured names and fleet profiles. roles_update uses bindings {role: preset_name_or_null}; null inherits the parent runtime. "
-            "Use subagent for child role/model/thinking selection; use my to select a model for your own direct work."
+            "Manage canonical Models, provider connection settings, model references, and Model Fleet control data. "
+            "Models are addressed by immutable model_id keys. model_create/model_update write strict ModelConfig fields: "
+            "display_name, provider, model, capabilities, context_window_tokens, pricing, generation_defaults, "
+            "offering_id, pools, and max_concurrent_requests. Provider is always the concrete configured provider ID; "
+            "never infer or replace it from the upstream model string. Invalid or legacy fields are rejected so retry with "
+            "the canonical nested structure. list returns only real configured models with derived is_default/usages; "
+            "model_get reads one model. model_delete never rewrites references and fails with usages when a model is in use. "
+            "Provider credentials/API base/OAuth/proxy/request extras/concurrency remain provider settings, not ModelConfig. "
+            "roles_update uses bindings {role: model_id_or_null}. Fleet actions use model_id/offering_id and objective evidence; "
+            "never self-grade. Use subagent for child role/model/thinking selection and my for your own direct model selection."
         )
 
     async def execute(self, **kwargs: Any) -> str | ToolResult:

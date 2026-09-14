@@ -100,7 +100,7 @@ class RuntimeModelChanged:
     """The active runtime model/preset changed."""
 
     model: str
-    model_preset: str | None
+    model_id: str | None
 
 
 RuntimeEvent = (
@@ -353,7 +353,7 @@ class RuntimeEventPublisher:
             )
         )
 
-    def runtime_model_changed(self, model: str, model_preset: str | None) -> None:
+    def runtime_model_changed(self, model: str, model_id: str | None) -> None:
         self.bus.publish_nowait(
-            RuntimeModelChanged(model=model, model_preset=model_preset)
+            RuntimeModelChanged(model=model, model_id=model_id)
         )

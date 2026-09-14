@@ -12,7 +12,7 @@ import re
 from collections.abc import Mapping
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from nanobot.config_base import Base
 
@@ -26,6 +26,12 @@ MODEL_CAPABILITIES: tuple[ModelCapability, ...] = (
 MODEL_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 
 
+class _StrictModelDomainBase(Base):
+    """Model-domain DTO base that rejects unknown fields."""
+
+    model_config = ConfigDict(**Base.model_config, extra="forbid")
+
+
 def validate_model_id(model_id: str) -> str:
     """Validate and return one canonical model registry ID.
 
@@ -37,7 +43,7 @@ def validate_model_id(model_id: str) -> str:
     return model_id
 
 
-class ModelCapabilities(Base):
+class ModelCapabilities(_StrictModelDomainBase):
     """Capabilities with real Nanobot consumers; all capabilities are opt-in."""
 
     text: bool = False
@@ -46,7 +52,7 @@ class ModelCapabilities(Base):
     transcription: bool = False
 
 
-class ModelGenerationDefaults(Base):
+class ModelGenerationDefaults(_StrictModelDomainBase):
     """Default inference parameters for calls to this model, not capabilities."""
 
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
@@ -54,7 +60,7 @@ class ModelGenerationDefaults(Base):
     reasoning_effort: str | None = None
 
 
-class ModelPricing(Base):
+class ModelPricing(_StrictModelDomainBase):
     """Per-million-token price facts currently consumed by Model Fleet."""
 
     input: float | None = Field(default=None, ge=0.0)
@@ -62,7 +68,7 @@ class ModelPricing(Base):
     cache_read: float | None = Field(default=None, ge=0.0)
 
 
-class ModelConfig(Base):
+class ModelConfig(_StrictModelDomainBase):
     """Canonical definition of one configured provider/model route.
 
     ``provider`` is always a concrete configured Provider ID. Auto-detection may

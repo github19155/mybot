@@ -56,6 +56,7 @@ class ImageAnalysisTool(Tool):
     """Inspect local images through a separately configured vision-capable model."""
 
     config_key = "image_analysis"
+    _scopes = {"core", "subagent"}
 
     @classmethod
     def config_cls(cls):

@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from nanobot.agent.dream import DreamTriggerController, build_dream_tools
-from nanobot.agent.dream_runtime import resolve_dream_runtime
+from nanobot.agent.dream import build_dream_tools
+from nanobot.agent.dream_runtime import DreamRuntimeController, resolve_dream_runtime
 from nanobot.llm_usage.context import llm_usage_source
 
 if TYPE_CHECKING:
@@ -41,7 +41,11 @@ async def run_dream_worker(agent: "AgentLoop") -> None:
 
         try:
             if dream_config.enabled:
-                controller = DreamTriggerController(agent.workspace, dream_config, agent.permissions)
+                controller = DreamRuntimeController(
+                    agent.workspace,
+                    dream_config,
+                    agent.permissions,
+                )
                 batch = controller.prepare(agent.context.memory)
                 if batch is not None:
                     runtime = await resolve_dream_runtime(

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 
 class TranscriptionProviderAdapter(Protocol):
@@ -31,7 +31,6 @@ class TranscriptionProviderAdapter(Protocol):
 class TranscriptionProviderSpec:
     name: str
     adapter: str
-    aliases: tuple[str, ...] = ()
 
     def load_adapter(self) -> type[TranscriptionProviderAdapter]:
         module_name, _, class_name = self.adapter.partition(":")
@@ -57,7 +56,6 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
     TranscriptionProviderSpec(
         name="xiaomi_mimo",
         adapter="nanobot.providers.transcription:XiaomiMiMoTranscriptionProvider",
-        aliases=("mimo", "xiaomi"),
     ),
     TranscriptionProviderSpec(
         name="stepfun",
@@ -70,12 +68,10 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
     TranscriptionProviderSpec(
         name="siliconflow",
         adapter="nanobot.providers.transcription:OpenAITranscriptionProvider",
-        aliases=("silicon",),
     ),
 )
 
 _BY_NAME = {spec.name: spec for spec in TRANSCRIPTION_PROVIDERS}
-_BY_ALIAS = {alias: spec for spec in TRANSCRIPTION_PROVIDERS for alias in spec.aliases}
 
 
 def transcription_provider_names() -> tuple[str, ...]:
@@ -84,15 +80,3 @@ def transcription_provider_names() -> tuple[str, ...]:
 
 def get_transcription_provider(name: str) -> TranscriptionProviderSpec | None:
     return _BY_NAME.get(name)
-
-
-def resolve_transcription_provider(value: Any) -> TranscriptionProviderSpec | None:
-    """Resolve registry aliases for adapter-management callers only.
-
-    Canonical transcription routing intentionally does not use aliases: it
-    looks up ``ModelConfig.provider`` with ``get_transcription_provider``.
-    """
-    if not isinstance(value, str):
-        return None
-    name = value.strip().lower()
-    return _BY_NAME.get(name) or _BY_ALIAS.get(name)

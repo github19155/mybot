@@ -243,13 +243,10 @@ def update_model_configuration(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    changed = bool(
-        _core_model_call(
-            core_models.update_model_configuration,
-            config,
-            query,
-            oauth_status=_oauth_provider_status,
-        )
+    changed = models.update_model_configuration(
+        config,
+        query,
+        oauth_status=_oauth_provider_status,
     )
     if changed:
         _save_settings_config(config, config_path)

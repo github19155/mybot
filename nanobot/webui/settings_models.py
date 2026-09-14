@@ -788,7 +788,7 @@ def model_settings_payload(
             {
                 "name": name,
                 **(SUBAGENT_ROLES.get(name) or {}),
-                "model_id": config.subagent_roles.get(name).model_id
+                "model_id": config.subagent_roles[name].model_id
                 if name in config.subagent_roles
                 else None,
             }

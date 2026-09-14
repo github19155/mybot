@@ -2,21 +2,28 @@
 
 This document is the architectural baseline for how nanobot should evolve. Keep it updated when the design changes so future development can rely on one shared reference.
 
-Read [`design-principles.md`](./design-principles.md) first for the project-level philosophy.
+Read [`design-principles.md`](./design-principles.md) first for the project-level philosophy and [`task-manager.md`](./task-manager.md) for the long-running task lifecycle target.
 
 ## Core direction
 
 - **Main Agent = conversation + orchestration**
   - Stay responsive to the user.
   - Understand intent, consult project knowledge, split work, choose the right worker, track delegated work, and summarize results.
-  - Avoid owning long-running operational work when a child can do it.
-  - Short, immediate, interactive work may still run directly when delegation would add needless delay.
+  - Discover the available worker roles and capabilities without receiving worker execution tools as callable Main functions.
+  - Do not own filesystem, shell, web, browser, code/build/test execution directly.
+  - Do not keep an interactive turn open merely to wait for a delegated worker when the task can continue through background state/events.
 
 - **Subagents = workers**
-  - Run long or specialized work asynchronously by default.
+  - Run execution-heavy or specialized work asynchronously by default.
   - Keep one shared Subagent runtime/lifecycle for every worker kind.
   - Use General as the permanent fallback, WorkAgent for one-off task-specific customization, and Specialists for stable recurring responsibilities.
   - Keep responsibilities in roles and capabilities in tools.
+
+- **Task Manager = durable coordination state**
+  - Track root/child task identity, dependencies, state, compact progress/result summaries, and waiting-human conditions outside the normal LLM transcript.
+  - Wake Main on meaningful coordination events rather than making Main poll or block.
+  - Keep full worker output behind references and expose compact snapshots/deltas to minimize token usage.
+  - Reuse SubagentManager execution rather than building a second worker runtime.
 
 - **Docs = project knowledge**
   - Architecture-sensitive work should consult the relevant docs before changing runtime topology.
@@ -43,6 +50,28 @@ A role answers **what recurring responsibility should this worker own?** A tool 
 
 All three worker kinds reuse the same SubagentManager admission, task tracking, status, steer/stop, execution, result delivery, and AgentRunner path. WorkAgent must not grow a separate Agent framework or duplicate that lifecycle.
 
+## Main visibility vs Main authority
+
+Main should know enough about the complete worker capability surface to make good routing decisions, but capability discovery and function-call authority are separate concerns.
+
+Target split:
+
+```text
+role/capability catalog
+  -> visible to Main for routing
+
+Main control tools
+  -> visible as callable function schemas
+
+worker execution tools
+  -> described in catalog metadata, not exposed as callable Main functions
+
+PermissionManager
+  -> final runtime authorization boundary
+```
+
+Do not expose worker-only tools as ordinary Main-callable schemas merely so Main can discover them. A callable schema encourages direct calls and retry loops even when runtime rejects execution. Use structured discovery metadata instead.
+
 ## Main-Agent delegation policy
 
 The goal is knowledge-guided orchestration: make project architecture and current worker capabilities easy for Main to discover, then let it choose intelligently.
@@ -50,11 +79,11 @@ The goal is knowledge-guided orchestration: make project architecture and curren
 Typical routing:
 
 ```text
-conversation / tiny action                -> Main Agent
-clear stable specialist responsibility    -> matching active Specialist
-one-off task needs custom capability/runtime -> WorkAgent
-mixed / unknown / no clear match          -> General
-browser work                               -> suitable worker + Browser tools
+conversation / control action                 -> Main Agent
+clear stable specialist responsibility        -> matching active Specialist
+one-off task needs custom capability/runtime  -> WorkAgent
+mixed / unknown / no clear match              -> General
+browser work                                  -> suitable worker + Browser tools
 ```
 
 More precisely for `subagent run`:
@@ -76,9 +105,33 @@ WorkAgent does not inherit General's persistent prompt/model/generation tuning. 
 
 Main owns the user conversation and final synthesis. Long or independent work should normally use background subagents so Main remains available while workers run.
 
+`wait=false` is compatible with autonomous long tasks. Autonomy comes from durable task state and event-driven continuation, not from keeping one Main model call open. A long request may span multiple Main turns: Main dispatches work, returns to the user, receives task events later, makes the next coordination decision, and eventually produces a final synthesis when the task barrier is satisfied.
+
+Synchronous child execution may remain an internal primitive for genuinely near-instant checks or non-interactive runtime flows, but it should not be the normal Main path for long or independent work.
+
 Main should use current role discovery rather than assuming the Specialist list is static: users and governed proposal execution may add or refine roles over time. Roles marked `cold` remain discoverable but should not be preferred unless their specialization is still the best match or the user asks for them.
 
-Hard runtime routing should be reserved for real safety, security, or shared-resource invariants, not used as a substitute for project knowledge.
+Hard runtime routing should be reserved for real safety, security, authority, responsiveness, or shared-resource invariants, not used as a substitute for project knowledge.
+
+## Task lifecycle
+
+Long-running task lifecycle belongs outside the LLM transcript. See [`task-manager.md`](./task-manager.md).
+
+Minimum target state:
+
+```text
+queued
+running
+waiting-human
+blocked
+completed
+failed
+cancelled
+```
+
+A root task can aggregate several child workers. Main should not have to wake for every child completion when an aggregation barrier can wait for the relevant set of children. Compact events should wake Main when a decision, user input, failure policy, dependency transition, or final synthesis is actually required.
+
+The Task Manager is a coordination store/event source, not a new Agent and not a second workflow execution engine.
 
 ## Browser design
 
@@ -92,17 +145,13 @@ Human takeover keeps priority until control is returned. AI and human must opera
 
 ## Specialist evolution with Dream
 
-Dream observes evidence and proposes Specialist evolution; it does not own or directly mutate Specialist business state. Specialist runtime state is separated from reusable skills and kept in three canonical workspace files:
+Dream observes evidence and proposes Specialist evolution; it does not own or directly mutate Specialist business state.
 
-- `agents/roles.json` — persistent Specialist definitions.
-- `agents/role_candidates.json` — compact cross-Dream evidence for responsibilities that may deserve a Specialist.
-- `agents/role_usage.json` — runtime-generated launch/recency telemetry for persistent roles.
+Persistent Specialist definitions are config-owned through the canonical role store. Runtime role-usage telemetry is stored separately under the agent workspace (for example `agents/role_usage.json`). WorkAgent never appears in persistent Specialist role state or role-usage telemetry.
 
-WorkAgent never appears in those files.
+Dream-owned evidence/proposal records are control-plane bookkeeping only. They must not become a second authoritative Specialist manifest that can drift from config.
 
-Dream does not edit these files as a way to execute proposals. It may persist Dream-owned control-plane state and structured proposal/evidence records required by its observation cycle. Saving that state is bookkeeping, not permission to apply the recommended business-state mutation. Creating, updating, cooling, reactivating, disabling, or deleting a Specialist remains an action for the existing Main/Runtime execution path under the applicable user authorization boundary.
-
-There is no separately maintained role manifest: the current role state is the source of truth, so the system does not create a second derived index that can drift.
+Dream does not edit Specialist definitions as a way to execute proposals. It may persist Dream-owned control-plane state and structured proposal/evidence records required by its observation cycle. Saving that state is bookkeeping, not permission to apply the recommended business-state mutation. Creating, updating, cooling, reactivating, disabling, or deleting a Specialist remains an action for the existing Main/Runtime execution path under the applicable user authorization boundary.
 
 Conceptual lifecycle:
 
@@ -147,7 +196,7 @@ General is intentionally broad because it is the permanent fallback: when no Spe
 
 WorkAgent capabilities are selected task-by-task but still intersect with the parent's allowed tools and still exclude `subagent`, so workers cannot recursively create workers.
 
-Focused Specialists should receive only the capabilities useful to their responsibility. Do not turn every Specialist into another full General, and do not create a new Agent class merely because a Specialist needs a new capability. Future sensitive host-management tools can remain explicitly scoped even while General keeps the normal worker capability set.
+Focused Specialists should declare only the tool set normally useful to their responsibility. `PermissionManager` remains a separate hard boundary and may be narrower than role declarations. Do not turn every Specialist into another full General, and do not create a new Agent class merely because a Specialist needs a new capability.
 
 Dream's authority is narrower than ordinary worker authority: analysis and Dream-owned state/proposal persistence do not grant permission to mutate formal memory, Specialist state, configuration, or external systems. Proposal execution must continue through existing Main, Runtime, and user authorization checks.
 
@@ -155,16 +204,19 @@ Dream's authority is narrower than ordinary worker authority: analysis and Dream
 
 Continue with:
 
-1. Better project-knowledge discovery and delegation guidance for Main.
-2. Unified task manager with running / queued / waiting-human / failed / completed states.
-3. Richer evidence for Dream Specialist recommendations without turning them into a rigid scoring system.
-4. Controlled server-management capabilities and an appropriate Specialist responsibility boundary.
-5. Cross-channel notifications, such as starting work in WebUI and receiving completion alerts in WeChat.
+1. Better project-knowledge, role, and capability discovery metadata for Main.
+2. Unified Task Manager as described in `docs/task-manager.md`.
+3. Narrower default Specialist tool declarations aligned with role responsibility.
+4. Richer evidence for Dream Specialist recommendations without turning them into a rigid scoring system.
+5. Controlled server-management capabilities and an appropriate Specialist responsibility boundary.
+6. Cross-channel notifications, such as starting work in WebUI and receiving completion alerts in WeChat.
 
 ## Product goal
 
 ```text
-Main Agent stays responsive and orchestrates
+Main stays responsive and orchestrates
++
+Main can discover worker capabilities without directly calling worker tools
 +
 General guarantees a permanent fully capable fallback
 +
@@ -172,15 +224,15 @@ WorkAgent handles one-off customized execution without persistence
 +
 Specialists own stable recurring responsibilities
 +
-Tools provide capabilities such as Browser
+Task Manager carries long-running task state across turns with bounded prompt cost
++
+PermissionManager remains the hard capability authority
 +
 Dream observes, analyzes, and proposes from repeated evidence
 +
 Main/Runtime execute accepted proposals within authorization boundaries
 +
 User retains final governance over consequential changes
-+
-Project knowledge guides decisions
 +
 Shared resources preserve explicit ownership
 ```

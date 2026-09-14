@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  cleanup:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,27 +24,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
       - name: Install dependencies
         run: uv sync --all-extras --dev
-      - name: Apply integration cleanup
-        run: uv run python .github/scripts/apply-model-domain-cleanup.py
-      - name: Ruff autofix mechanical integration issues
-        run: uv run ruff check nanobot tests conftest.py --fix
-      - name: Commit cleanup
-        run: |
-          if git diff --quiet; then
-            echo "No cleanup changes to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add nanobot tests
-          git commit -m "refactor(models): cleanup integrated canonical model domain"
-          git push origin HEAD:refactor/model-domain-v2
       - name: Ruff verification
         run: uv run ruff check nanobot tests conftest.py
       - name: Pytest collection
         run: uv run python -m pytest --collect-only -q
       - name: Basedpyright verification
         run: uv run basedpyright
+      - name: Full pytest
+        run: uv run python -m pytest
       - name: Legacy and glue diagnostics
         if: always()
         run: |

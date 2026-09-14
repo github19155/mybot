@@ -6,7 +6,7 @@ on:
       - cleanup/webui-model-domain
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify:
@@ -14,6 +14,35 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: cleanup/webui-model-domain
+      - name: Apply exact cleanup followups
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("nanobot/webui/settings_api.py")
+          text = path.read_text()
+          old = '''    changed = bool(\n        _core_model_call(\n            core_models.update_model_configuration,\n            config,\n            query,\n            oauth_status=_oauth_provider_status,\n        )\n    )'''
+          new = '''    changed = models.update_model_configuration(\n        config,\n        query,\n        oauth_status=_oauth_provider_status,\n    )'''
+          if old in text:
+              path.write_text(text.replace(old, new, 1))
+
+          path = Path("nanobot/webui/settings_models.py")
+          text = path.read_text()
+          old = '''                "model_id": config.subagent_roles.get(name).model_id\n                if name in config.subagent_roles\n                else None,'''
+          new = '''                "model_id": config.subagent_roles[name].model_id\n                if name in config.subagent_roles\n                else None,'''
+          if old in text:
+              path.write_text(text.replace(old, new, 1))
+          PY
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add nanobot/webui/settings_api.py nanobot/webui/settings_models.py
+            git commit -m "fix(webui): finalize canonical model settings bridge"
+            git push origin HEAD:cleanup/webui-model-domain
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

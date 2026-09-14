@@ -39,6 +39,7 @@ from nanobot.webui.settings_contracts import (
     SettingsRequest,
     SettingsRouteResult,
     WebUISettingsError,
+    parse_bool,
     query_first,
     query_first_alias,
     query_has_alias,
@@ -216,32 +217,12 @@ def _provider_config_updates(query: QueryParams) -> dict[str, Any]:
         ("region", "region"),
         ("profile", "profile"),
         ("display_name", "displayName"),
-        ("rate_limit_scope", "rateLimitScope"),
     )
     for snake, camel in string_fields:
         if query_has_alias(query, snake, camel):
             value = (query_first_alias(query, snake, camel) or "").strip()
             updates[snake] = value or ("auto" if snake == "api_type" else None)
-    if query_has_alias(query, "max_concurrent_requests", "maxConcurrentRequests"):
-        raw_max = query_first_alias(
-            query,
-            "max_concurrent_requests",
-            "maxConcurrentRequests",
-        )
-        if raw_max is None or not raw_max.strip():
-            updates["max_concurrent_requests"] = None
-        else:
-            try:
-                parsed_max = int(raw_max)
-            except ValueError:
-                raise WebUISettingsError(
-                    "max_concurrent_requests must be an integer"
-                ) from None
-            if parsed_max <= 0:
-                raise WebUISettingsError(
-                    "max_concurrent_requests must be greater than zero"
-                )
-            updates["max_concurrent_requests"] = parsed_max
+
     for snake, camel in (
         ("extra_headers", "extraHeaders"),
         ("extra_body", "extraBody"),
@@ -258,7 +239,6 @@ def _validated_provider_config(
 ) -> ProviderConfig:
     config_type = type(provider_config) if provider_config is not None else ProviderConfig
     values = provider_config.model_dump(mode="python") if provider_config is not None else {}
-    updates = dict(updates)
     if provider_config is not None:
         for field in _PROVIDER_STRUCTURED_FIELDS:
             if field in updates:
@@ -310,15 +290,99 @@ def _resolve_env_placeholders(value: str | None) -> str | None:
 
 
 def provider_requires_api_key(spec: Any) -> bool:
-    return core_models.provider_requires_api_key(spec)
+    if spec.name == "azure_openai":
+        return False
+    if spec.is_oauth:
+        return False
+    if spec.is_local or spec.is_direct:
+        return False
+    return True
 
 
 def provider_requires_api_base(spec: Any) -> bool:
-    return core_models.provider_requires_api_base(spec)
+    if spec.name == "azure_openai":
+        return True
+    return bool(spec.backend == "openai_compat" and spec.is_direct and not spec.default_api_base)
 
 
 def oauth_provider_status(spec: Any) -> dict[str, Any]:
-    return core_models.oauth_provider_status(spec)
+    if not getattr(spec, "is_oauth", False):
+        return {"configured": False, "account": None, "expires_at": None, "login_supported": False}
+
+    if spec.name == "openai_codex":
+        try:
+            from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
+            from oauth_cli_kit.storage import FileTokenStorage
+        except Exception:
+            return {
+                "configured": False,
+                "account": None,
+                "expires_at": None,
+                "login_supported": False,
+            }
+        token = None
+        with suppress(Exception):
+            token = FileTokenStorage(token_filename=OPENAI_CODEX_PROVIDER.token_filename).load()
+        expires_at = getattr(token, "expires", None) if token else None
+        now_ms = int(time.time() * 1000)
+        return {
+            "configured": bool(
+                token
+                and token.access
+                and (getattr(token, "refresh", None) or (expires_at and expires_at > now_ms))
+            ),
+            "account": getattr(token, "account_id", None) if token else None,
+            "expires_at": expires_at,
+            "login_supported": True,
+        }
+
+    if spec.name == "github_copilot":
+        try:
+            from nanobot.providers.github_copilot_provider import get_github_copilot_login_status
+        except Exception:
+            return {
+                "configured": False,
+                "account": None,
+                "expires_at": None,
+                "login_supported": False,
+            }
+        token = None
+        with suppress(Exception):
+            token = get_github_copilot_login_status()
+        return {
+            "configured": bool(token and token.access and token.expires > int(time.time() * 1000)),
+            "account": getattr(token, "account_id", None) if token else None,
+            "expires_at": getattr(token, "expires", None) if token else None,
+            "login_supported": True,
+        }
+
+    if spec.name == "xai_grok":
+        try:
+            from nanobot.providers.xai_oauth import get_xai_oauth_login_status
+        except Exception:
+            return {
+                "configured": False,
+                "account": None,
+                "expires_at": None,
+                "login_supported": False,
+            }
+        token = None
+        with suppress(Exception):
+            token = get_xai_oauth_login_status()
+        expires_at = getattr(token, "expires", None) if token else None
+        now_ms = int(time.time() * 1000)
+        return {
+            "configured": bool(
+                token
+                and token.access
+                and (getattr(token, "refresh", None) or (expires_at and expires_at > now_ms))
+            ),
+            "account": getattr(token, "account_id", None) if token else None,
+            "expires_at": expires_at,
+            "login_supported": True,
+        }
+
+    return {"configured": False, "account": None, "expires_at": None, "login_supported": False}
 
 
 def provider_configured_for_settings(
@@ -326,7 +390,18 @@ def provider_configured_for_settings(
     provider_config: Any,
     oauth_status: OAuthStatusReader,
 ) -> bool:
-    return core_models.provider_configured(spec, provider_config, oauth_status)
+    if spec.is_oauth:
+        return bool(oauth_status(spec)["configured"])
+    if provider_requires_api_base(spec):
+        return bool(provider_config.api_base)
+    if provider_requires_api_key(spec):
+        return bool(provider_config.api_key)
+    return bool(
+        provider_config.api_key
+        or provider_config.api_base
+        or getattr(provider_config, "region", None)
+        or getattr(provider_config, "profile", None)
+    )
 
 
 def _dynamic_provider_items(config: Config) -> list[tuple[str, ProviderConfig]]:
@@ -342,7 +417,26 @@ def resolve_settings_provider(
     config: Config,
     provider_name: str,
 ) -> tuple[Any, str, ProviderConfig] | None:
-    return core_models.resolve_provider(config, provider_name)
+    spec = find_by_name(provider_name)
+    if spec is not None:
+        provider_config = getattr(config.providers, spec.name, None)
+        if isinstance(provider_config, ProviderConfig):
+            return spec, spec.name, provider_config
+        return None
+
+    normalized = provider_name.replace("-", "_")
+    for extra_name, provider_config in _dynamic_provider_items(config):
+        if provider_name == extra_name or normalized == extra_name.replace("-", "_"):
+            return (
+                create_dynamic_spec(
+                    extra_name,
+                    display_name=provider_config.display_name or "",
+                    thinking_style=provider_config.thinking_style or "",
+                ),
+                extra_name,
+                provider_config,
+            )
+    return None
 
 
 def _provider_advanced_field_names(name: str, spec: Any) -> list[str]:
@@ -361,7 +455,6 @@ def _provider_advanced_field_names(name: str, spec: Any) -> list[str]:
         fields.extend(("region", "profile"))
     if find_by_name(name) is None:
         fields.append("thinking_style")
-    fields.extend(("max_concurrent_requests", "rate_limit_scope"))
     return fields
 
 
@@ -375,16 +468,12 @@ def _provider_settings_row(
     is_custom = find_by_name(name) is None
     row = {
         "name": name,
-        "label": provider_config.display_name or spec.label,
+        "label": spec.label,
         "is_custom": is_custom,
         "configured": (
             bool(oauth_status["configured"])
             if oauth_status is not None
-            else provider_configured_for_settings(
-                spec,
-                provider_config,
-                oauth_status_reader,
-            )
+            else provider_configured_for_settings(spec, provider_config, oauth_status_reader)
         ),
         "auth_type": "oauth" if spec.is_oauth else "api_key",
         "api_key_required": provider_requires_api_key(spec),
@@ -401,8 +490,6 @@ def _provider_settings_row(
         "region": getattr(provider_config, "region", None),
         "profile": getattr(provider_config, "profile", None),
         "proxy": provider_config.proxy,
-        "max_concurrent_requests": provider_config.max_concurrent_requests,
-        "rate_limit_scope": provider_config.rate_limit_scope,
     }
     if oauth_status is not None:
         row["oauth_account"] = oauth_status["account"]
@@ -418,6 +505,7 @@ def _provider_settings_rows(
     selected_provider: str | None,
     oauth_status: OAuthStatusReader,
 ) -> list[dict[str, Any]]:
+    """Return one Settings row per provider family while preserving legacy configs."""
     aliases: dict[str, list[Any]] = {}
     for spec in PROVIDERS:
         if spec.settings_alias_for:
@@ -434,27 +522,15 @@ def _provider_settings_rows(
                 (
                     spec
                     for spec in candidates
-                    if (
-                        provider_config := getattr(config.providers, spec.name, None)
-                    )
-                    is not None
-                    and provider_configured_for_settings(
-                        spec,
-                        provider_config,
-                        oauth_status,
-                    )
+                    if (provider_config := getattr(config.providers, spec.name, None)) is not None
+                    and provider_configured_for_settings(spec, provider_config, oauth_status)
                 ),
                 canonical,
             )
         provider_config = getattr(config.providers, chosen.name, None)
         if provider_config is None:
             continue
-        row = _provider_settings_row(
-            chosen.name,
-            chosen,
-            provider_config,
-            oauth_status,
-        )
+        row = _provider_settings_row(chosen.name, chosen, provider_config, oauth_status)
         row["label"] = canonical.label
         rows.append(row)
     return rows
@@ -986,8 +1062,6 @@ def create_provider_settings(config: Config, query: QueryParams) -> str:
         "extra_query",
         "thinking_style",
         "display_name",
-        "max_concurrent_requests",
-        "rate_limit_scope",
     }
     unsupported = set(updates) - allowed
     if unsupported:
@@ -1022,14 +1096,13 @@ def update_provider_settings(
     updates = _provider_config_updates(query)
     if not spec.is_oauth and spec.name != "openai":
         updates.pop("api_type", None)
-    common = {"max_concurrent_requests", "rate_limit_scope"}
     if spec.is_oauth:
         if spec.name not in _OAUTH_PROXY_PROVIDERS:
             raise WebUISettingsError("unknown provider")
-        unsupported = set(updates) - {"proxy", "extra_body", *common}
+        unsupported = set(updates) - {"proxy", "extra_body"}
         if unsupported:
             raise WebUISettingsError(
-                "OAuth provider only supports proxy, extra_body, concurrency, and rate-limit settings"
+                "OAuth provider only supports proxy and extra_body settings"
             )
     else:
         allowed = {
@@ -1057,7 +1130,6 @@ def update_provider_settings(
     changed = updated_provider_config != provider_config
     if changed:
         setattr(config.providers, provider_key, updated_provider_config)
-
     image_config = config.tools.image_generation
     image_provider: str | None = None
     if image_config.model_id is not None:
@@ -1102,8 +1174,9 @@ def login_oauth_provider(
             raise WebUISettingsError(str(exc), status=400) from exc
         remote_browser_value = query_first(query, "remote_browser")
         remote_browser = (
-            remote_browser_value is not None
-            and remote_browser_value.strip().lower() in {"1", "true", "yes", "on"}
+            parse_bool(remote_browser_value, "remote_browser")
+            if remote_browser_value is not None
+            else False
         )
         try:
             flow = start_openai_codex_oauth_login(
@@ -1187,18 +1260,13 @@ def complete_oauth_provider(
     flow_id = (query_first(query, "flow_id") or "").strip()
     spec = find_by_name(provider_name)
     if spec is None or spec.name not in {"openai_codex", "xai_grok"}:
-        raise WebUISettingsError(
-            "OAuth completion is not supported for this provider"
-        )
+        raise WebUISettingsError("OAuth completion is not supported for this provider")
     if not flow_id:
         raise WebUISettingsError("flow_id is required")
 
     flow = oauth_flows.get(spec.name, flow_id)
     if flow is None:
-        raise WebUISettingsError(
-            f"{spec.label} sign-in expired. Start again.",
-            status=410,
-        )
+        raise WebUISettingsError(f"{spec.label} sign-in expired. Start again.", status=410)
 
     try:
         if spec.name == "openai_codex":
@@ -1208,10 +1276,7 @@ def complete_oauth_provider(
             )
 
             try:
-                token = complete_openai_codex_oauth_login(
-                    flow,
-                    authorization_response,
-                )
+                token = complete_openai_codex_oauth_login(flow, authorization_response)
             except OpenAICodexOAuthInputError as exc:
                 raise WebUISettingsError(str(exc), status=400) from exc
         else:

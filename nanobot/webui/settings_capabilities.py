@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 from nanobot.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from nanobot.api.runtime import ApiRuntime, ApiStartOptions
+from nanobot.audio.transcription import resolve_transcription_config
 from nanobot.audio.transcription_registry import transcription_provider_names
 from nanobot.config.schema import Config
 from nanobot.optional_features import (
@@ -150,14 +151,13 @@ def capability_settings_payload(
 ) -> CapabilitySettingsPayload:
     search_config = config.tools.web.search
     image_config = config.tools.image_generation
-    transcription = config.transcription
+    transcription = resolve_transcription_config(config)
     search_provider = (
         search_config.provider
         if search_config.provider in _WEB_SEARCH_PROVIDER_BY_NAME
         else "duckduckgo"
     )
     image_model = _selected_model(config, image_config.model_id)
-    transcription_model = _selected_model(config, transcription.model_id)
     image_providers = _image_generation_provider_rows(config, oauth_status=oauth_status)
     selected_image_provider = next(
         (
@@ -166,15 +166,6 @@ def capability_settings_payload(
             if image_model is not None and provider["name"] == image_model.provider
         ),
         None,
-    )
-    transcription_provider_configured = bool(
-        transcription_model is not None
-        and getattr(config.providers, transcription_model.provider, None) is not None
-        and getattr(
-            getattr(config.providers, transcription_model.provider),
-            "api_key",
-            None,
-        )
     )
     return {
         "web_search": {
@@ -227,11 +218,9 @@ def capability_settings_payload(
         "transcription": {
             "enabled": transcription.enabled,
             "model_id": transcription.model_id,
-            "provider": (
-                transcription_model.provider if transcription_model is not None else None
-            ),
-            "provider_configured": transcription_provider_configured,
-            "model": transcription_model.model if transcription_model is not None else None,
+            "provider": transcription.provider,
+            "provider_configured": transcription.provider_configured,
+            "model": transcription.model,
             "language": transcription.language,
             "max_duration_sec": transcription.max_duration_sec,
             "max_upload_mb": transcription.max_upload_mb,

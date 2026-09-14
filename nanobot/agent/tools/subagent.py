@@ -76,7 +76,7 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
         nullable=True,
     ),
     disabled=BooleanSchema(description="Disable a role", nullable=True),
-    model_id=StringSchema("Canonical model ID for a task-scoped WorkAgent or role mutation", nullable=True),
+    model_id=StringSchema("Canonical model ID for a per-run override or role mutation", nullable=True),
     thinking=StringSchema("Thinking effort", enum=list(_THINKING), nullable=True),
     temperature=NumberSchema(
         description="Sampling temperature",
@@ -137,15 +137,16 @@ class SubagentTool(Tool):
             "clearly fits. Omit role with no per-task overrides to use the permanent general worker. "
             "Omit role and provide any per-task override (description, system_prompt, tools, model_id, "
             "thinking, temperature, timeout_seconds, or context) to create a temporary WorkAgent "
-            "snapshot that is destroyed after the task and never persisted. A persistent role's "
-            "model identity comes only from that role's configured model_id; model_id cannot be "
-            "combined with role on run. Do not combine WorkAgent identity/tool overrides with a "
-            "persistent role. Use role.list or role.get to inspect declared, permission-allowed, and "
-            "currently available worker capabilities. Connected MCP tools are reused by workers; "
-            "discovery never connects an MCP server. Every run is asynchronous: successful dispatch "
-            "returns immediately with a task identifier. Background results are delivered "
-            "automatically, so do not poll or sleep-and-check. Browser automation is a worker "
-            "capability, not a separate Agent type. Children cannot create children."
+            "snapshot that is destroyed after the task and never persisted. When role is provided, "
+            "model_id is a per-run runtime override and may temporarily replace that role's configured "
+            "model_id without changing persistent role configuration. Do not combine WorkAgent "
+            "identity/tool overrides (description, system_prompt, tools) with a persistent role. Use "
+            "role.list or role.get to inspect declared, permission-allowed, and currently available "
+            "worker capabilities. Connected MCP tools are reused by workers; discovery never connects "
+            "an MCP server. Every run is asynchronous: successful dispatch returns immediately with "
+            "a task identifier. Background results are delivered automatically, so do not poll or "
+            "sleep-and-check. Browser automation is a worker capability, not a separate Agent type. "
+            "Children cannot create children."
         )
 
     @property
@@ -286,12 +287,12 @@ class SubagentTool(Tool):
                 return ToolResult.error("Error: subagent run requires an active model runtime")
 
             identity_override = any(
-                value is not None for value in (description, system_prompt, tools, model_id)
+                value is not None for value in (description, system_prompt, tools)
             )
             if role is not None and identity_override:
                 return ToolResult.error(
-                    "Error: description, system_prompt, tools, and model_id are task-scoped "
-                    "WorkAgent overrides and cannot be combined with role"
+                    "Error: description, system_prompt, and tools are task-scoped WorkAgent "
+                    "overrides and cannot be combined with role"
                 )
 
             fork_history = _fork_snapshot(request.conversation_history)
@@ -309,6 +310,7 @@ class SubagentTool(Tool):
                 task=task.strip(),
                 runtime=runtime,
                 label=label,
+                model_id=model_id,
                 thinking=thinking,
                 temperature=temperature,
                 timeout_seconds=timeout_seconds,
@@ -329,7 +331,6 @@ class SubagentTool(Tool):
                         description=description,
                         system_prompt=system_prompt,
                         tools=tools,
-                        model_id=model_id,
                     )
                 except ValueError as exc:
                     return ToolResult.error(f"Error: {exc}")

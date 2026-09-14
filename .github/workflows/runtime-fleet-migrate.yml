@@ -4,31 +4,17 @@ on:
   push:
     branches: [tmp-ignore]
     paths:
-      - '.ci/runtime_fleet/**'
       - '.github/workflows/runtime-fleet-migrate.yml'
 
-permissions:
-  contents: write
-
 jobs:
-  migrate:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: tmp-ignore
-          path: staging
-      - uses: actions/checkout@v4
-        with:
           ref: refactor/model-runtime-fleet-v2
           fetch-depth: 0
-          path: repo
-      - name: Apply canonical cleanup
-        working-directory: repo
-        run: |
-          python ../staging/.ci/runtime_fleet/patch3.py
-          git diff --check
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -36,23 +22,31 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
       - name: Install dependencies
-        working-directory: repo
         run: uv sync --all-extras --dev
-      - name: Validate cleanup
-        working-directory: repo
+      - name: Ruff changed runtime scope
         run: |
-          files=$(git diff --name-only --diff-filter=ACM | grep -E '\.py$' || true)
-          if [ -n "$files" ]; then
-            uv run ruff check --fix $files
-            uv run ruff check $files
-          fi
-          uv run python -m compileall -q nanobot/agent/loop.py nanobot/agent/tools/self.py nanobot/nanobot.py
-          git diff --check
-      - name: Commit cleanup
-        working-directory: repo
+          uv run ruff check \
+            nanobot/providers/factory.py \
+            nanobot/model_fleet.py \
+            nanobot/agent/model_runtime.py \
+            nanobot/agent/loop.py \
+            nanobot/agent/tools/runtime_control.py \
+            nanobot/agent/tools/self.py \
+            nanobot/bus/runtime_events.py \
+            nanobot/session/model_selection.py \
+            nanobot/utils/llm_runtime.py \
+            tests/agent/test_model_runtime_resolver.py \
+            tests/agent/test_runtime_resolution_integration.py \
+            tests/agent/test_runtime_refresh.py \
+            tests/agent/test_session_model_runtime.py \
+            tests/test_model_fleet.py \
+            tests/agent/test_self_model_id.py
+      - name: Targeted runtime fleet tests
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'refactor(runtime): remove legacy model selectors'
-          git push origin HEAD:refactor/model-runtime-fleet-v2
+          uv run python -m pytest -q \
+            tests/agent/test_model_runtime_resolver.py \
+            tests/agent/test_runtime_resolution_integration.py \
+            tests/agent/test_runtime_refresh.py \
+            tests/agent/test_session_model_runtime.py \
+            tests/test_model_fleet.py \
+            tests/agent/test_self_model_id.py

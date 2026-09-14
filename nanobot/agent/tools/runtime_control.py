@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.agent.tools.web import WebToolsConfig
     from nanobot.bus.runtime_events import RuntimeEventBus
-    from nanobot.config.schema import ModelPresetConfig
+    from nanobot.config.schema import ModelConfig
     from nanobot.session.manager import Session, SessionManager
     from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -27,12 +27,12 @@ JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 RUNTIME_SNAPSHOT_KEYS = frozenset({
-    "model", "model_preset", "model_presets", "max_iterations",
+    "model", "model_id", "models", "max_iterations",
     "context_window_tokens", "workspace", "provider_retry_mode",
     "max_tool_result_chars", "tool_names", "web_config", "exec_config", "subagents",
 })
 RUNTIME_COMMAND_KEYS = frozenset({
-    "model", "model_preset", "max_iterations", "context_window_tokens",
+    "model", "model_id", "max_iterations", "context_window_tokens",
     "provider_retry_mode", "max_tool_result_chars", "workspace",
 })
 
@@ -40,8 +40,8 @@ RUNTIME_COMMAND_KEYS = frozenset({
 @dataclass(frozen=True, slots=True)
 class RuntimeSnapshot:
     model: str
-    model_preset: str | None
-    model_presets: dict[str, dict[str, object]]
+    model_id: str | None
+    models: dict[str, dict[str, object]]
     max_iterations: int
     context_window_tokens: int
     workspace: Path | str
@@ -56,8 +56,8 @@ class RuntimeSnapshot:
     def as_mapping(self) -> Mapping[str, object]:
         values: dict[str, object] = {
             "model": self.model,
-            "model_preset": self.model_preset,
-            "model_presets": self.model_presets,
+            "model_id": self.model_id,
+            "models": self.models,
             "max_iterations": self.max_iterations,
             "context_window_tokens": self.context_window_tokens,
             "workspace": self.workspace,
@@ -75,8 +75,8 @@ class RuntimeSnapshot:
 @runtime_checkable
 class RuntimeControl(Protocol):
     def snapshot(self) -> RuntimeSnapshot: ...
-    def set_model(self, model: str) -> LLMRuntime: ...
-    def set_model_preset(self, name: str, *, session_key: str | None) -> LLMRuntime: ...
+    def set_model_id(self, model_id: str) -> LLMRuntime: ...
+    def set_model_id(self, name: str, *, session_key: str | None) -> LLMRuntime: ...
     def set_max_iterations(self, value: int) -> None: ...
     def set_context_window_tokens(self, value: int) -> LLMRuntime: ...
     def set_provider_retry_mode(self, value: str) -> None: ...
@@ -102,9 +102,9 @@ class _RuntimeControlTarget(Protocol):
     @property
     def model(self) -> str: ...
     @property
-    def model_preset(self) -> str | None: ...
+    def model_id(self) -> str | None: ...
     @property
-    def model_presets(self) -> Mapping[str, ModelPresetConfig]: ...
+    def models(self) -> Mapping[str, ModelConfig]: ...
     @property
     def context_window_tokens(self) -> int: ...
     @property
@@ -113,8 +113,8 @@ class _RuntimeControlTarget(Protocol):
     def tool_names(self) -> list[str]: ...
     def set_runtime_model(self, model: str) -> LLMRuntime: ...
     def set_runtime_context_window(self, context_window_tokens: int) -> LLMRuntime: ...
-    def set_model_preset(self, name: str | None) -> LLMRuntime: ...
-    def set_session_model_preset(self, session_key: str, name: str) -> LLMRuntime: ...
+    def set_model_id(self, name: str | None) -> LLMRuntime: ...
+    def set_session_model_id(self, session_key: str, name: str) -> LLMRuntime: ...
     def runtime_for_session(self, session: Session, *, recover_removed: bool = True) -> LLMRuntime: ...
 
 
@@ -134,8 +134,8 @@ class AgentRuntimeControl:
         target = self.__target
         return RuntimeSnapshot(
             model=target.model,
-            model_preset=target.model_preset,
-            model_presets=_snapshot_model_presets(target.model_presets),
+            model_id=target.model_id,
+            models=_snapshot_models(target.models),
             max_iterations=target.max_iterations,
             context_window_tokens=target.context_window_tokens,
             workspace=self.__workspace_display if self.__workspace_display is not None else target.workspace,
@@ -148,13 +148,13 @@ class AgentRuntimeControl:
             scratchpad=_snapshot_json_mapping(self.__scratchpad),
         )
 
-    def set_model(self, model: str) -> LLMRuntime:
-        return self.__target.set_runtime_model(model)
+    def set_model_id(self, model_id: str) -> LLMRuntime:
+        return self.__target.set_model_id(model_id)
 
-    def set_model_preset(self, name: str, *, session_key: str | None) -> LLMRuntime:
+    def set_model_id(self, name: str, *, session_key: str | None) -> LLMRuntime:
         if session_key is not None:
-            return self.__target.set_session_model_preset(session_key, name)
-        return self.__target.set_model_preset(name)
+            return self.__target.set_session_model_id(session_key, name)
+        return self.__target.set_model_id(name)
 
     def set_max_iterations(self, value: int) -> None:
         self.__target.max_iterations = value
@@ -223,17 +223,17 @@ class AgentRuntimeControl:
         }
 
 
-def _snapshot_model_presets(presets: Mapping[str, ModelPresetConfig]) -> dict[str, dict[str, object]]:
+def _snapshot_models(models: Mapping[str, ModelConfig]) -> dict[str, dict[str, object]]:
     return {
         name: {
             "model": preset.model,
             "provider": preset.provider,
-            "max_tokens": preset.max_tokens,
+            "max_tokens": preset.generation_defaults.max_tokens,
             "context_window_tokens": preset.context_window_tokens,
-            "temperature": preset.temperature,
-            "reasoning_effort": preset.reasoning_effort,
+            "temperature": preset.generation_defaults.temperature,
+            "reasoning_effort": preset.generation_defaults.reasoning_effort,
         }
-        for name, preset in presets.items()
+        for name, preset in models.items()
     }
 
 

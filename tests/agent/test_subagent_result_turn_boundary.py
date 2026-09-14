@@ -1,3 +1,5 @@
+"""Regression coverage for Worker completions entering fresh serialized Main turns."""
+
 from __future__ import annotations
 
 import asyncio

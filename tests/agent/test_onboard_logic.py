@@ -2056,6 +2056,73 @@ class TestModelWizard:
         assert mutated["n"] == 1
         assert "test" in result.config.models
 
+    def test_delete_model_blocks_all_canonical_usages(self, monkeypatch):
+        from nanobot.config.schema import SystemPromptOverrideConfig
+
+        config = Config()
+        config.models["fast"] = ModelConfig(
+            display_name="Fast",
+            provider="openai",
+            model="gpt-fast",
+            capabilities=ModelCapabilities(
+                text=True,
+                vision=True,
+                image_generation=True,
+                transcription=True,
+            ),
+        )
+        config.agents.defaults.model_id = "fast"
+        config.agents.defaults.dream.model_id = "fast"
+        config.agents.defaults.dream.fallback_model_id = "fast"
+        config.subagent_roles["general"].model_id = "fast"
+        config.transcription.model_id = "fast"
+        config.tools.image_analysis.model_id = "fast"
+        config.tools.image_generation.model_id = "fast"
+        config.system_prompt_overrides = [
+            SystemPromptOverrideConfig(prompt="bound", model_ids=["fast"])
+        ]
+
+        answers = iter(["fast - gpt-fast", "Delete", "<- Back"])
+        printed: list[str] = []
+        pauses: list[bool] = []
+
+        class NoConfirm:
+            @staticmethod
+            def confirm(*_args, **_kwargs):
+                raise AssertionError("referenced models must be rejected before confirmation")
+
+        monkeypatch.setattr(onboard_wizard.console, "clear", lambda: None)
+        monkeypatch.setattr(
+            onboard_wizard.console,
+            "print",
+            lambda message, *args, **kwargs: printed.append(str(message)),
+        )
+        monkeypatch.setattr(onboard_wizard, "_show_section_header", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            onboard_wizard,
+            "_select_with_back",
+            lambda *a, **kw: next(answers),
+        )
+        monkeypatch.setattr(onboard_wizard, "_get_questionary", lambda: NoConfirm())
+        monkeypatch.setattr(onboard_wizard, "_pause", lambda *a, **kw: pauses.append(True))
+
+        onboard_wizard._configure_models(config)
+
+        assert "fast" in config.models
+        assert pauses == [True]
+        message = "\n".join(printed)
+        for usage in (
+            "agents.defaults.model_id",
+            "dream.model_id",
+            "dream.fallback_model_id",
+            "subagent_roles.general.model_id",
+            "transcription.model_id",
+            "system_prompt_overrides[0].model_ids",
+            "tools.image_analysis.model_id",
+            "tools.image_generation.model_id",
+        ):
+            assert usage in message
+
     def test_provider_field_handler(self, monkeypatch):
         """_handle_provider_field should set provider from choices."""
         from nanobot.cli.onboard import _handle_provider_field

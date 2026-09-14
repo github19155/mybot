@@ -33,6 +33,7 @@ from nanobot.cli.models import (
 from nanobot.config.loader import get_config_path, load_config, resolve_config_env_vars
 from nanobot.config.schema import Config
 from nanobot.model_domain import ModelCapabilities, ModelConfig, validate_model_id
+from nanobot.model_settings import delete_model, find_model_usages
 from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
 
 console = Console()
@@ -1121,15 +1122,20 @@ def _configure_models(config: Config) -> None:
             if action is _BACK_PRESSED or action in {None, "Cancel"}:
                 continue
             if action == "Delete":
-                if model_id == config.agents.defaults.model_id:
-                    console.print("[yellow]! Select another default model before deleting this model[/yellow]")
+                usages = find_model_usages(config, model_id)
+                if usages:
+                    rendered_usages = ", ".join(usages)
+                    console.print(
+                        f"[yellow]! Cannot delete model '{model_id}'; it is still used by: "
+                        f"{escape(rendered_usages)}[/yellow]"
+                    )
                     _pause()
                     continue
                 confirm = _get_questionary().confirm(
                     f"Delete model '{model_id}'?", default=False
                 ).ask()
                 if confirm:
-                    del config.models[model_id]
+                    delete_model(config, model_id=model_id)
                     _sync_model_id_cache(config)
                     last_model_id = None
                 continue

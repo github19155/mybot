@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent_role_storage import record_role_use
-from nanobot.agent.subagent_roles import ALL_SUBAGENT_TOOL_NAMES
+from nanobot.agent.subagent_roles import ALL_SUBAGENT_TOOL_NAMES, TOOL_MODULES
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import current_request_context
+from nanobot.agent.tools.context import ToolContext, current_request_context
+from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import is_tool_error_result
 from nanobot.agent.tools.schema import (
     ArraySchema,
@@ -31,7 +32,6 @@ from nanobot.security.workspace_access import current_workspace_scope
 
 if TYPE_CHECKING:
     from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.context import ToolContext
 
 
 _ACTIONS = (
@@ -94,7 +94,7 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
         nullable=True,
     ),
     required=["action"],
-    additional_properties=True,
+    additional_properties=False,
 )
 _SUBAGENT_PARAMETERS["properties"]["description"] = StringSchema(
     "Task-scoped WorkAgent description for run, or role description for role mutations",
@@ -108,13 +108,14 @@ class SubagentTool(Tool):
 
     def __init__(self, manager: "SubagentManager") -> None:
         self._manager = manager
+        self._capability_loader = ToolLoader()
         workspace = getattr(manager, "workspace", None)
         bus = getattr(manager, "bus", None)
         if workspace is not None and bus is not None:
             bind_subagent_browser_bus(workspace, bus)
 
     @classmethod
-    def create(cls, ctx: "ToolContext") -> Tool:
+    def create(cls, ctx: ToolContext) -> Tool:
         manager = ctx.subagent_manager
         if manager is None:
             raise RuntimeError("SubagentTool requires an initialized subagent manager")
@@ -148,30 +149,73 @@ class SubagentTool(Tool):
     def _json(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
-    def _tool_available_without_activation(self, name: str) -> bool:
-        """Report loader/config readiness without starting external services."""
-        if name not in ALL_SUBAGENT_TOOL_NAMES:
-            return False
-        config = getattr(self._manager, "tools_config", None)
-        if name == "image_analyze":
-            if config is None or not config.image_analysis.enabled:
-                return False
-            resolver = getattr(self._manager, "runtime_resolver", None)
-            return getattr(resolver, "_provider_snapshot_loader", None) is not None
-        if name == "generate_image":
-            if config is None or not config.image_generation.enabled:
-                return False
-            loader = getattr(self._manager, "_image_generation_provider_configs", None)
-            provider_configs = loader() if callable(loader) else None
-            if not provider_configs:
-                return False
-            return config.image_generation.provider in provider_configs
-        return True
+    def _available_worker_tools_without_activation(self) -> set[str]:
+        """Return statically loadable worker tools without constructing or starting them."""
+        config_builder = getattr(self._manager, "_subagent_tools_config", None)
+        workspace = getattr(self._manager, "workspace", None)
+        if not callable(config_builder) or workspace is None:
+            return set()
+
+        config = config_builder()
+        resolver = getattr(self._manager, "runtime_resolver", None)
+        provider_configs_loader = getattr(
+            self._manager,
+            "_image_generation_provider_configs",
+            None,
+        )
+        try:
+            image_provider_configs = (
+                provider_configs_loader() if callable(provider_configs_loader) else None
+            )
+        except Exception:
+            image_provider_configs = None
+
+        ctx = ToolContext(
+            config=config,
+            workspace=str(workspace),
+            bus=getattr(self._manager, "bus", None),
+            subagent_manager=self._manager,
+            exec_session_manager=getattr(self._manager, "_exec_session_manager", None),
+            provider_snapshot_loader=(
+                getattr(resolver, "_provider_snapshot_loader", None)
+                if resolver is not None
+                else None
+            ),
+            image_generation_provider_configs=image_provider_configs,
+        )
+        catalog_modules = set(TOOL_MODULES.values())
+        enabled_modules: set[str] = set()
+        for tool_cls in self._capability_loader.discover():
+            if "subagent" not in getattr(tool_cls, "_scopes", {"core"}):
+                continue
+            module = tool_cls.__module__.rsplit(".", 1)[-1]
+            if module not in catalog_modules:
+                continue
+            try:
+                if tool_cls.enabled(ctx):
+                    enabled_modules.add(module)
+            except Exception:
+                continue
+
+        available = {
+            name
+            for name, module in TOOL_MODULES.items()
+            if module in enabled_modules
+        }
+        if "image_analyze" in available and ctx.provider_snapshot_loader is None:
+            available.discard("image_analyze")
+        if "generate_image" in available and (
+            not image_provider_configs
+            or config.image_generation.provider not in image_provider_configs
+        ):
+            available.discard("generate_image")
+        return available
 
     def _role_view(
         self,
         role_data: dict[str, Any],
         request_allowed_tools: set[str],
+        available_catalog: set[str],
     ) -> dict[str, Any]:
         """Separate declaration, permission and current no-side-effect availability."""
         view = dict(role_data)
@@ -185,7 +229,7 @@ class SubagentTool(Tool):
             and name in request_allowed_tools
             and self._manager.permissions.tool_allowed(subject, name)
         ]
-        available = [name for name in allowed if self._tool_available_without_activation(name)]
+        available = [name for name in allowed if name in available_catalog]
         view["declared_tools"] = declared
         view["allowed_tools"] = allowed
         view["available_tools"] = available
@@ -211,7 +255,6 @@ class SubagentTool(Tool):
         description: str | None = None,
         system_prompt: str | None = None,
         disabled: bool | None = None,
-        **_: Any,
     ) -> str:
         request = current_request_context()
         if request is None:
@@ -328,9 +371,10 @@ class SubagentTool(Tool):
             }.items():
                 if value is not None:
                     role_values[key] = value
+            available_catalog = self._available_worker_tools_without_activation()
             if action == "role.list":
                 return self._json([
-                    self._role_view(item, request_allowed_tools)
+                    self._role_view(item, request_allowed_tools, available_catalog)
                     for item in self._manager.role_list()
                 ])
             if action == "role.get":
@@ -339,6 +383,7 @@ class SubagentTool(Tool):
                 return self._json(self._role_view(
                     self._manager.role_get(role),
                     request_allowed_tools,
+                    available_catalog,
                 ))
             if action == "role.create":
                 if not role or not role_values:
@@ -346,6 +391,7 @@ class SubagentTool(Tool):
                 return self._json(self._role_view(
                     self._manager.role_create(role, role_values),
                     request_allowed_tools,
+                    available_catalog,
                 ))
             if action == "role.update":
                 if not role or not role_values:
@@ -353,6 +399,7 @@ class SubagentTool(Tool):
                 return self._json(self._role_view(
                     self._manager.role_update(role, role_values),
                     request_allowed_tools,
+                    available_catalog,
                 ))
             if action == "role.delete":
                 if not role:
@@ -364,6 +411,7 @@ class SubagentTool(Tool):
                 return self._json(self._role_view(
                     self._manager.role_reset(role),
                     request_allowed_tools,
+                    available_catalog,
                 ))
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")

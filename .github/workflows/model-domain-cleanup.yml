@@ -1,0 +1,45 @@
+name: Model Domain Cleanup
+
+on:
+  push:
+    branches: [refactor/model-domain-v2]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/model-domain-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+      - name: Ruff autofix mechanical integration issues
+        run: uv run ruff check nanobot tests conftest.py --fix
+      - name: Commit Ruff fixes
+        run: |
+          if git diff --quiet; then
+            echo "No Ruff fixes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add nanobot tests conftest.py
+          git commit -m "style: fix integrated model-domain lint"
+          git push origin HEAD:refactor/model-domain-v2
+      - name: Ruff verification
+        run: uv run ruff check nanobot tests conftest.py
+      - name: Basedpyright verification
+        run: uv run basedpyright
+      - name: Pytest collection
+        run: uv run python -m pytest --collect-only -q

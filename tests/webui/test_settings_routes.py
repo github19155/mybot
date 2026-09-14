@@ -25,13 +25,11 @@ def _router(
     config_path: Path | None = None,
     mcp_runtime_status: Callable[[], Mapping[str, str]] | None = None,
     mcp_reload: Callable[[], Awaitable[dict[str, object]]] | None = None,
-    rename_model_preset: Callable[[str, str], int] | None = None,
     refresh_runtime_config: Callable[[], None] | None = None,
 ) -> WebUISettingsRouter:
     return WebUISettingsRouter(
         settings=WebUISettingsServices.create(
             config_path or get_config_path(),
-            rename_model_preset=rename_model_preset,
             refresh_runtime_config=refresh_runtime_config,
         ),
         bus=SimpleNamespace(),
@@ -350,20 +348,30 @@ async def test_oauth_completion_reads_websocket_payload(
         (
             "/api/settings/update",
             "update_agent_settings",
-            {"model_preset": "Codex"},
-            {"model_preset": ["Codex"]},
+            {"model_id": "main"},
+            {"model_id": ["main"]},
         ),
         (
             "/api/settings/model-configurations/create",
             "create_model_configuration",
-            {"name": "Codex", "model": "openai-codex/gpt-5.6"},
-            {"name": ["Codex"], "model": ["openai-codex/gpt-5.6"]},
+            {
+                "model_id": "codex",
+                "display_name": "Codex",
+                "provider": "openai_codex",
+                "model": "openai-codex/gpt-5.6",
+            },
+            {
+                "model_id": ["codex"],
+                "display_name": ["Codex"],
+                "provider": ["openai_codex"],
+                "model": ["openai-codex/gpt-5.6"],
+            },
         ),
         (
             "/api/settings/model-configurations/delete",
             "delete_model_configuration",
-            {"name": "spare"},
-            {"name": ["spare"]},
+            {"model_id": "spare"},
+            {"model_id": ["spare"]},
         ),
         (
             "/api/settings/provider/create",
@@ -409,33 +417,29 @@ async def test_runtime_config_mutation_routes_refresh_live_runtime(
 
 
 @pytest.mark.asyncio
-async def test_model_update_route_forwards_session_rename_dependency(monkeypatch) -> None:
-    rename_model_preset = MagicMock(return_value=2)
+async def test_model_update_route_uses_stable_model_id(monkeypatch) -> None:
     refresh_runtime_config = MagicMock()
     captured: dict[str, object] = {}
 
-    def update(query, *, config_path=None, rename_model_preset=None):
-        captured.update(query=query, rename_model_preset=rename_model_preset)
+    def update(query, *, config_path=None):
+        captured["query"] = query
         return {"updated": True}
 
     monkeypatch.setattr("nanobot.webui.settings_routes.update_model_configuration", update)
     path = "/api/settings/model-configurations/update"
-    request = _mutation_request(path, {"name": "openai", "new_name": "Codex"})
+    request = _mutation_request(
+        path,
+        {"model_id": "main", "display_name": "Primary"},
+    )
 
     response = await _router(
-        rename_model_preset=rename_model_preset,
         refresh_runtime_config=refresh_runtime_config,
-    ).dispatch(
-        None,
-        request,
-        path,
-    )
+    ).dispatch(None, request, path)
 
     assert response is not None
     assert response.status_code == 200
     assert captured == {
-        "query": {"name": ["openai"], "new_name": ["Codex"]},
-        "rename_model_preset": rename_model_preset,
+        "query": {"model_id": ["main"], "display_name": ["Primary"]},
     }
     refresh_runtime_config.assert_called_once_with()
 

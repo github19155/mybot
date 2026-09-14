@@ -27,8 +27,8 @@ def _runtime(provider: MagicMock, model: str = "test-model") -> LLMRuntime:
 
 
 @pytest.mark.asyncio
-async def test_run_inline_returns_result_without_announcement(tmp_path):
-    """Inline subagents return directly instead of injecting a follow-up."""
+async def test_spawn_returns_task_id_and_announces_result(tmp_path):
+    """Async subagents return a dispatch ID and deliver completion separately."""
     from nanobot.agent.subagent import SubagentManager
     from nanobot.bus.queue import MessageBus
 
@@ -47,24 +47,28 @@ async def test_run_inline_returns_result_without_announcement(tmp_path):
     ))
     manager._announce_result = AsyncMock()
 
-    result = await manager.run_inline(
+    dispatch = await manager.spawn(
         task="review this",
         session_key="test:c1",
         runtime=_runtime(provider),
     )
+    tasks = list(manager._running_tasks.values())
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)
 
-    assert result == "review result"
-    manager._announce_result.assert_not_awaited()
+    assert "id:" in dispatch
+    manager._announce_result.assert_awaited_once()
+    assert manager._announce_result.await_args.args[3] == "review result"
+    assert manager._announce_result.await_args.args[5] == "ok"
     assert manager._running_tasks == {}
     assert manager._task_statuses == {}
     assert manager._session_tasks == {}
 
 
 @pytest.mark.asyncio
-async def test_run_inline_returns_structured_error(tmp_path):
-    """Inline subagent failures remain tool errors for the parent runner."""
+async def test_spawn_failure_is_announced_as_error(tmp_path):
+    """Background subagent failures are delivered through the normal result path."""
     from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.registry import is_tool_error_result
     from nanobot.bus.queue import MessageBus
 
     manager = SubagentManager(
@@ -79,15 +83,21 @@ async def test_run_inline_returns_structured_error(tmp_path):
         error="subagent failed",
         tool_events=[],
     ))
+    manager._announce_result = AsyncMock()
 
-    result = await manager.run_inline(
+    dispatch = await manager.spawn(
         task="review this",
         session_key="test:c1",
         runtime=_runtime(MagicMock()),
     )
+    tasks = list(manager._running_tasks.values())
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)
 
-    assert result == "subagent failed"
-    assert is_tool_error_result(result)
+    assert "id:" in dispatch
+    manager._announce_result.assert_awaited_once()
+    assert manager._announce_result.await_args.args[3] == "subagent failed"
+    assert manager._announce_result.await_args.args[5] == "error"
     assert manager._running_tasks == {}
     assert manager._session_tasks == {}
 
@@ -292,25 +302,18 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_spawn_tool_waits_for_inline_result():
+async def test_subagent_tool_rejects_removed_wait_parameter():
     from nanobot.agent.tools.context import RequestContext, request_context
+    from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
     from nanobot.agent.tools.subagent import SubagentTool
 
     class Manager:
-        max_concurrent_subagents = 1
-
         def __init__(self):
-            self.inline = AsyncMock(return_value="review result")
-            self.spawn = AsyncMock(return_value="queued")
-
-        def get_running_count(self):
-            return 0
-
-        async def run_inline(self, **kwargs):
-            return await self.inline(**kwargs)
+            self.spawn = AsyncMock(return_value="queued (id: task-1)")
 
     manager = Manager()
-    tool = SubagentTool(manager)
+    registry = ToolRegistry()
+    registry.register(SubagentTool(manager))
     runtime = _runtime(MagicMock())
     with request_context(RequestContext(
         channel="test",
@@ -318,15 +321,18 @@ async def test_spawn_tool_waits_for_inline_result():
         session_key="test:c1",
         runtime=runtime,
     )):
-        result = await tool.execute(action="run", task="review this", wait=True)
+        result = await registry.execute(
+            "subagent",
+            {"action": "run", "task": "review this", "wait": True},
+        )
 
-    assert result == "review result"
-    manager.inline.assert_awaited_once()
+    assert is_tool_error_result(result)
+    assert "unexpected parameter wait" in result
     manager.spawn.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
+async def test_async_subagent_tool_returns_while_second_is_queued(tmp_path):
     from nanobot.agent.subagent import SubagentManager
     from nanobot.agent.tools.context import RequestContext, request_context
     from nanobot.agent.tools.subagent import SubagentTool
@@ -339,6 +345,7 @@ async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
         max_concurrent_subagents=1,
         permission_manager=_permission_manager(),
     )
+    manager._announce_result = AsyncMock()
     first_entered = asyncio.Event()
     second_entered = asyncio.Event()
     release_first = asyncio.Event()
@@ -367,28 +374,29 @@ async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
         session_key="test:c1",
         runtime=_runtime(MagicMock()),
     )):
-        first = asyncio.create_task(tool.execute(action="run", task="first", wait=True))
+        first_result = await tool.execute(action="run", task="first")
+        assert "id:" in first_result.lower()
         await asyncio.wait_for(first_entered.wait(), timeout=1.0)
 
-        second = asyncio.create_task(tool.execute(action="run", task="second", wait=True))
-        await asyncio.sleep(0)
-
-        assert not second.done()
+        second_result = await tool.execute(action="run", task="second")
+        assert "id:" in second_result.lower()
         assert not second_entered.is_set()
         assert manager.get_running_count() == 1
-        release_first.set()
-        assert await first == "done"
-        await asyncio.wait_for(second_entered.wait(), timeout=1.0)
-        release_second.set()
-        assert await second == "done"
+        tasks = list(manager._running_tasks.values())
+
+    release_first.set()
+    await asyncio.wait_for(second_entered.wait(), timeout=1.0)
+    release_second.set()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)
 
     assert manager.get_running_count() == 0
     assert manager._session_tasks == {}
 
 
 @pytest.mark.asyncio
-async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
-    """Adjacent blocking consultations should share one concurrent tool batch."""
+async def test_runner_executes_async_dispatch_batch_concurrently(tmp_path):
+    """Adjacent dispatch calls return IDs while workers run concurrently."""
     from nanobot.agent.hook import AgentHook, AgentHookContext
     from nanobot.agent.subagent import SubagentManager
     from nanobot.agent.tools.context import RequestContext, request_context
@@ -405,6 +413,7 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
         max_concurrent_subagents=2,
         permission_manager=_permission_manager(),
     )
+    manager._announce_result = AsyncMock()
     both_entered = asyncio.Event()
     release = asyncio.Event()
     entered: list[str] = []
@@ -429,12 +438,12 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
         ToolCallRequest(
             id="subagent-1",
             name="subagent",
-            arguments={"action": "run", "task": "first", "wait": True},
+            arguments={"action": "run", "task": "first"},
         ),
         ToolCallRequest(
             id="subagent-2",
             name="subagent",
-            arguments={"action": "run", "task": "second", "wait": True},
+            arguments={"action": "run", "task": "second"},
         ),
     ]
 
@@ -454,17 +463,22 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
             context=AgentHookContext(iteration=0, messages=[], session_key="test:c1"),
         ))
         await asyncio.wait_for(both_entered.wait(), timeout=1.0)
-        release.set()
         results, events = await execution
 
     assert set(entered) == {"first", "second"}
-    assert results == ["first", "second"]
+    assert len(results) == 2
+    assert all("id:" in result.lower() for result in results)
     assert [event["status"] for event in events] == ["ok", "ok"]
+
+    tasks = list(manager._running_tasks.values())
+    release.set()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)
     assert manager._running_tasks == {}
 
 
 @pytest.mark.asyncio
-async def test_cancel_by_session_cancels_inline_subagent(tmp_path):
+async def test_cancel_by_session_cancels_background_subagent(tmp_path):
     from nanobot.agent.subagent import SubagentManager
     from nanobot.bus.queue import MessageBus
 
@@ -474,6 +488,7 @@ async def test_cancel_by_session_cancels_inline_subagent(tmp_path):
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         permission_manager=_permission_manager(),
     )
+    manager._announce_result = AsyncMock()
     entered = asyncio.Event()
 
     async def fake_run(spec):
@@ -481,16 +496,18 @@ async def test_cancel_by_session_cancels_inline_subagent(tmp_path):
         await asyncio.Event().wait()
 
     manager.runner.run = AsyncMock(side_effect=fake_run)
-    inline = asyncio.create_task(manager.run_inline(
+    dispatch = await manager.spawn(
         task="wait",
         session_key="test:c1",
         runtime=_runtime(MagicMock()),
-    ))
+    )
+    task = next(iter(manager._running_tasks.values()))
     await asyncio.wait_for(entered.wait(), timeout=1.0)
 
+    assert "id:" in dispatch
     assert await manager.cancel_by_session("test:c1") == 1
-    with pytest.raises(asyncio.CancelledError):
-        await inline
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)
     assert manager._running_tasks == {}
     assert manager._task_statuses == {}
     assert manager._session_tasks == {}
@@ -642,6 +659,7 @@ async def test_drain_pending_no_block_when_no_subagents(tmp_path):
     # With no sub-agents and an empty queue, both paths return immediately.
     assert await asyncio.wait_for(injection_callback(), timeout=1.0) == []
     assert await asyncio.wait_for(terminal_injection_callback(), timeout=1.0) == []
+
 
 @pytest.mark.asyncio
 async def test_terminal_drain_returns_available_without_waiting(tmp_path):

@@ -92,6 +92,7 @@ class ToolLoader:
     def load(self, ctx: ToolContext, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
         registered: list[str] = []
         builtin_names: set[str] = set()
+        ctx.registry = registry
         sources = [(self.discover(), False), (self._discover_plugins().values(), True)]
         for source, is_plugin_source in sources:
             for tool_cls in source:

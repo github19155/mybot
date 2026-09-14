@@ -295,10 +295,7 @@ def create_provider_settings(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    provider_key = cast(
-        str,
-        _core_model_call(core_models.create_provider_settings, config, query),
-    )
+    provider_key = models.create_provider_settings(config, query)
     _save_settings_config(config, config_path)
     payload = settings_payload(config_path=config_path)
     payload["created_provider"] = provider_key
@@ -311,10 +308,7 @@ def update_provider_settings(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    changed, restart_required = cast(
-        tuple[bool, bool],
-        _core_model_call(core_models.update_provider_settings, config, query),
-    )
+    changed, restart_required = models.update_provider_settings(config, query)
     if changed:
         _save_settings_config(config, config_path)
     return settings_payload(

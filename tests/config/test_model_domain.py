@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from nanobot.model_domain import (
     MODEL_CAPABILITIES,
@@ -150,3 +151,53 @@ def test_pricing_contains_only_current_fleet_inputs() -> None:
     model = _model()
 
     assert set(type(model.pricing).model_fields) == {"input", "output", "cache_read"}
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("supports_vision", True),
+        ("supportsVision", True),
+        ("supports_image_generation", True),
+        ("temperature", 0.7),
+        ("max_tokens", 4096),
+        ("reasoning_effort", "high"),
+        ("fleet_pools", ["general"]),
+        ("fleetPools", ["general"]),
+        ("input_cost_per_million", 1.0),
+        ("output_cost_per_million", 2.0),
+        ("cached_input_cost_per_million", 0.1),
+    ],
+)
+def test_model_config_rejects_deleted_legacy_flat_fields(field: str, value: object) -> None:
+    payload = {
+        "displayName": "Main",
+        "provider": "openai",
+        "model": "gpt-5.6",
+        field: value,
+    }
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ModelConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"capabilities": {"vision": True, "audio": True}},
+        {"capabilities": {"vision": True, "tools": True}},
+        {"pricing": {"input": 1.0, "cache_write": 0.5}},
+        {"pricing": {"input": 1.0, "cacheWrite": 0.5}},
+        {"generationDefaults": {"temperature": 0.2, "topP": 0.9}},
+    ],
+)
+def test_nested_model_domain_objects_reject_unknown_fields(payload: dict[str, object]) -> None:
+    data = {
+        "displayName": "Main",
+        "provider": "openai",
+        "model": "gpt-5.6",
+        **payload,
+    }
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ModelConfig.model_validate(data)

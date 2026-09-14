@@ -1,0 +1,45 @@
+name: Temporary integration EOF fix
+
+on:
+  push:
+    branches:
+      - integration/main-pure-orchestrator
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integration/main-pure-orchestrator
+      - name: Normalize EOF newlines and remove temporary workflow
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          paths = [
+              'nanobot/agent/subagent.py',
+              'nanobot/agent/subagent_roles.py',
+              'nanobot/agent/tools/context.py',
+              'nanobot/agent/tools/loader.py',
+              'nanobot/agent/tools/subagent.py',
+              'nanobot/agent/work_agent.py',
+              'nanobot/permission_config.py',
+          ]
+          for value in paths:
+              path = Path(value)
+              data = path.read_bytes()
+              if data and not data.endswith(b'\n'):
+                  path.write_bytes(data + b'\n')
+          PY
+          git rm .github/workflows/_temp_fix_eof.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add nanobot/agent/subagent.py nanobot/agent/subagent_roles.py nanobot/agent/tools/context.py nanobot/agent/tools/loader.py nanobot/agent/tools/subagent.py nanobot/agent/work_agent.py nanobot/permission_config.py
+          git commit -m 'chore: normalize integration file endings'
+          git push origin HEAD:integration/main-pure-orchestrator

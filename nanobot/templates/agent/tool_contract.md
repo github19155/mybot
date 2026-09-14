@@ -9,7 +9,7 @@
 
 ## Worker Routing
 
-- Use current control-plane discovery when Worker roles or capabilities matter; do not assume the Specialist list is static and do not invent unavailable query interfaces.
+- Use the Main-callable `subagent` control-plane tool with action `role.list` or `role.get` when Worker roles or capabilities matter. These actions report declared, permission-allowed, and currently available Worker tools without activating MCP connections. Do not treat `role.list` or `role.get` as standalone tools.
 - Prefer a matching active Specialist when its responsibility fits the task.
 - Use a WorkAgent when one task needs special tools, prompt, model, or runtime configuration that should not become a persistent role.
 - Otherwise use permanent General as the fallback.
@@ -27,6 +27,12 @@
 - Concurrent Workers may share files and other state. Partition overlapping writes when possible and do not schedule conflicting mutations blindly.
 - Treat persistent browser/profile state as single-owner shared state; do not schedule parallel browser Workers against the same session.
 - Children do not create further Workers. Main owns cross-Worker decomposition, sequencing, steering, cancellation, and final synthesis.
+
+## Messaging and Media Delivery
+
+- Reply directly in the current conversation for normal text responses. Do not use the `message` tool for normal replies in the current chat.
+- Use `message` only for proactive sends, cross-channel delivery, or delivery of existing local files and media through its `media` parameter.
+- When a Worker returns generated image artifact paths, Main may use `message` with those paths in `media` during the result turn.
 
 ## Authorization, Untrusted Content, and Truthfulness
 

@@ -65,7 +65,7 @@ def test_selected_project_path_follows_shared_cache_prefix(tmp_path) -> None:
     prefix_b = prompt_b[: prompt_b.index(marker)]
 
     assert prefix_a == prefix_b
-    assert "# Tool Usage Notes" in prefix_a
+    assert "# Main Orchestration Contract" in prefix_a
     assert str(project_a.resolve()) not in prefix_a
     assert str(project_b.resolve()) not in prefix_b
     assert prompt_a == builder.build_system_prompt(workspace=project_a)
@@ -105,8 +105,8 @@ def test_provider_context_appended_after_user_content(tmp_path) -> None:
     assert user_pos < context_pos, "user content must precede provider context"
 
 
-def test_execution_rules_in_system_prompt(tmp_path) -> None:
-    """Execution rules should appear in the system prompt via the default templates."""
+def test_orchestration_rules_in_system_prompt(tmp_path) -> None:
+    """Main orchestration rules should appear via the default templates."""
     from nanobot.utils.helpers import sync_workspace_templates
 
     workspace = _make_workspace(tmp_path)
@@ -114,10 +114,10 @@ def test_execution_rules_in_system_prompt(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
+    assert "# Main Orchestration Contract" in prompt
     assert "clear user request" in prompt
-    assert "multi-step tasks" in prompt
-    assert "read-only discovery before writes" in prompt
-    assert "verify the result" in prompt
+    assert "Every Worker dispatch is asynchronous" in prompt
+    assert "Main does not perform operational execution itself" in prompt
 
 
 def test_execution_rules_reach_existing_workspace_soul(tmp_path) -> None:
@@ -132,7 +132,7 @@ def test_execution_rules_reach_existing_workspace_soul(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    current_rule = "Treat a clear user request as authorization"
+    current_rule = "A clear user request authorizes work only within"
 
     assert legacy_rule not in prompt
     assert current_rule in prompt
@@ -167,12 +167,16 @@ def test_default_soul_template_keeps_execution_policy_in_tool_contract() -> None
     contract = (
         pkg_files("nanobot") / "templates" / "agent" / "tool_contract.md"
     ).read_text(encoding="utf-8")
+    worker_contract = (
+        pkg_files("nanobot") / "templates" / "agent" / "worker_execution.md"
+    ).read_text(encoding="utf-8")
 
     assert "## Execution Rules" not in soul
     assert "clear user request" not in soul
     assert "clear user request" in contract
-    assert "multi-step tasks" in contract
-    assert "irreversible action needs confirmation" in contract
+    assert "Every Worker dispatch is asynchronous" in contract
+    assert "For multi-step work" in worker_contract
+    assert "execute through completion and verification" in worker_contract
 
 
 def test_channel_format_hint_telegram(tmp_path) -> None:
@@ -227,10 +231,10 @@ def test_system_prompt_keeps_message_tool_out_of_current_chat_replies(tmp_path) 
 
     prompt = builder.build_system_prompt(channel="slack")
 
-    assert "Do not use the 'message' tool for normal replies in the current chat" in prompt
-    assert "When 'generate_image' creates images" in prompt
-    assert "call 'message' with the artifact paths in the 'media' parameter" in prompt
-    assert "Wait for the tool results, then answer once" in prompt
+    assert "Do not use the `message` tool for normal replies in the current chat" in prompt
+    assert "When a Worker returns generated image artifact paths" in prompt
+    assert "use `message` with those paths in `media` during the result turn" in prompt
+    assert "Wait for the tool results, then answer once" not in prompt
 
 
 def test_memory_skill_is_lazy_loaded_from_skills_index(tmp_path) -> None:
@@ -259,7 +263,7 @@ def test_fresh_workspace_omits_default_prompt_scaffolding(tmp_path) -> None:
     assert "8281248569" not in prompt
     assert "(your name)" not in prompt
     assert "apt/brew" not in prompt
-    assert prompt.count("Do not use the 'message' tool for normal replies") == 1
+    assert prompt.count("Do not use the `message` tool for normal replies") == 1
 
 
 def test_template_memory_md_is_skipped(tmp_path) -> None:

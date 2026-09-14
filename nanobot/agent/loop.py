@@ -1423,7 +1423,7 @@ class AgentLoop:
                             "Pending queue full for session {}, falling back to queued task",
                             effective_key,
                         )
-                        msg = pending_msg
+                        routed_msg = pending_msg
                     else:
                         logger.info(
                             "Routed follow-up message to pending queue for session {}",

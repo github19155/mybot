@@ -376,9 +376,13 @@ class SubagentManager:
 
         for name in list(registry.tool_names):
             tool = registry.get(name)
-            if name not in allowed_names or (
-                name in TOOL_MODULES
-                and type(tool).__module__ != f"nanobot.agent.tools.{TOOL_MODULES[name]}"
+            if (
+                name not in allowed_names
+                or not self.permissions.tool_allowed(subject, name)
+                or (
+                    name in TOOL_MODULES
+                    and type(tool).__module__ != f"nanobot.agent.tools.{TOOL_MODULES[name]}"
+                )
             ):
                 registry.unregister(name)
         return registry
@@ -629,7 +633,6 @@ class SubagentManager:
                 cfg = self._subagent_tools_config()
                 cfg.restrict_to_workspace = workspace_scope.restrict_to_workspace
             tools = self._build_tools(
-                workspace=root,
                 tools_config=cfg,
                 role=status.role,
                 allowed_tools=allowed_tools,

@@ -123,9 +123,8 @@ class SubagentTool(Tool):
         manager = ctx.subagent_manager
         if manager is None:
             raise RuntimeError("SubagentTool requires an initialized subagent manager")
-        if ctx.registry is None:
-            raise RuntimeError("SubagentTool requires the owning system tool registry")
-        manager.system_tools = ctx.registry
+        if ctx.registry is not None:
+            manager.system_tools = ctx.registry
         return cls(manager)
 
     @property

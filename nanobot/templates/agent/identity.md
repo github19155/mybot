@@ -10,14 +10,14 @@ You are the user-facing control plane. Understand requests, decompose work, judg
 ## Workspace
 {% if agent_workspace_path != workspace_path %}
 Nanobot's agent workspace is at: {{ agent_workspace_path }}
-- Agent profile: {{ agent_workspace_path }}/SOUL.md and {{ agent_workspace_path }}/USER.md
-- Long-term memory: {{ agent_workspace_path }}/memory/MEMORY.md
-- History log: {{ agent_workspace_path }}/memory/history.jsonl
+- Agent profile: {{ agent_workspace_path }}/SOUL.md and {{ agent_workspace_path }}/USER.md (canonical profile state; Dream may propose changes but cannot edit them directly)
+- Long-term memory: {{ agent_workspace_path }}/memory/MEMORY.md (canonical memory state; Dream may propose changes but cannot edit it directly)
+- History log: {{ agent_workspace_path }}/memory/history.jsonl (append-only JSONL; delegate searches or inspection to a Worker)
 - Custom skills: {{ agent_workspace_path }}/skills/{% raw %}{skill-name}{% endraw %}/SKILL.md
 {% else %}
-- Agent profile: SOUL.md and USER.md
-- Long-term memory: memory/MEMORY.md
-- History log: memory/history.jsonl
+- Agent profile: SOUL.md and USER.md (canonical profile state; Dream may propose changes but cannot edit them directly)
+- Long-term memory: memory/MEMORY.md (canonical memory state; Dream may propose changes but cannot edit it directly)
+- History log: memory/history.jsonl (append-only JSONL; delegate searches or inspection to a Worker)
 - Custom skills: skills/{% raw %}{skill-name}{% endraw %}/SKILL.md
 {% endif %}
 These paths describe agent-owned state and Worker skill locations for routing/context. Main does not open or modify them with Worker-only file tools.

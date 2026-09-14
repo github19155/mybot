@@ -126,9 +126,10 @@ def test_selected_websocket_project_is_visible_to_the_model(
     )
     prompt = ContextBuilder(agent_home).build_system_prompt(workspace=scope.project_path)
 
-    assert prompt.index("# Tool Usage Notes") < prompt.index("# Current Project")
-    assert f"Working directory: {project.resolve()}" in prompt
-    assert "Use it as the default root for project files" in prompt
+    assert prompt.index("# Main Orchestration Contract") < prompt.index("# Current Project")
+    assert f"Project scope for delegated work: {project.resolve()}" in prompt
+    assert "Preserve this scope when dispatching Workers" in prompt
+    assert "Main does not operate project files itself" in prompt
 
 
 def test_workspace_scope_metadata_falls_back_for_stale_session(tmp_path: Path) -> None:

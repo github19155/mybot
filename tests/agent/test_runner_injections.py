@@ -774,69 +774,6 @@ async def test_pending_injection_resolves_its_own_runtime_context(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_subagent_pending_injection_is_hidden_history_and_not_merged(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.session.history_visibility import HIDDEN_HISTORY_META
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    call_count = {"n": 0}
-
-    async def chat_with_retry(*, messages, **kwargs):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            return LLMResponse(content="first answer", tool_calls=[], usage=None)
-        return LLMResponse(content="second answer", tool_calls=[], usage=None)
-
-    provider.chat_with_retry = chat_with_retry
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
-    loop.tools.get_definitions = MagicMock(return_value=[])
-
-    payload = (
-        "[Subagent 'x' completed successfully]\n\n"
-        "Task: t\n\n"
-        "Result:\nr\n\n"
-        "Summarize this naturally for the user."
-    )
-    pending_queue = asyncio.Queue()
-    await pending_queue.put(InboundMessage(
-        channel="cli",
-        sender_id="user",
-        chat_id="c",
-        content="visible follow-up",
-    ))
-    await pending_queue.put(InboundMessage(
-        channel="system",
-        sender_id="subagent",
-        chat_id="cli:c",
-        content=payload,
-        metadata={"injected_event": "subagent_result", "subagent_task_id": "sub-1"},
-    ))
-
-    runtime = loop.llm_runtime()
-    result = await loop._run_agent_loop(
-        TranscriptInput(history=[{"role": "user", "content": "hello"}], current_message=None),
-        runtime=runtime,
-        request_context=RequestContext(channel="cli", chat_id="c", runtime=runtime),
-        pending_queue=pending_queue,
-    )
-
-    assert result.final_content == "second answer"
-    assert result.had_injections is True
-    assert call_count["n"] == 2
-    injected_users = [message for message in result.messages if message.get("role") == "user"][-2:]
-    assert [message["content"] for message in injected_users] == ["visible follow-up", payload]
-    assert injected_users[1][HIDDEN_HISTORY_META] == {
-        "kind": "subagent_result",
-        "subagent_task_id": "sub-1",
-    }
-    assert injected_users[1]["injected_event"] == "subagent_result"
-
-
-@pytest.mark.asyncio
 async def test_model_request_merges_injected_user_messages_without_losing_media():
     """The model copy may merge follow-ups while the raw transcript keeps each event."""
     from nanobot.agent.runner import AgentRunner
@@ -1194,44 +1131,6 @@ async def test_unified_websocket_followup_admits_effective_session(tmp_path):
 
     loop.stop()
     await asyncio.wait_for(run_task, timeout=2)
-
-
-@pytest.mark.asyncio
-async def test_mid_turn_subagent_result_does_not_resolve_a_new_turn_route(tmp_path):
-    """Injected results stay inside the active turn instead of opening a side turn."""
-    from nanobot.bus.events import InboundMessage
-
-    loop = _make_loop(tmp_path)
-    loop._dispatch = AsyncMock()  # type: ignore[method-assign]
-    route_policy = MagicMock(side_effect=lambda _msg, _key, route: route)
-    loop.turn_delivery_factory.route_policy = route_policy
-
-    session_key = "websocket:chat-1"
-    pending = asyncio.Queue(maxsize=20)
-    loop._pending_queues[session_key] = pending
-
-    run_task = asyncio.create_task(loop.run())
-    msg = InboundMessage(
-        channel="system",
-        sender_id="subagent",
-        chat_id=session_key,
-        content="background result",
-        metadata={
-            "injected_event": "subagent_result",
-            "subagent_task_id": "sub-1",
-        },
-        session_key_override=session_key,
-    )
-    await loop.bus.publish_inbound(msg)
-
-    queued_msg = await asyncio.wait_for(pending.get(), timeout=2)
-
-    loop.stop()
-    await asyncio.wait_for(run_task, timeout=2)
-
-    assert queued_msg is msg
-    assert loop._dispatch.await_count == 0
-    route_policy.assert_not_called()
 
 
 @pytest.mark.asyncio

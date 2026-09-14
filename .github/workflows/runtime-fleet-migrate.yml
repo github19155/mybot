@@ -42,8 +42,12 @@ jobs:
         working-directory: repo
         run: |
           files=$(git diff --name-only --diff-filter=ACM | grep -E '\.py$' || true)
-          if [ -n "$files" ]; then uv run ruff check $files; fi
+          if [ -n "$files" ]; then
+            uv run ruff check --fix $files
+            uv run ruff check $files
+          fi
           uv run python -m compileall -q nanobot/agent/loop.py nanobot/agent/tools/self.py nanobot/nanobot.py
+          git diff --check
       - name: Commit cleanup
         working-directory: repo
         run: |

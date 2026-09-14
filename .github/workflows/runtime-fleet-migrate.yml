@@ -31,12 +31,7 @@ jobs:
       - name: Reconstruct migration script
         shell: bash
         run: |
-          python - <<'PY'
-          import base64, gzip
-          from pathlib import Path
-          payload = Path('staging/.ci/runtime_fleet/payload.0').read_text().strip()
-          Path('/tmp/apply_runtime_fleet_migration.py').write_bytes(gzip.decompress(base64.b64decode(payload)))
-          PY
+          cp staging/.ci/runtime_fleet/apply.part.00 /tmp/apply_runtime_fleet_migration.py
           python -m py_compile /tmp/apply_runtime_fleet_migration.py
 
       - name: Apply migration

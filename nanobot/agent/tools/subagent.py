@@ -16,6 +16,7 @@ from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.registry import is_tool_error_result
 from nanobot.agent.tools.schema import (
     ArraySchema,
+    BooleanSchema,
     NumberSchema,
     StringSchema,
     tool_parameters_schema,
@@ -70,6 +71,7 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
         "Task-scoped WorkAgent system prompt for run, or role system prompt for role mutations",
         nullable=True,
     ),
+    disabled=BooleanSchema(description="Disable a role", nullable=True),
     model=StringSchema("Explicit provider/model", nullable=True),
     model_preset=StringSchema("Configured model preset", nullable=True),
     thinking=StringSchema("Thinking effort", enum=list(_THINKING), nullable=True),
@@ -98,10 +100,6 @@ _SUBAGENT_PARAMETERS["properties"]["description"] = StringSchema(
     "Task-scoped WorkAgent description for run, or role description for role mutations",
     nullable=True,
 ).to_json_schema()
-_SUBAGENT_PARAMETERS["properties"]["disabled"] = {
-    "type": ["boolean", "null"],
-    "description": "Disable a persistent role",
-}
 
 
 @tool_parameters(_SUBAGENT_PARAMETERS)
@@ -163,14 +161,11 @@ class SubagentTool(Tool):
         if name == "generate_image":
             if config is None or not config.image_generation.enabled:
                 return False
-            provider_configs = getattr(self._manager, "image_generation_provider_configs", None)
+            loader = getattr(self._manager, "_image_generation_provider_configs", None)
+            provider_configs = loader() if callable(loader) else None
             if not provider_configs:
                 return False
             return config.image_generation.provider in provider_configs
-        # Dynamic MCP tools are intentionally not part of the static worker
-        # catalog until the shared connected-tool lifecycle is injected.
-        if name.startswith("mcp_"):
-            return False
         return True
 
     def _role_view(

@@ -23,43 +23,68 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
       - name: Collect scoped WebUI tests
-        run: >-
-          uv run python -m pytest --collect-only -q
-          tests/webui/test_model_settings_core_bridge.py
-          tests/webui/test_settings_api.py
-          tests/webui/test_settings_capabilities.py
-          tests/webui/test_settings_models.py
-          tests/webui/test_settings_routes.py
-          tests/webui/test_settings_services.py
-          tests/webui/test_settings_system.py
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run python -m pytest --collect-only -q \
+            tests/webui/test_model_settings_core_bridge.py \
+            tests/webui/test_settings_api.py \
+            tests/webui/test_settings_capabilities.py \
+            tests/webui/test_settings_models.py \
+            tests/webui/test_settings_routes.py \
+            tests/webui/test_settings_services.py \
+            tests/webui/test_settings_system.py 2>&1 | tee collect.txt
       - name: Run scoped WebUI tests
-        run: >-
-          uv run python -m pytest -q
-          tests/webui/test_model_settings_core_bridge.py
-          tests/webui/test_settings_api.py
-          tests/webui/test_settings_capabilities.py
-          tests/webui/test_settings_models.py
-          tests/webui/test_settings_routes.py
-          tests/webui/test_settings_services.py
-          tests/webui/test_settings_system.py
+        id: pytest
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run python -m pytest -q \
+            tests/webui/test_model_settings_core_bridge.py \
+            tests/webui/test_settings_api.py \
+            tests/webui/test_settings_capabilities.py \
+            tests/webui/test_settings_models.py \
+            tests/webui/test_settings_routes.py \
+            tests/webui/test_settings_services.py \
+            tests/webui/test_settings_system.py 2>&1 | tee pytest.txt
       - name: Ruff changed Python files
-        run: >-
-          uv run ruff check
-          nanobot/webui/gateway_services.py
-          nanobot/webui/settings_api.py
-          nanobot/webui/settings_capabilities.py
-          nanobot/webui/settings_models.py
-          nanobot/webui/settings_services.py
-          tests/webui/test_model_settings_core_bridge.py
-          tests/webui/test_settings_api.py
-          tests/webui/test_settings_capabilities.py
-          tests/webui/test_settings_models.py
-          tests/webui/test_settings_routes.py
+        id: ruff
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run ruff check \
+            nanobot/webui/gateway_services.py \
+            nanobot/webui/settings_api.py \
+            nanobot/webui/settings_capabilities.py \
+            nanobot/webui/settings_models.py \
+            nanobot/webui/settings_services.py \
+            tests/webui/test_model_settings_core_bridge.py \
+            tests/webui/test_settings_api.py \
+            tests/webui/test_settings_capabilities.py \
+            tests/webui/test_settings_models.py \
+            tests/webui/test_settings_routes.py 2>&1 | tee ruff.txt
       - name: Basedpyright changed WebUI modules
-        run: >-
-          uv run basedpyright
-          nanobot/webui/gateway_services.py
-          nanobot/webui/settings_api.py
-          nanobot/webui/settings_capabilities.py
-          nanobot/webui/settings_models.py
-          nanobot/webui/settings_services.py
+        id: pyright
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run basedpyright \
+            nanobot/webui/gateway_services.py \
+            nanobot/webui/settings_api.py \
+            nanobot/webui/settings_capabilities.py \
+            nanobot/webui/settings_models.py \
+            nanobot/webui/settings_services.py 2>&1 | tee pyright.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webui-model-domain-check-output
+          path: |
+            collect.txt
+            pytest.txt
+            ruff.txt
+            pyright.txt
+      - name: Fail on verification errors
+        if: steps.pytest.outcome == 'failure' || steps.ruff.outcome == 'failure' || steps.pyright.outcome == 'failure'
+        run: exit 1

@@ -6,20 +6,25 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Apply scoped cleanup
+        run: python .github/scripts/cli-model-domain-cleanup-b.py
       - name: Scoped legacy sweep
         run: |
           echo '=== runtime sources ==='
-          grep -RIn -E 'ModelPresetConfig|model_presets|model_preset|modelPreset|resolve_preset|resolve_default_preset|load_model_preset_catalog|normalize_preset_name' nanobot/cli nanobot/command nanobot/agent/model_presets.py nanobot/agent/tools/self.py nanobot/agent/tools/runtime_control.py || true
-          echo '=== direct tests ==='
-          grep -RIn -E 'ModelPresetConfig|model_presets|model_preset|modelPreset|resolve_preset|resolve_default_preset|load_model_preset_catalog|normalize_preset_name' tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py tests/config/test_model_presets.py || true
+          if grep -RIn -E 'ModelPresetConfig|model_presets|model_preset|modelPreset|resolve_preset|resolve_default_preset|load_model_preset_catalog|normalize_preset_name' nanobot/cli nanobot/command nanobot/agent/tools/self.py nanobot/agent/tools/runtime_control.py; then
+            echo 'legacy runtime references remain' >&2
+            exit 1
+          fi
+          test ! -e nanobot/agent/model_presets.py
+          test ! -e tests/config/test_model_presets.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -29,4 +34,19 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
       - name: Target collection
-        run: uv run python -m pytest --collect-only -q tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py tests/config/test_model_presets.py
+        run: uv run python -m pytest --collect-only -q tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
+      - name: Target tests
+        run: uv run python -m pytest -q tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
+      - name: Ruff
+        run: uv run ruff check nanobot/cli/gateway_runtime.py nanobot/cli/onboard.py nanobot/cli/provider.py nanobot/cli/runtime_config.py nanobot/cli/tui_launcher.py nanobot/command/builtin.py tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
+      - name: Scoped basedpyright
+        run: uv run basedpyright nanobot/cli/gateway_runtime.py nanobot/cli/onboard.py nanobot/cli/provider.py nanobot/cli/runtime_config.py nanobot/cli/tui_launcher.py nanobot/command/builtin.py tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py
+      - name: Commit verified cleanup
+        run: |
+          rm .github/scripts/cli-model-domain-cleanup-b.py
+          rm .github/workflows/cli-model-domain-cleanup-b.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor(cli): migrate model selectors to model ids'
+          git push origin HEAD:cleanup/cli-model-domain

@@ -24,18 +24,20 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
       - name: Install dependencies
         run: uv sync --all-extras --dev
+      - name: Apply integration cleanup
+        run: uv run python .github/scripts/apply-model-domain-cleanup.py
       - name: Ruff autofix mechanical integration issues
         run: uv run ruff check nanobot tests conftest.py --fix
-      - name: Commit Ruff fixes
+      - name: Commit cleanup
         run: |
           if git diff --quiet; then
-            echo "No Ruff fixes to commit"
+            echo "No cleanup changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add nanobot tests conftest.py
-          git commit -m "style: fix integrated model-domain lint"
+          git add nanobot tests
+          git commit -m "refactor(models): cleanup integrated canonical model domain"
           git push origin HEAD:refactor/model-domain-v2
       - name: Ruff verification
         run: uv run ruff check nanobot tests conftest.py

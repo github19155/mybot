@@ -89,6 +89,11 @@ TOOL_MODULES = {**_EXEC_TOOLS, **_IMAGE_TOOLS, **_PROGRESS_TOOLS}
 ALL_SUBAGENT_TOOL_NAMES = frozenset(TOOL_MODULES)
 
 
+def is_subagent_tool_name(name: str) -> bool:
+    """Return whether a static or configured dynamic tool name may be delegated."""
+    return name in ALL_SUBAGENT_TOOL_NAMES or name.startswith("mcp_")
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedSubagentRole:
     """Effective immutable role snapshot used by one child launch."""
@@ -131,7 +136,7 @@ class ResolvedSubagentRole:
 
 def _validate_role_tools(role: "SubagentRoleConfig") -> None:
     requested = set(role.tools or ())
-    unknown = requested - ALL_SUBAGENT_TOOL_NAMES
+    unknown = {name for name in requested if not is_subagent_tool_name(name)}
     if "subagent" in requested:
         unknown.add("subagent")
     if unknown:

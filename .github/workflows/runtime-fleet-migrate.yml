@@ -29,7 +29,6 @@ jobs:
         run: |
           python ../staging/.ci/runtime_fleet/patch3.py
           git diff --check
-          git status --short
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -39,22 +38,12 @@ jobs:
       - name: Install dependencies
         working-directory: repo
         run: uv sync --all-extras --dev
-      - name: Lint changed runtime files
-        id: lint
-        continue-on-error: true
+      - name: Validate cleanup
         working-directory: repo
         run: |
           files=$(git diff --name-only --diff-filter=ACM | grep -E '\.py$' || true)
           if [ -n "$files" ]; then uv run ruff check $files; fi
-      - name: Compile runtime modules
-        id: compile
-        continue-on-error: true
-        working-directory: repo
-        run: |
-          uv run python -m compileall -q \
-            nanobot/agent/loop.py \
-            nanobot/agent/tools/self.py \
-            nanobot/nanobot.py
+          uv run python -m compileall -q nanobot/agent/loop.py nanobot/agent/tools/self.py nanobot/nanobot.py
       - name: Commit cleanup
         working-directory: repo
         run: |
@@ -63,6 +52,3 @@ jobs:
           git add -A
           git commit -m 'refactor(runtime): remove legacy model selectors'
           git push origin HEAD:refactor/model-runtime-fleet-v2
-      - name: Report validation
-        if: always()
-        run: echo "lint=${{ steps.lint.outcome }} compile=${{ steps.compile.outcome }}"

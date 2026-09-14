@@ -125,7 +125,6 @@ async def test_no_role_and_no_override_remains_general(tmp_path) -> None:
             self.workspace = tmp_path
             self.bus = MessageBus()
             self.spawn = AsyncMock(return_value="Subagent queued (id: task-1).")
-            self.run_inline = AsyncMock(return_value="done")
 
     manager = Manager()
     tool = SubagentTool(manager)  # type: ignore[arg-type]
@@ -220,9 +219,7 @@ def test_work_agent_snapshot_does_not_inherit_general_runtime_tuning() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_work_agent_reuses_manager_inline_lifecycle_and_keeps_prefix(
-    tmp_path, monkeypatch
-) -> None:
+async def test_run_work_agent_always_uses_manager_spawn_lifecycle(tmp_path, monkeypatch) -> None:
     manager = _manager(tmp_path)
     role_definition = build_work_role_definition(
         _general_payload(manager),
@@ -236,43 +233,9 @@ async def test_run_work_agent_reuses_manager_inline_lifecycle_and_keeps_prefix(
     try:
         result = await run_work_agent(
             manager,
-            task="analyze",
+            task="background analyze",
             runtime=runtime,
             role_definition=role_definition,
-            wait=True,
-            origin_channel="test",
-            origin_chat_id="chat-1",
-            session_key="test:chat-1",
-            allowed_tools={"read_file", "subagent"},
-        )
-    finally:
-        await manager.close()
-
-    assert result == "done"
-    run.assert_awaited_once()
-    status = run.await_args.args[4]
-    child_runtime = run.await_args.args[5]
-    assert status.role == "work"
-    assert status.role_snapshot is role_definition
-    assert status.model == "test/model"
-    assert child_runtime is runtime
-    assert child_runtime.system_prompt_prefix == "MODEL PREFIX"
-    assert run.await_args.kwargs["role_definition"] is role_definition
-
-
-@pytest.mark.asyncio
-async def test_work_agent_background_uses_manager_spawn_lifecycle(tmp_path, monkeypatch) -> None:
-    manager = _manager(tmp_path)
-    role_definition = build_work_role_definition(_general_payload(manager), tools=["read_file"])
-    run = AsyncMock(return_value="done")
-    monkeypatch.setattr(manager, "_run_subagent", run)
-    try:
-        result = await run_work_agent(
-            manager,
-            task="background analyze",
-            runtime=_runtime(),
-            role_definition=role_definition,
-            wait=False,
             origin_channel="test",
             origin_chat_id="chat-1",
             session_key="test:chat-1",
@@ -285,13 +248,17 @@ async def test_work_agent_background_uses_manager_spawn_lifecycle(tmp_path, monk
     assert "Subagent" in result
     run.assert_awaited_once()
     status = run.await_args.args[4]
+    child_runtime = run.await_args.args[5]
     assert status.role == "work"
     assert status.role_snapshot is role_definition
+    assert status.model == "test/model"
+    assert child_runtime is runtime
+    assert child_runtime.system_prompt_prefix == "MODEL PREFIX"
     assert run.await_args.kwargs["role_definition"] is role_definition
 
 
 @pytest.mark.asyncio
-async def test_inline_work_agents_can_launch_concurrently(tmp_path, monkeypatch) -> None:
+async def test_work_agents_dispatch_concurrently_without_inline_path(tmp_path, monkeypatch) -> None:
     manager = _manager(tmp_path, max_concurrent_subagents=2)
     role_definition = build_work_role_definition(_general_payload(manager), tools=["read_file"])
     both_started = asyncio.Event()
@@ -308,27 +275,31 @@ async def test_inline_work_agents_can_launch_concurrently(tmp_path, monkeypatch)
 
     monkeypatch.setattr(manager, "_run_subagent", run)
 
-    async def launch(task: str) -> str:
-        return await run_work_agent(
-            manager,
-            task=task,
-            runtime=_runtime(),
-            role_definition=role_definition,
-            wait=True,
-            origin_channel="test",
-            origin_chat_id="chat-1",
-            session_key="test:chat-1",
-            allowed_tools={"read_file"},
-        )
-
-    first = asyncio.create_task(launch("first"))
-    second = asyncio.create_task(launch("second"))
+    first = await run_work_agent(
+        manager,
+        task="first",
+        runtime=_runtime(),
+        role_definition=role_definition,
+        origin_channel="test",
+        origin_chat_id="chat-1",
+        session_key="test:chat-1",
+        allowed_tools={"read_file"},
+    )
+    second = await run_work_agent(
+        manager,
+        task="second",
+        runtime=_runtime(),
+        role_definition=role_definition,
+        origin_channel="test",
+        origin_chat_id="chat-1",
+        session_key="test:chat-1",
+        allowed_tools={"read_file"},
+    )
     try:
+        assert "id:" in first
+        assert "id:" in second
         await asyncio.wait_for(both_started.wait(), timeout=1.0)
         assert started == 2
-        release.set()
-        assert await asyncio.gather(first, second) == ["done", "done"]
     finally:
         release.set()
-        await asyncio.gather(first, second, return_exceptions=True)
         await manager.close()

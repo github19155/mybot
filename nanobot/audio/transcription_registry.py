@@ -1,8 +1,8 @@
-"""Registry for speech-to-text providers.
+"""Registry for speech-to-text provider adapters.
 
 Provider-specific HTTP adapters live in ``nanobot.providers.transcription``.
-This module is the app-level source of truth for provider names, aliases,
-default models, and adapter class paths.
+Canonical provider and model identity come from ``Config.models``; this module
+only maps concrete provider IDs to transcription adapter implementations.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ class TranscriptionProviderAdapter(Protocol):
 @dataclass(frozen=True)
 class TranscriptionProviderSpec:
     name: str
-    default_model: str
     adapter: str
     aliases: tuple[str, ...] = ()
 
@@ -45,38 +44,31 @@ class TranscriptionProviderSpec:
 TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
     TranscriptionProviderSpec(
         name="groq",
-        default_model="whisper-large-v3",
         adapter="nanobot.providers.transcription:GroqTranscriptionProvider",
     ),
     TranscriptionProviderSpec(
         name="openai",
-        default_model="whisper-1",
         adapter="nanobot.providers.transcription:OpenAITranscriptionProvider",
     ),
     TranscriptionProviderSpec(
         name="openrouter",
-        default_model="openai/whisper-1",
         adapter="nanobot.providers.transcription:OpenRouterTranscriptionProvider",
     ),
     TranscriptionProviderSpec(
         name="xiaomi_mimo",
-        default_model="mimo-v2.5-asr",
         adapter="nanobot.providers.transcription:XiaomiMiMoTranscriptionProvider",
         aliases=("mimo", "xiaomi"),
     ),
     TranscriptionProviderSpec(
         name="stepfun",
-        default_model="stepaudio-2.5-asr",
         adapter="nanobot.providers.transcription:StepFunTranscriptionProvider",
     ),
     TranscriptionProviderSpec(
         name="assemblyai",
-        default_model="universal-3-pro,universal-2",
         adapter="nanobot.providers.transcription:AssemblyAITranscriptionProvider",
     ),
     TranscriptionProviderSpec(
         name="siliconflow",
-        default_model="FunAudioLLM/SenseVoiceSmall",
         adapter="nanobot.providers.transcription:OpenAITranscriptionProvider",
         aliases=("silicon",),
     ),
@@ -95,6 +87,11 @@ def get_transcription_provider(name: str) -> TranscriptionProviderSpec | None:
 
 
 def resolve_transcription_provider(value: Any) -> TranscriptionProviderSpec | None:
+    """Resolve registry aliases for adapter-management callers only.
+
+    Canonical transcription routing intentionally does not use aliases: it
+    looks up ``ModelConfig.provider`` with ``get_transcription_provider``.
+    """
     if not isinstance(value, str):
         return None
     name = value.strip().lower()

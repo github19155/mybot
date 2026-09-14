@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from nanobot.agent.dream import DreamTriggerController, build_dream_tools
+from nanobot.agent.dream_runtime import resolve_dream_runtime
 from nanobot.llm_usage.context import llm_usage_source
 
 if TYPE_CHECKING:
@@ -26,9 +27,8 @@ def _completed(response: object | None) -> bool:
 async def run_dream_worker(agent: "AgentLoop") -> None:
     """Run Dream as one lowest-priority background worker.
 
-    The worker continuously reloads Dream policy through ModelManagement, so
-    Main can tune ordinary runtime parameters without restarting the gateway.
-    Dream failures are isolated and never stop foreground operation.
+    The worker continuously reloads Dream policy, while Dream's own runtime
+    domain owns model selection. Failures remain isolated from foreground work.
     """
     if agent.model_management is None or agent.permissions is None:
         logger.info("Dream disabled: runtime management is unavailable")
@@ -44,8 +44,11 @@ async def run_dream_worker(agent: "AgentLoop") -> None:
                 controller = DreamTriggerController(agent.workspace, dream_config, agent.permissions)
                 batch = controller.prepare(agent.context.memory)
                 if batch is not None:
-                    runtime = await agent.model_management.resolve_dream_runtime(
+                    runtime = await resolve_dream_runtime(
                         batch.run.workload,
+                        config=dream_config,
+                        runtime_resolver=agent.runtime_resolver,
+                        fleet_recommend=agent.model_management.fleet_recommend,
                     )
                     with llm_usage_source("dream"):
                         response = await agent.process_direct(

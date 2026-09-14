@@ -229,19 +229,22 @@ async def test_subagent_runtime_precedence_uses_one_frozen_role(
         model_management=management,
         runtime_resolver=resolver,
     )
+    manager._announce_result = AsyncMock()
     manager.runner.run = AsyncMock(return_value=SimpleNamespace(
         stop_reason="completed", final_content="done", error=None, tool_events=[],
     ))
 
-    result = await manager.run_inline(
+    dispatch = await manager.spawn(
         "runtime precedence",
         runtime=parent,
         role="coder",
         model=run_model,
         model_preset=run_preset,
     )
+    tasks = list(manager._running_tasks.values())
+    await asyncio.gather(*tasks, return_exceptions=True)
 
-    assert result == "done"
+    assert "id:" in dispatch
     assert role_resolver.call_count == 1
     assert resolver.resolve_selection.call_count == calls
     if calls:
@@ -250,7 +253,7 @@ async def test_subagent_runtime_precedence_uses_one_frozen_role(
             model=expected_model,
             model_preset=expected_preset,
         )
-
+    await manager.close()
 
 
 @pytest.mark.asyncio

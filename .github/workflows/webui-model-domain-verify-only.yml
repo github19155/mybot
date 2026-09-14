@@ -1,0 +1,62 @@
+name: WebUI Model Domain Verify Only
+
+on:
+  push:
+    branches:
+      - cleanup/webui-model-domain
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libolm-dev build-essential
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+      - name: Collect scoped WebUI tests
+        run: >-
+          uv run python -m pytest --collect-only -q
+          tests/webui/test_model_settings_core_bridge.py
+          tests/webui/test_settings_api.py
+          tests/webui/test_settings_capabilities.py
+          tests/webui/test_settings_models.py
+          tests/webui/test_settings_routes.py
+          tests/webui/test_settings_services.py
+          tests/webui/test_settings_system.py
+      - name: Run scoped WebUI tests
+        run: >-
+          uv run python -m pytest -q
+          tests/webui/test_model_settings_core_bridge.py
+          tests/webui/test_settings_api.py
+          tests/webui/test_settings_capabilities.py
+          tests/webui/test_settings_models.py
+          tests/webui/test_settings_routes.py
+          tests/webui/test_settings_services.py
+          tests/webui/test_settings_system.py
+      - name: Ruff scoped changes
+        run: >-
+          uv run ruff check
+          nanobot/webui/gateway_services.py
+          nanobot/webui/settings_api.py
+          nanobot/webui/settings_capabilities.py
+          nanobot/webui/settings_models.py
+          nanobot/webui/settings_services.py
+          tests/webui/test_model_settings_core_bridge.py
+          tests/webui/test_settings_api.py
+          tests/webui/test_settings_capabilities.py
+          tests/webui/test_settings_models.py
+          tests/webui/test_settings_routes.py
+      - name: Basedpyright scoped modules
+        run: >-
+          uv run basedpyright
+          nanobot/webui/gateway_services.py
+          nanobot/webui/settings_api.py
+          nanobot/webui/settings_capabilities.py
+          nanobot/webui/settings_models.py
+          nanobot/webui/settings_services.py

@@ -103,9 +103,7 @@ async def run_work_agent(
     manager: Any,
     *,
     role_definition: ResolvedSubagentRole,
-    wait: bool,
     **launch: Any,
 ) -> str:
-    """Run one WorkAgent through the manager's native ephemeral lifecycle."""
-    method = manager.run_inline_ephemeral if wait else manager.spawn_ephemeral
-    return await method(role_definition=role_definition, **launch)
+    """Dispatch one WorkAgent through the manager's native ephemeral lifecycle."""
+    return await manager.spawn_ephemeral(role_definition=role_definition, **launch)

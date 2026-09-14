@@ -19,23 +19,19 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Apply follow-up patch
         run: python .github/scripts/pr34-model-domain-followup.py
+      - name: Fix generated regression test literal
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/agent/test_onboard_logic.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('message = "\n".join(printed)', 'message = "\\n".join(printed)')
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Install dependencies
         run: uv sync --all-extras --dev
       - name: Scoped collection
-        run: |
-          set +e
-          uv run pytest --collect-only -q tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py tests/config/test_timezone.py tests/config/test_provider_config.py > .github/pr34-collect.txt 2>&1
-          status=$?
-          cat .github/pr34-collect.txt
-          if [ "$status" -ne 0 ]; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add .github/pr34-collect.txt
-            git commit -m 'chore: capture PR 34 collection failure [skip ci]'
-            git push origin HEAD:cleanup/cli-model-domain
-            exit "$status"
-          fi
-          rm .github/pr34-collect.txt
+        run: uv run pytest --collect-only -q tests/agent/test_onboard_logic.py tests/agent/tools/test_self_tool.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py tests/config/test_timezone.py tests/config/test_provider_config.py
       - name: Main scoped pytest
         run: uv run pytest -q tests/agent/test_onboard_logic.py tests/cli/test_tui_launcher.py tests/command/test_model_command.py tests/command/test_skill_command.py tests/config/test_timezone.py tests/config/test_provider_config.py
       - name: Self Tool scoped pytest
@@ -58,7 +54,7 @@ jobs:
           grep -q 'delete_model(config, model_id=model_id)' nanobot/cli/onboard.py
       - name: Commit verified follow-up
         run: |
-          rm -f .github/scripts/pr34-model-domain-followup.py .github/workflows/pr34-followup-verify.yml
+          rm -f .github/pr34-collect.txt .github/scripts/pr34-model-domain-followup.py .github/workflows/pr34-followup-verify.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A

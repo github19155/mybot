@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
+
+from nanobot.agent.dream import DreamTriggerController, parse_dream_result
 
 if TYPE_CHECKING:
     from nanobot.agent.model_runtime import ModelRuntimeResolver
@@ -13,6 +16,29 @@ if TYPE_CHECKING:
 _DREAM_MIN_CONTEXT_TOKENS = 16_000
 
 FleetRecommend = Callable[..., Awaitable[dict[str, object]]]
+
+
+class DreamRuntimeController(DreamTriggerController):
+    """Dream controller variant whose audit metadata uses canonical model identity."""
+
+    def store_result(
+        self,
+        content: str,
+        *,
+        run,
+        runtime: "LLMRuntime",
+    ) -> dict[str, object]:
+        result = parse_dream_result(content, run=run, permissions=self.permissions)
+        result["metadata"] = {
+            **cast(dict[str, object], result["metadata"]),
+            "model_id": runtime.model_id,
+            "provider": runtime.provider.provider_name,
+        }
+        self.results_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.results_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n")
+        self.compact_results()
+        return result
 
 
 async def resolve_dream_runtime(

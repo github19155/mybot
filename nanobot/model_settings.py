@@ -1,9 +1,8 @@
-"""Core model/provider configuration rules shared by Agent and WebUI."""
+"""Canonical model/provider configuration rules shared by Agent and WebUI."""
 
 from __future__ import annotations
 
 import json
-import math
 import re
 import time
 from contextlib import suppress
@@ -11,20 +10,14 @@ from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 from nanobot.agent.subagent_roles import SUBAGENT_ROLES
-from nanobot.config.schema import (
-    Config,
-    ModelPresetConfig,
-    ProviderConfig,
-    SubagentRoleConfig,
-    SubagentRoleName,
-)
+from nanobot.config.schema import Config, ProviderConfig, SubagentRoleConfig, SubagentRoleName
+from nanobot.model_domain import ModelConfig, validate_model_id
 from nanobot.providers.image_generation import get_image_gen_provider
 from nanobot.providers.registry import PROVIDERS, create_dynamic_spec, find_by_name
 
 QueryParams = dict[str, list[str]]
 OAuthStatusReader = Callable[[Any], dict[str, Any]]
 
-_MODEL_CONFIGURATION_SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 _REDACTED_PROVIDER_SECRET = "••••••••"
 _PROVIDER_STRUCTURED_FIELDS = ("extra_headers", "extra_body", "extra_query")
 _PROVIDER_SECRET_KEYS = frozenset({
@@ -38,6 +31,7 @@ _PROVIDER_SECRET_KEY_SUFFIXES = (
 )
 _OAUTH_PROXY_PROVIDERS = {"openai_codex", "xai_grok"}
 _DEFAULT_REASONING_EFFORT_VALUES: tuple[str, ...] = ("", "low", "medium", "high")
+_MODEL_NESTED_FIELDS = frozenset({"capabilities", "pricing", "generation_defaults", "generationDefaults", "pools"})
 
 
 @dataclass(frozen=True)
@@ -49,6 +43,13 @@ class ModelSettingsError(ValueError):
 
     def __str__(self) -> str:
         return self.message
+
+
+@dataclass(frozen=True)
+class ModelInUseError(ModelSettingsError):
+    """Deletion was blocked because consumers still reference the model."""
+
+    usages: tuple[str, ...] = ()
 
 
 def _query_first(query: QueryParams, key: str) -> str | None:
@@ -63,13 +64,6 @@ def _query_first_alias(query: QueryParams, snake: str, camel: str) -> str | None
 
 def _query_has_alias(query: QueryParams, snake: str, camel: str) -> bool:
     return snake in query or camel in query
-
-
-def _parse_bool(value: str, field: str) -> bool:
-    normalized = value.strip().lower()
-    if normalized not in {"1", "0", "true", "false", "yes", "no"}:
-        raise ModelSettingsError(f"{field} must be boolean")
-    return normalized in {"1", "true", "yes"}
 
 
 def _provider_json_setting(query: QueryParams, snake: str, camel: str) -> dict[str, Any] | None:
@@ -117,16 +111,34 @@ def _restore_redacted_provider_secret_values(submitted: Any, current: Any, *, se
     return submitted
 
 
+def _parse_optional_positive_int(value: str | None, field: str) -> int | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise ModelSettingsError(f"{field} must be an integer") from None
+    if parsed <= 0:
+        raise ModelSettingsError(f"{field} must be greater than zero")
+    return parsed
+
+
 def _provider_config_updates(query: QueryParams) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     for snake, camel in (
         ("api_key", "apiKey"), ("api_base", "apiBase"), ("api_type", "apiType"),
         ("proxy", "proxy"), ("thinking_style", "thinkingStyle"), ("region", "region"),
         ("profile", "profile"), ("display_name", "displayName"),
+        ("rate_limit_scope", "rateLimitScope"),
     ):
         if _query_has_alias(query, snake, camel):
             value = (_query_first_alias(query, snake, camel) or "").strip()
             updates[snake] = value or ("auto" if snake == "api_type" else None)
+    if _query_has_alias(query, "max_concurrent_requests", "maxConcurrentRequests"):
+        updates["max_concurrent_requests"] = _parse_optional_positive_int(
+            _query_first_alias(query, "max_concurrent_requests", "maxConcurrentRequests"),
+            "max_concurrent_requests",
+        )
     for snake, camel in (
         ("extra_headers", "extraHeaders"),
         ("extra_body", "extraBody"),
@@ -137,9 +149,23 @@ def _provider_config_updates(query: QueryParams) -> dict[str, Any]:
     return updates
 
 
+def _validation_message(exc: ValueError) -> str:
+    errors_callback = getattr(exc, "errors", None)
+    errors: list[dict[str, Any]] = cast(Any, errors_callback)() if callable(errors_callback) else []
+    if not errors:
+        return str(exc)
+    parts: list[str] = []
+    for error in errors:
+        field = ".".join(str(part) for part in error.get("loc", ()))
+        message = str(error.get("msg", "invalid value"))
+        parts.append(f"{field}: {message}" if field else message)
+    return "; ".join(parts)
+
+
 def _validated_provider_config(provider_config: ProviderConfig | None, updates: dict[str, Any]) -> ProviderConfig:
     config_type = type(provider_config) if provider_config is not None else ProviderConfig
     values = provider_config.model_dump(mode="python") if provider_config is not None else {}
+    updates = dict(updates)
     if provider_config is not None:
         for field in _PROVIDER_STRUCTURED_FIELDS:
             if field in updates:
@@ -150,14 +176,7 @@ def _validated_provider_config(provider_config: ProviderConfig | None, updates: 
     try:
         return config_type.model_validate(values)
     except ValueError as exc:
-        errors_callback = getattr(exc, "errors", None)
-        errors: list[dict[str, Any]] = cast(Any, errors_callback)() if callable(errors_callback) else []
-        if errors:
-            error = errors[0]
-            field = ".".join(str(part) for part in error.get("loc", ()))
-            message = str(error.get("msg", "invalid value"))
-            raise ModelSettingsError(f"{field}: {message}" if field else message) from exc
-        raise ModelSettingsError(str(exc)) from exc
+        raise ModelSettingsError(_validation_message(exc)) from exc
 
 
 def oauth_provider_status(spec: Any) -> dict[str, Any]:
@@ -276,265 +295,28 @@ def _provider_advanced_field_names(name: str, spec: Any) -> list[str]:
     return fields
 
 
-def _parse_positive_int(value: str | None, field: str) -> int | None:
-    if value is None:
-        return None
+def _provider_id(value: str) -> str:
     try:
-        parsed = int(value)
-    except ValueError:
-        raise ModelSettingsError(f"{field} must be an integer") from None
-    if parsed <= 0:
-        raise ModelSettingsError(f"{field} must be greater than zero")
-    return parsed
-
-
-def _parse_temperature(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        parsed = float(value)
-    except ValueError:
-        raise ModelSettingsError("temperature must be a number") from None
-    if not math.isfinite(parsed) or parsed < 0 or parsed > 2:
-        raise ModelSettingsError("temperature must be between 0 and 2")
-    return parsed
-
-
-def _model_configuration_slug(label: str) -> str:
-    normalized = _MODEL_CONFIGURATION_SLUG_RE.sub("-", label.strip().lower()).strip("-_")
-    if not normalized:
-        raise ModelSettingsError("configuration name is required")
-    if normalized == "default":
-        raise ModelSettingsError("configuration name is reserved")
-    return normalized[:48].rstrip("-_") if len(normalized) > 48 else normalized
-
-
-def _model_configuration_name(value: str) -> str:
-    name = value.strip()
-    if not name:
-        raise ModelSettingsError("configuration name is required")
-    if name.casefold() == "default":
-        raise ModelSettingsError("configuration name is reserved")
-    if len(name) > 48:
-        raise ModelSettingsError("configuration name must be 48 characters or fewer")
-    if not name.isprintable():
-        raise ModelSettingsError("configuration name contains unsupported characters")
-    return name
-
-
-def _model_configuration_name_exists(config: Config, name: str, *, exclude: str | None = None) -> bool:
-    normalized = name.casefold()
-    return any(existing != exclude and existing.casefold() == normalized for existing in config.model_presets)
-
-
-def _rename_model_configuration(config: Config, old_name: str, new_name: str) -> bool:
-    if old_name == new_name:
-        return False
-    if _model_configuration_name_exists(config, new_name, exclude=old_name):
-        raise ModelSettingsError("configuration already exists", status=409)
-    config.model_presets = {(new_name if name == old_name else name): preset for name, preset in config.model_presets.items()}
-    defaults = config.agents.defaults
-    if defaults.model_preset == old_name:
-        defaults.model_preset = new_name
-    if defaults.dream.model_override == old_name:
-        defaults.dream.model_override = new_name
-    for binding in config.subagent_roles.values():
-        if binding.model_preset == old_name:
-            binding.model_preset = new_name
-    return True
-
-
-def _validate_configured_provider(config: Config, provider: str, oauth_status: OAuthStatusReader) -> None:
-    if provider == "auto":
-        return
-    resolved = resolve_provider(config, provider)
-    if resolved is None:
-        raise ModelSettingsError("unknown provider")
-    spec, _, provider_config = resolved
-    if spec.is_transcription_only:
-        raise ModelSettingsError("provider does not support chat models")
-    if not provider_configured(spec, provider_config, oauth_status):
-        raise ModelSettingsError("provider is not configured")
-
-
-def create_model_configuration(config: Config, query: QueryParams, *, oauth_status: OAuthStatusReader = oauth_provider_status) -> str:
-    raw_name = _query_first(query, "name")
-    legacy_label = _query_first_alias(query, "label", "displayName")
-    model = (_query_first(query, "model") or "").strip()
-    provider = (_query_first(query, "provider") or "").strip()
-    if not model:
-        raise ModelSettingsError("model is required")
-    if not provider:
-        raise ModelSettingsError("provider is required")
-    name = _model_configuration_name(raw_name) if raw_name is not None else _model_configuration_slug(legacy_label or "")
-    if _model_configuration_name_exists(config, name):
-        raise ModelSettingsError("configuration already exists", status=409)
-    _validate_configured_provider(config, provider, oauth_status)
-    activate_as_primary = not config.model_presets
-    base = config.resolve_preset()
-    max_tokens = _parse_positive_int(_query_first_alias(query, "max_tokens", "maxTokens"), "max_tokens")
-    context_window_tokens = _parse_positive_int(_query_first_alias(query, "context_window_tokens", "contextWindowTokens"), "context_window_tokens")
-    temperature = _parse_temperature(_query_first(query, "temperature"))
-    reasoning_effort = base.reasoning_effort
-    supports_vision = base.supports_vision
-    if _query_has_alias(query, "supports_vision", "supportsVision"):
-        supports_vision = _parse_bool(_query_first_alias(query, "supports_vision", "supportsVision") or "", "supports_vision")
-    if "reasoning_effort" in query or "reasoningEffort" in query:
-        reasoning_effort = (_query_first_alias(query, "reasoning_effort", "reasoningEffort") or "").strip() or None
-    config.model_presets[name] = ModelPresetConfig(
-        model=model,
-        provider=provider,
-        max_tokens=max_tokens if max_tokens is not None else base.max_tokens,
-        context_window_tokens=context_window_tokens if context_window_tokens is not None else base.context_window_tokens,
-        temperature=temperature if temperature is not None else base.temperature,
-        reasoning_effort=reasoning_effort,
-        supports_vision=supports_vision,
-    )
-    if activate_as_primary:
-        config.agents.defaults.model_preset = name
-    return name
-
-
-def update_model_configuration(config: Config, query: QueryParams, *, oauth_status: OAuthStatusReader = oauth_provider_status) -> bool:
-    name = (_query_first(query, "name") or "").strip()
-    if not name or name == "default":
-        raise ModelSettingsError("model configuration is required")
-    preset = config.model_presets.get(name)
-    if preset is None:
-        raise ModelSettingsError("unknown model configuration")
-    changed = False
-    new_name_value = _query_first_alias(query, "new_name", "newName")
-    if new_name_value is not None:
-        new_name = _model_configuration_name(new_name_value)
-        changed = _rename_model_configuration(config, name, new_name) or changed
-        name = new_name
-        preset = config.model_presets[name]
-    model = _query_first(query, "model")
-    if model is not None:
-        model = model.strip()
-        if not model:
-            raise ModelSettingsError("model is required")
-        if preset.model != model:
-            preset.model = model
-            changed = True
-    provider = _query_first(query, "provider")
-    if provider is not None:
-        provider = provider.strip()
-        if not provider:
-            raise ModelSettingsError("provider is required")
-        _validate_configured_provider(config, provider, oauth_status)
-        if preset.provider != provider:
-            preset.provider = provider
-            changed = True
-    context_window_tokens = _parse_positive_int(_query_first_alias(query, "context_window_tokens", "contextWindowTokens"), "context_window_tokens")
-    if context_window_tokens is not None and preset.context_window_tokens != context_window_tokens:
-        preset.context_window_tokens = context_window_tokens
-        changed = True
-    max_tokens = _parse_positive_int(_query_first_alias(query, "max_tokens", "maxTokens"), "max_tokens")
-    if max_tokens is not None and preset.max_tokens != max_tokens:
-        preset.max_tokens = max_tokens
-        changed = True
-    temperature = _parse_temperature(_query_first(query, "temperature"))
-    if temperature is not None and preset.temperature != temperature:
-        preset.temperature = temperature
-        changed = True
-    if _query_has_alias(query, "supports_vision", "supportsVision"):
-        supports_vision = _parse_bool(_query_first_alias(query, "supports_vision", "supportsVision") or "", "supports_vision")
-        if preset.supports_vision != supports_vision:
-            preset.supports_vision = supports_vision
-            changed = True
-    if "reasoning_effort" in query or "reasoningEffort" in query:
-        reasoning_effort = (_query_first_alias(query, "reasoning_effort", "reasoningEffort") or "").strip() or None
-        if preset.reasoning_effort != reasoning_effort:
-            preset.reasoning_effort = reasoning_effort
-            changed = True
-    return changed
-
-
-def delete_model_configuration(config: Config, query: QueryParams) -> None:
-    name = (_query_first(query, "name") or "").strip()
-    if not name or name == "default":
-        raise ModelSettingsError("model configuration is required")
-    if name not in config.model_presets:
-        raise ModelSettingsError("unknown model configuration")
-    bound_roles = [role for role, binding in config.subagent_roles.items() if binding.model_preset == name]
-    if bound_roles:
-        raise ModelSettingsError("Rebind or clear these subagent roles before deleting the preset: " + ", ".join(bound_roles), status=409)
-    defaults = config.agents.defaults
-    if defaults.model_preset == name:
-        raise ModelSettingsError("select another model preset before deleting it", status=409)
-    if config.tools.image_analysis.model_preset == name:
-        raise ModelSettingsError("clear the image analysis model preset before deleting it", status=409)
-    del config.model_presets[name]
-
-
-def update_subagent_roles(config: Config, query: QueryParams) -> None:
-    raw = _query_first(query, "bindings")
-    try:
-        bindings = json.loads(raw) if raw is not None else None
-    except (TypeError, json.JSONDecodeError):
-        raise ModelSettingsError("bindings must be an object of role names to presets or null") from None
-    if not isinstance(bindings, dict):
-        raise ModelSettingsError("bindings must be an object of role names to presets or null")
-    updates: dict[SubagentRoleName, SubagentRoleConfig] = {}
-    for name, preset in cast(dict[str, str | None], bindings).items():
-        if name not in SUBAGENT_ROLES:
-            raise ModelSettingsError("unknown subagent role")
-        if preset is not None and preset != "default" and preset not in config.model_presets:
-            raise ModelSettingsError("unknown model preset in role bindings")
-        current = config.subagent_roles.get(name, SubagentRoleConfig())
-        values = current.model_dump()
-        values["model_preset"] = preset
-        if preset is not None:
-            values["model"] = None
-        updates[cast(SubagentRoleName, name)] = SubagentRoleConfig.model_validate(values)
-    config.subagent_roles.update(updates)
-
-
-def _custom_provider_key(config: Config, display_name: str) -> str:
-    slug = _MODEL_CONFIGURATION_SLUG_RE.sub("-", display_name.strip().lower()).strip("-_")
-    base = f"custom-{slug or 'provider'}"
-    if len(base) > 56:
-        base = base[:56].rstrip("-_")
-    existing = {name.replace("_", "-").lower() for name, _ in _dynamic_provider_items(config)}
-    candidate = base
-    suffix = 2
-    while candidate.replace("_", "-").lower() in existing or find_by_name(candidate):
-        candidate = f"{base}-{suffix}"
-        suffix += 1
-    return candidate
-
-
-def _provider_display_name_exists(config: Config, display_name: str, *, exclude_key: str | None = None) -> bool:
-    normalized = display_name.strip().casefold()
-    if any(spec.label.strip().casefold() == normalized for spec in PROVIDERS):
-        return True
-    for provider_key, provider_config in _dynamic_provider_items(config):
-        if provider_key == exclude_key:
-            continue
-        label = provider_config.display_name or provider_key.replace("-", " ").replace("_", " ").title()
-        if label.strip().casefold() == normalized:
-            return True
-    return False
+        return validate_model_id(value.strip())
+    except ValueError as exc:
+        raise ModelSettingsError(str(exc)) from exc
 
 
 def create_provider_settings(config: Config, query: QueryParams) -> str:
-    display_name = (_query_first_alias(query, "name", "displayName") or "").strip()
-    if not display_name:
-        raise ModelSettingsError("provider name is required")
-    if len(display_name) > 80:
-        raise ModelSettingsError("provider name must be 80 characters or fewer")
+    provider_key = _provider_id(_query_first(query, "provider") or "")
+    if resolve_provider(config, provider_key) is not None:
+        raise ModelSettingsError("provider already exists", status=409)
     updates = _provider_config_updates(query)
-    allowed = {"api_key", "api_base", "proxy", "extra_headers", "extra_body", "extra_query", "thinking_style", "display_name"}
+    allowed = {
+        "api_key", "api_base", "proxy", "extra_headers", "extra_body", "extra_query",
+        "thinking_style", "display_name", "max_concurrent_requests", "rate_limit_scope",
+    }
     unsupported = set(updates) - allowed
     if unsupported:
         raise ModelSettingsError(f"{sorted(unsupported)[0]} is not supported for a custom provider")
     if not str(updates.get("api_base") or ""):
         raise ModelSettingsError("API base is required")
-    if _provider_display_name_exists(config, display_name):
-        raise ModelSettingsError("provider already exists", status=409)
-    provider_key = _custom_provider_key(config, display_name)
-    updates["display_name"] = display_name
+    updates.setdefault("display_name", provider_key)
     updates["api_type"] = "auto"
     setattr(config.providers, provider_key, _validated_provider_config(None, updates))
     return provider_key
@@ -551,27 +333,20 @@ def update_provider_settings(config: Config, query: QueryParams) -> tuple[bool, 
     updates = _provider_config_updates(query)
     if not spec.is_oauth and spec.name != "openai":
         updates.pop("api_type", None)
+    common = {"max_concurrent_requests", "rate_limit_scope"}
     if spec.is_oauth:
         if spec.name not in _OAUTH_PROXY_PROVIDERS:
             raise ModelSettingsError("unknown provider")
-        unsupported = set(updates) - {"proxy", "extra_body"}
+        unsupported = set(updates) - {"proxy", "extra_body", *common}
         if unsupported:
-            raise ModelSettingsError("OAuth provider only supports proxy and extra_body settings")
+            raise ModelSettingsError("OAuth provider only supports proxy, extra_body, concurrency, and rate-limit settings")
     else:
-        allowed = {"api_key", "api_base", *_provider_advanced_field_names(provider_key, spec)}
+        allowed = {"api_key", "api_base", *_provider_advanced_field_names(provider_key, spec), *common}
         if find_by_name(provider_key) is None:
             allowed.add("display_name")
         unsupported = set(updates) - allowed
         if unsupported:
             raise ModelSettingsError(f"{sorted(unsupported)[0]} is not supported for this provider")
-    if "display_name" in updates:
-        display_name = str(updates["display_name"] or "")
-        if not display_name:
-            raise ModelSettingsError("provider name is required")
-        if len(display_name) > 80:
-            raise ModelSettingsError("provider name must be 80 characters or fewer")
-        if _provider_display_name_exists(config, display_name, exclude_key=provider_key):
-            raise ModelSettingsError("provider already exists", status=409)
     updated_provider_config = _validated_provider_config(provider_config, updates)
     changed = updated_provider_config != provider_config
     if changed:
@@ -601,31 +376,161 @@ def reasoning_effort_values_for(provider_name: str, model: str) -> list[str]:
     return list(_DEFAULT_REASONING_EFFORT_VALUES)
 
 
-def management_catalog(config: Config) -> dict[str, Any]:
+def _require_known_provider(config: Config, provider: str) -> None:
+    if resolve_provider(config, provider) is None:
+        raise ModelSettingsError("unknown provider")
+
+
+def _validate_model_payload(config: Config, payload: dict[str, Any]) -> ModelConfig:
+    try:
+        model = ModelConfig.model_validate(payload)
+    except ValueError as exc:
+        raise ModelSettingsError(_validation_message(exc)) from exc
+    _require_known_provider(config, model.provider)
+    return model
+
+
+def create_model(config: Config, *, model_id: str, values: dict[str, Any]) -> ModelConfig:
+    try:
+        canonical_id = validate_model_id(model_id)
+    except ValueError as exc:
+        raise ModelSettingsError(str(exc)) from exc
+    if canonical_id in config.models:
+        raise ModelSettingsError("model already exists", status=409)
+    model = _validate_model_payload(config, values)
+    config.models[canonical_id] = model
+    return model
+
+
+def update_model(config: Config, *, model_id: str, changes: dict[str, Any]) -> ModelConfig:
+    try:
+        canonical_id = validate_model_id(model_id)
+    except ValueError as exc:
+        raise ModelSettingsError(str(exc)) from exc
+    current = config.models.get(canonical_id)
+    if current is None:
+        raise ModelSettingsError("unknown model")
+    payload = current.model_dump(mode="python")
+    payload.update(changes)
+    updated = _validate_model_payload(config, payload)
+    config.models[canonical_id] = updated
+    return updated
+
+
+def find_model_usages(config: Config, model_id: str) -> list[str]:
+    usages: list[str] = []
     defaults = config.agents.defaults
-    active_preset_name = defaults.model_preset or "default"
-    presets = [{
-        "name": "default", "label": "Default", "active": active_preset_name == "default",
-        "is_default": True, "model": defaults.model, "provider": defaults.provider,
-        "resolved_provider": config.get_provider_name(defaults.model, preset=config.resolve_default_preset()),
-        "max_tokens": defaults.max_tokens, "context_window_tokens": defaults.context_window_tokens,
-        "temperature": defaults.temperature, "reasoning_effort": defaults.reasoning_effort,
-        "supports_vision": defaults.supports_vision,
-        "reasoning_effort_values": reasoning_effort_values_for(
-            config.get_provider_name(defaults.model, preset=config.resolve_default_preset()) or defaults.provider,
-            defaults.model,
-        ),
-    }]
-    for name, preset in config.model_presets.items():
-        resolved_provider = config.get_provider_name(preset.model, preset=preset) or preset.provider
-        presets.append({
-            "name": name, "label": name, "active": active_preset_name == name, "is_default": False,
-            "model": preset.model, "provider": preset.provider, "resolved_provider": resolved_provider,
-            "max_tokens": preset.max_tokens, "context_window_tokens": preset.context_window_tokens,
-            "temperature": preset.temperature, "reasoning_effort": preset.reasoning_effort,
-            "supports_vision": preset.supports_vision,
-            "reasoning_effort_values": reasoning_effort_values_for(resolved_provider, preset.model),
-        })
+    if defaults.model_id == model_id:
+        usages.append("agents.defaults.model_id")
+    dream = defaults.dream
+    if dream.model_id == model_id:
+        usages.append("dream.model_id")
+    if dream.fallback_model_id == model_id:
+        usages.append("dream.fallback_model_id")
+    for role, binding in sorted(config.subagent_roles.items()):
+        if binding.model_id == model_id:
+            usages.append(f"subagent_roles.{role}.model_id")
+    if config.transcription.model_id == model_id:
+        usages.append("transcription.model_id")
+    for index, override in enumerate(config.system_prompt_overrides):
+        if model_id in override.model_ids:
+            usages.append(f"system_prompt_overrides[{index}].model_ids")
+    tools = getattr(config, "tools", None)
+    for tool_name in ("image_analysis", "image_generation"):
+        tool_config = getattr(tools, tool_name, None)
+        if getattr(tool_config, "model_id", None) == model_id:
+            usages.append(f"tools.{tool_name}.model_id")
+    return usages
+
+
+def delete_model(config: Config, *, model_id: str) -> None:
+    try:
+        canonical_id = validate_model_id(model_id)
+    except ValueError as exc:
+        raise ModelSettingsError(str(exc)) from exc
+    if canonical_id not in config.models:
+        raise ModelSettingsError("unknown model")
+    usages = find_model_usages(config, canonical_id)
+    if usages:
+        raise ModelInUseError("model is in use", status=409, usages=tuple(usages))
+    del config.models[canonical_id]
+
+
+def model_catalog_entry(config: Config, model_id: str) -> dict[str, Any]:
+    model = config.models.get(model_id)
+    if model is None:
+        raise ModelSettingsError("unknown model")
+    return {
+        "model_id": model_id,
+        **model.model_dump(mode="python"),
+        "is_default": config.agents.defaults.model_id == model_id,
+        "usages": find_model_usages(config, model_id),
+    }
+
+
+def _decode_model_query(query: QueryParams) -> tuple[str, dict[str, Any]]:
+    model_id = (_query_first_alias(query, "model_id", "modelId") or "").strip()
+    payload: dict[str, Any] = {}
+    for key, values in query.items():
+        if key in {"model_id", "modelId"} or not values:
+            continue
+        raw: Any = values[0]
+        if key in _MODEL_NESTED_FIELDS and isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ModelSettingsError(f"{key} must be valid JSON") from exc
+        payload[key] = raw
+    return model_id, payload
+
+
+def create_model_configuration(config: Config, query: QueryParams, *, oauth_status: OAuthStatusReader = oauth_provider_status) -> str:
+    del oauth_status
+    model_id, payload = _decode_model_query(query)
+    create_model(config, model_id=model_id, values=payload)
+    return model_id
+
+
+def update_model_configuration(config: Config, query: QueryParams, *, oauth_status: OAuthStatusReader = oauth_provider_status) -> bool:
+    del oauth_status
+    model_id, changes = _decode_model_query(query)
+    before = config.models.get(model_id)
+    updated = update_model(config, model_id=model_id, changes=changes)
+    return before != updated
+
+
+def delete_model_configuration(config: Config, query: QueryParams) -> None:
+    model_id = (_query_first_alias(query, "model_id", "modelId") or "").strip()
+    delete_model(config, model_id=model_id)
+
+
+def update_subagent_roles(config: Config, query: QueryParams) -> None:
+    raw = _query_first(query, "bindings")
+    try:
+        bindings = json.loads(raw) if raw is not None else None
+    except (TypeError, json.JSONDecodeError):
+        raise ModelSettingsError("bindings must be an object of role names to model IDs or null") from None
+    if not isinstance(bindings, dict):
+        raise ModelSettingsError("bindings must be an object of role names to model IDs or null")
+    updates: dict[SubagentRoleName, SubagentRoleConfig] = {}
+    for name, model_id in cast(dict[str, str | None], bindings).items():
+        if name not in config.subagent_roles and name not in SUBAGENT_ROLES:
+            raise ModelSettingsError("unknown subagent role")
+        if model_id is not None:
+            try:
+                validate_model_id(model_id)
+            except ValueError as exc:
+                raise ModelSettingsError(str(exc)) from exc
+            if model_id not in config.models:
+                raise ModelSettingsError("unknown model_id in role bindings")
+        current = config.subagent_roles.get(name, SubagentRoleConfig())
+        values = current.model_dump(mode="python")
+        values["model_id"] = model_id
+        updates[cast(SubagentRoleName, name)] = SubagentRoleConfig.model_validate(values)
+    config.subagent_roles.update(updates)
+
+
+def _safe_provider_catalog(config: Config) -> list[dict[str, Any]]:
     providers: list[dict[str, Any]] = []
     seen: set[str] = set()
     for spec in PROVIDERS:
@@ -633,24 +538,49 @@ def management_catalog(config: Config) -> dict[str, Any]:
             continue
         provider_config = getattr(config.providers, spec.name, None)
         if isinstance(provider_config, ProviderConfig):
-            providers.append({"name": spec.name, "configured": provider_configured(spec, provider_config)})
+            providers.append({
+                "provider": spec.name,
+                "display_name": provider_config.display_name or spec.label,
+                "configured": provider_configured(spec, provider_config),
+                "api_base": provider_config.api_base,
+                "api_type": provider_config.api_type,
+                "max_concurrent_requests": provider_config.max_concurrent_requests,
+                "rate_limit_scope": provider_config.rate_limit_scope,
+                "oauth": oauth_provider_status(spec),
+            })
             seen.add(spec.name)
     for name, provider_config in _dynamic_provider_items(config):
-        spec = create_dynamic_spec(name, display_name=provider_config.display_name or "", thinking_style=provider_config.thinking_style or "")
-        providers.append({"name": name, "configured": provider_configured(spec, provider_config)})
+        spec = create_dynamic_spec(
+            name,
+            display_name=provider_config.display_name or "",
+            thinking_style=provider_config.thinking_style or "",
+        )
+        providers.append({
+            "provider": name,
+            "display_name": provider_config.display_name or name,
+            "configured": provider_configured(spec, provider_config),
+            "api_base": provider_config.api_base,
+            "api_type": provider_config.api_type,
+            "max_concurrent_requests": provider_config.max_concurrent_requests,
+            "rate_limit_scope": provider_config.rate_limit_scope,
+            "oauth": oauth_provider_status(spec),
+        })
+    return providers
+
+
+def management_catalog(config: Config) -> dict[str, Any]:
+    defaults = config.agents.defaults
     return {
         "status": "ok",
-        "model_presets": presets,
-        "image_analysis": {
-            "enabled": config.tools.image_analysis.enabled,
-            "model_preset": config.tools.image_analysis.model_preset,
-            "max_image_mb": config.tools.image_analysis.max_image_mb,
-            "max_images": config.tools.image_analysis.max_images,
-        },
+        "models": [model_catalog_entry(config, model_id) for model_id in sorted(config.models)],
         "subagent_roles": [
-            {"name": name, **metadata, "model_preset": config.subagent_roles.get(name, SubagentRoleConfig()).model_preset}
-            for name, metadata in SUBAGENT_ROLES.items()
+            {
+                "name": name,
+                **(SUBAGENT_ROLES.get(name) or {}),
+                "model_id": binding.model_id,
+            }
+            for name, binding in sorted(config.subagent_roles.items())
         ],
         "max_concurrent_subagents": defaults.max_concurrent_subagents,
-        "providers": providers,
+        "providers": _safe_provider_catalog(config),
     }

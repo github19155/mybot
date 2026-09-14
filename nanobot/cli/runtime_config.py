@@ -9,6 +9,7 @@ from rich.markup import escape
 from rich.text import Text
 
 from nanobot.config.schema import Config
+from nanobot.model_domain import get_model
 
 __all__ = [
     "_load_config_for_cli",
@@ -27,11 +28,10 @@ console = Console()
 
 
 def _model_display(config: Config) -> tuple[str, str]:
-    """Return (resolved_model_name, preset_tag) for display strings."""
-    resolved = config.resolve_preset()
-    name = config.agents.defaults.model_preset
-    tag = f" (preset: {name})" if name else ""
-    return resolved.model, tag
+    """Return the selected upstream model and canonical model ID tag."""
+    model_id = config.agents.defaults.model_id
+    model = get_model(config.models, model_id)
+    return model.model, f" (model_id: {model_id})"
 
 
 def _print_config_error(error: Exception) -> None:

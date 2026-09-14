@@ -31,7 +31,9 @@ from nanobot.cli.models import (
     get_model_suggestions,
 )
 from nanobot.config.loader import get_config_path, load_config, resolve_config_env_vars
-from nanobot.config.schema import Config, ModelPresetConfig
+from nanobot.config.schema import Config
+from nanobot.model_domain import ModelCapabilities, ModelConfig, validate_model_id
+from nanobot.model_settings import delete_model, find_model_usages
 from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
 
 console = Console()
@@ -81,9 +83,8 @@ _SELECT_FIELD_HINTS: dict[str, tuple[list[str], str]] = {
 
 _BACK_PRESSED = object()  # Sentinel value for back navigation
 
-# Cache of model-preset names populated at runtime so that field handlers can
-# offer existing presets as choices (e.g. AgentDefaults.model_preset).
-_MODEL_PRESET_CACHE: set[str] = set()
+# Canonical model IDs available to model_id fields during this wizard session.
+_MODEL_ID_CACHE: set[str] = set()
 
 _QUICK_START_CUSTOM_PROVIDER_CHOICE = "Other OpenAI-compatible"
 _QUICK_START_OAUTH_PROVIDERS = {"openai_codex"}
@@ -785,20 +786,21 @@ def _handle_context_window_field(
         setattr(working_model, field_name, new_value)
 
 
-def _handle_model_preset_field(
+def _handle_model_id_field(
     working_model: BaseModel, field_name: str, field_display: str, current_value: Any
 ) -> None:
-    """Handle the 'model_preset' field with a list of existing presets."""
-    preset_names = sorted(_MODEL_PRESET_CACHE)
-    choices = [_CLEAR_CHOICE] + preset_names
-    default_choice = str(current_value) if current_value else _CLEAR_CHOICE
-    new_value = _select_with_back(field_display, choices, default=default_choice)
-    if new_value is _BACK_PRESSED:
+    """Handle a canonical model_id field using Config.models IDs."""
+    field_info = type(working_model).model_fields.get(field_name)
+    optional = bool(field_info and _is_str_or_none(field_info.annotation))
+    model_ids = sorted(_MODEL_ID_CACHE)
+    choices = ([_CLEAR_CHOICE] if optional else []) + model_ids
+    if not choices:
         return
-    if new_value == _CLEAR_CHOICE:
-        setattr(working_model, field_name, None)
-    elif new_value is not None:
-        setattr(working_model, field_name, new_value)
+    default_choice = str(current_value) if current_value in choices else choices[0]
+    new_value = _select_with_back(field_display, choices, default=default_choice)
+    if new_value is _BACK_PRESSED or new_value is None:
+        return
+    setattr(working_model, field_name, None if new_value == _CLEAR_CHOICE else new_value)
 
 
 def _set_field_from_choices(
@@ -817,8 +819,10 @@ def _handle_provider_field(
     working_model: BaseModel, field_name: str, field_display: str, current_value: Any
 ) -> None:
     """Handle the 'provider' field with a list of registered LLM providers."""
-    choices = ["auto"] + sorted(_get_provider_names().keys())
-    default_choice = str(current_value) if current_value else "auto"
+    choices = sorted(_get_provider_names().keys())
+    if not isinstance(working_model, ModelConfig):
+        choices = ["auto", *choices]
+    default_choice = str(current_value) if current_value in choices else choices[0]
     _set_field_from_choices(working_model, field_name, field_display, choices, default_choice)
 
 
@@ -836,7 +840,7 @@ def _handle_search_provider_field(
 _FIELD_HANDLERS: dict[str, Any] = {
     "model": _handle_model_field,
     "context_window_tokens": _handle_context_window_field,
-    "model_preset": _handle_model_preset_field,
+    "model_id": _handle_model_id_field,
     "provider": _handle_provider_field,
 }
 
@@ -1001,9 +1005,7 @@ def _try_auto_fill_context_window(model: BaseModel, new_model_name: str) -> None
 
     # Check if current value is the default
     # We only auto-fill if the user hasn't changed it from default
-    from nanobot.config.schema import AgentDefaults
-
-    default_context = AgentDefaults.model_fields["context_window_tokens"].default
+    default_context = ModelConfig.model_fields["context_window_tokens"].default
 
     if current_context != default_context:
         return  # User has customized it, don't override
@@ -1021,122 +1023,126 @@ def _try_auto_fill_context_window(model: BaseModel, new_model_name: str) -> None
         console.print("[dim]Could not auto-fill context window - model not in database[/dim]")
 
 
-# --- Model Preset Configuration ---
+# --- Model Configuration ---
 
 
-def _sync_preset_cache(config: Config) -> None:
-    """Synchronise the module-level preset name cache from config."""
-    _MODEL_PRESET_CACHE.clear()
-    _MODEL_PRESET_CACHE.update(config.model_presets.keys())
+def _sync_model_id_cache(config: Config) -> None:
+    """Synchronize the module-level model ID cache from Config.models."""
+    _MODEL_ID_CACHE.clear()
+    _MODEL_ID_CACHE.update(config.models)
 
 
-def _validate_nonempty_name(text: str) -> bool | str:
-    return True if text and text.strip() else "Name cannot be empty"
+def _validate_model_id_input(text: str) -> bool | str:
+    try:
+        validate_model_id(text.strip())
+    except ValueError as exc:
+        return str(exc)
+    return True
 
 
-def _configure_model_presets(config: Config) -> None:
-    """Configure model presets (CRUD)."""
-    _sync_preset_cache(config)
+def _configure_models(config: Config) -> None:
+    """Configure canonical model definitions keyed by model_id."""
+    _sync_model_id_cache(config)
 
-    def get_preset_choices() -> tuple[list[str], dict[str, str]]:
+    def get_model_choices() -> tuple[list[str], dict[str, str]]:
         choices: list[str] = []
-        choice_to_preset: dict[str, str] = {}
-        for name, preset in config.model_presets.items():
-            choice = f"{name} - {preset.model}"
+        choice_to_id: dict[str, str] = {}
+        for model_id, model in config.models.items():
+            choice = f"{model_id} - {model.model}"
             choices.append(choice)
-            choice_to_preset[choice] = name
-        choices.append("[+] Add new preset")
-        choices.append("<- Back")
-        return choices, choice_to_preset
+            choice_to_id[choice] = model_id
+        choices.extend(["[+] Add new model", "<- Back"])
+        return choices, choice_to_id
 
-    last_preset_name: str | None = None
+    last_model_id: str | None = None
     while True:
         try:
             console.clear()
             _show_section_header(
-                "Model Presets",
-                "Create, edit or delete named model presets for quick switching",
+                "Models",
+                "Create, edit or delete canonical model definitions",
             )
-            choices, choice_to_preset = get_preset_choices()
-            default_choice = None
-            if last_preset_name:
-                for choice, name in choice_to_preset.items():
-                    if name == last_preset_name:
-                        default_choice = choice
-                        break
-            answer = _select_with_back(
-                "Select preset:", choices, default=default_choice
+            choices, choice_to_id = get_model_choices()
+            default_choice = next(
+                (choice for choice, mid in choice_to_id.items() if mid == last_model_id),
+                None,
             )
-
+            answer = _select_with_back("Select model:", choices, default=default_choice)
             if answer is _BACK_PRESSED or answer is None or answer == "<- Back":
                 break
-
             assert isinstance(answer, str)
 
-            if answer == "[+] Add new preset":
-                name_input = _get_questionary().text(
-                    "Preset name:",
-                    validate=_validate_nonempty_name,
+            if answer == "[+] Add new model":
+                model_id_input = _get_questionary().text(
+                    "Model ID:", validate=_validate_model_id_input
                 ).ask()
-                if not name_input:
+                if not model_id_input:
                     continue
-                name = name_input.strip()
-                if name in config.model_presets:
-                    console.print(f"[yellow]! Preset '{name}' already exists[/yellow]")
+                model_id = model_id_input.strip()
+                if model_id in config.models:
+                    console.print(f"[yellow]! Model ID '{model_id}' already exists[/yellow]")
                     _pause()
                     continue
-                if name == "default":
+                provider = _select_with_back(
+                    "Provider:", sorted(_get_provider_names().keys())
+                )
+                if provider is _BACK_PRESSED or provider is None:
+                    continue
+                upstream = _input_model_with_autocomplete("Upstream model", "", str(provider))
+                if upstream is _BACK_PRESSED or not upstream:
+                    continue
+                display_name = _get_questionary().text(
+                    "Display name:", default=model_id
+                ).ask()
+                if display_name is None:
+                    continue
+                candidate = ModelConfig(
+                    display_name=display_name.strip() or model_id,
+                    provider=str(provider),
+                    model=str(upstream),
+                    capabilities=ModelCapabilities(text=True),
+                )
+                _try_auto_fill_context_window(candidate, str(upstream))
+                updated = _configure_pydantic_model(candidate, f"New Model: {model_id}")
+                if updated is not None:
+                    config.models[model_id] = updated
+                    _sync_model_id_cache(config)
+                    last_model_id = model_id
+                continue
+
+            model_id = choice_to_id.get(answer)
+            if model_id is None:
+                continue
+            model = config.models.get(model_id)
+            if model is None:
+                continue
+            last_model_id = model_id
+            actions = ["Edit", "Delete", "Cancel"]
+            action = _select_with_back(f"Model: {model_id}", actions, default="Edit")
+            if action is _BACK_PRESSED or action in {None, "Cancel"}:
+                continue
+            if action == "Delete":
+                usages = find_model_usages(config, model_id)
+                if usages:
+                    rendered_usages = ", ".join(usages)
                     console.print(
-                        "[yellow]! 'default' is reserved; it is generated from Agent Settings[/yellow]"
+                        f"[yellow]! Cannot delete model '{model_id}'; it is still used by: "
+                        f"{escape(rendered_usages)}[/yellow]"
                     )
                     _pause()
                     continue
-                new_preset = ModelPresetConfig(model="")
-                updated = _configure_pydantic_model(new_preset, f"New Preset: {name}")
-                if updated is not None:
-                    config.model_presets[name] = updated
-                    _sync_preset_cache(config)
-                    last_preset_name = name
-                continue
-
-            # Editing / deleting an existing preset
-            preset_name = choice_to_preset.get(answer)
-            if preset_name is None:
-                continue
-            preset = config.model_presets.get(preset_name)
-            if preset is None:
-                continue
-
-            last_preset_name = preset_name
-
-            choices = ["Edit", "Cancel"]
-            if preset_name != "default":
-                choices.insert(1, "Delete")
-            action = _select_with_back(
-                f"Preset: {preset_name}",
-                choices,
-                default="Edit",
-            )
-            if action is _BACK_PRESSED or action == "Cancel" or action is None:
-                continue
-
-            if action == "Delete":
                 confirm = _get_questionary().confirm(
-                    f"Delete preset '{preset_name}'?",
-                    default=False,
+                    f"Delete model '{model_id}'?", default=False
                 ).ask()
                 if confirm:
-                    del config.model_presets[preset_name]
-                    _sync_preset_cache(config)
-                    last_preset_name = None
+                    delete_model(config, model_id=model_id)
+                    _sync_model_id_cache(config)
+                    last_model_id = None
                 continue
-
-            if action == "Edit":
-                updated = _configure_pydantic_model(preset, f"Edit Preset: {preset_name}")
-                if updated is not None:
-                    config.model_presets[preset_name] = updated
-                    _sync_preset_cache(config)
-
+            updated = _configure_pydantic_model(model, f"Edit Model: {model_id}")
+            if updated is not None:
+                config.models[model_id] = updated
+                _sync_model_id_cache(config)
         except KeyboardInterrupt:
             console.print("\n[dim]Returning to main menu...[/dim]")
             break
@@ -1499,11 +1505,11 @@ def _show_summary(config: Config) -> None:
         channel_rows.append((display, status))
     _print_summary_panel(channel_rows, "Chat Channels")
 
-    # Model Presets
-    preset_rows: list[tuple[str, str]] = []
-    for name, preset in config.model_presets.items():
-        preset_rows.append((name, f"{preset.model} - ctx {preset.context_window_tokens}"))
-    _print_summary_panel(preset_rows, "Model Presets")
+    # Models
+    model_rows: list[tuple[str, str]] = []
+    for model_id, model in config.models.items():
+        model_rows.append((model_id, f"{model.provider} / {model.model} - ctx {model.context_window_tokens}"))
+    _print_summary_panel(model_rows, "Models")
 
     # Settings sections
     for title, model in [
@@ -1526,14 +1532,18 @@ def _pause(message: str = "Press Enter to continue...") -> None:
 # --- Quick Start ---
 
 
-def _set_primary_quick_start_preset(config: Config, provider_name: str, model: str) -> None:
-    """Store the primary preset used by Quick Start."""
-    config.model_presets["primary"] = ModelPresetConfig(
-        model=model,
+def _set_quick_start_model(config: Config, provider_name: str, model: str) -> None:
+    """Store Quick Start's canonical main model."""
+    model_id = "main"
+    config.models[model_id] = ModelConfig(
+        display_name="Main",
         provider=provider_name,
+        model=model,
+        capabilities=ModelCapabilities(text=True),
+        context_window_tokens=get_model_context_limit(model, provider_name) or 200_000,
     )
-    config.agents.defaults.model_preset = "primary"
-    _sync_preset_cache(config)
+    config.agents.defaults.model_id = model_id
+    _sync_model_id_cache(config)
 
 
 def _show_quick_start_progress(active_step: int) -> None:
@@ -1773,7 +1783,7 @@ def _configure_quick_start_provider(config: Config) -> bool | object:
             return False
 
         model = _input_model_with_autocomplete(
-            "Model ID",
+            "Upstream model",
             provider_info.default_model if provider_info else "",
             provider_name,
         )
@@ -1781,7 +1791,7 @@ def _configure_quick_start_provider(config: Config) -> bool | object:
             continue
         model = cast(str, model or "").strip()
         if not model:
-            console.print("[yellow]! Model ID is required for Quick Start[/yellow]")
+            console.print("[yellow]! Upstream model is required for Quick Start[/yellow]")
             return False
 
         if provider_info and provider_info.is_oauth:
@@ -1796,7 +1806,7 @@ def _configure_quick_start_provider(config: Config) -> bool | object:
             elif not provider_config.api_base:
                 provider_config.api_base = api_base
 
-        _set_primary_quick_start_preset(
+        _set_quick_start_model(
             config,
             provider_name,
             model,
@@ -1852,24 +1862,24 @@ def _enable_quick_start_websocket_defaults(config: Config) -> bool:
 def _show_quick_start_summary(config: Config) -> None:
     """Show the small summary users need before returning to the menu."""
     _show_quick_start_progress(3)
-    preset = config.model_presets.get("primary")
+    selected_model = config.models.get(config.agents.defaults.model_id)
     provider_label = "AI provider"
     credentials_ready = True
     credential_name = "API key"
-    if preset:
-        provider_config = getattr(config.providers, preset.provider, None)
-        provider_info = _get_quick_start_provider_info().get(preset.provider)
+    if selected_model:
+        provider_config = getattr(config.providers, selected_model.provider, None)
+        provider_info = _get_quick_start_provider_info().get(selected_model.provider)
         if provider_info:
             provider_label = provider_info.display_name
             if provider_info.is_oauth:
                 credential_name = "OAuth login"
-                credentials_ready = _quick_start_oauth_is_authenticated(config, preset.provider)
+                credentials_ready = _quick_start_oauth_is_authenticated(config, selected_model.provider)
             else:
                 credentials_ready = provider_info.is_local or bool(
                     provider_config and provider_config.api_key
                 )
         else:
-            provider_label = _get_provider_names().get(preset.provider, preset.provider)
+            provider_label = _get_provider_names().get(selected_model.provider, selected_model.provider)
             credentials_ready = bool(provider_config and provider_config.api_key)
 
     status = "Ready"
@@ -1956,7 +1966,7 @@ def _configure_advanced_settings(config: Config) -> None:
     last_choice: str | None = None
     choices = [
         "[P] LLM Provider",
-        "[M] Model Presets",
+        "[M] Models",
         "[C] Chat Channel",
         "[H] Channel Common",
         "[A] Agent Settings",
@@ -1986,7 +1996,7 @@ def _configure_advanced_settings(config: Config) -> None:
 
         _advanced_dispatch: dict[str, Callable[[], None]] = {
             "[P] LLM Provider": lambda: _configure_providers(config),
-            "[M] Model Presets": lambda: _configure_model_presets(config),
+            "[M] Models": lambda: _configure_models(config),
             "[C] Chat Channel": lambda: _configure_channels(config),
             "[H] Channel Common": lambda: _configure_general_settings(config, "Channel Common"),
             "[A] Agent Settings": lambda: _configure_general_settings(config, "Agent Settings"),
@@ -2021,7 +2031,7 @@ def run_onboard(initial_config: Config | None = None) -> OnboardResult:
 
     original_config = base_config.model_copy(deep=True)
     config = base_config.model_copy(deep=True)
-    _sync_preset_cache(config)
+    _sync_model_id_cache(config)
 
     while True:
         console.clear()

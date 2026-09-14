@@ -91,10 +91,10 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
     ),
     BuiltinCommandSpec(
         "/model",
-        "Switch model preset",
-        "Show or switch the active model preset.",
+        "Switch model",
+        "Show or switch the active canonical model ID.",
         "brain",
-        "[preset]",
+        "[model_id]",
         accepts_args=True,
     ),
     BuiltinCommandSpec(
@@ -331,14 +331,12 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-def _format_preset_names(names: list[str]) -> str:
-    return ", ".join(f"`{name}`" for name in names) if names else "(none configured)"
+def _format_model_ids(model_ids: list[str]) -> str:
+    return ", ".join(f"`{model_id}`" for model_id in model_ids) if model_ids else "(none configured)"
 
 
-def _model_preset_names(loop: AgentLoop) -> list[str]:
-    names = set(loop.model_presets)
-    names.add("default")
-    return ["default", *sorted(name for name in names if name != "default")]
+def _model_ids(loop: AgentLoop) -> list[str]:
+    return sorted(loop.models)
 
 
 def _command_error_message(exc: Exception) -> str:
@@ -346,32 +344,32 @@ def _command_error_message(exc: Exception) -> str:
 
 
 def _model_command_status(loop: AgentLoop, session: Session) -> str:
-    names = _model_preset_names(loop)
+    model_ids = _model_ids(loop)
     try:
         runtime = loop.runtime_for_session(session, recover_removed=False)
     except (KeyError, ValueError) as exc:
         return "\n".join([
             "## Model",
             f"- Current selection error: {_command_error_message(exc)}",
-            f"- Available presets: {_format_preset_names(names)}",
-            "- Switch with `/model <preset>`.",
+            f"- Available model IDs: {_format_model_ids(model_ids)}",
+            "- Switch with `/model <model_id>`.",
         ])
-    active = runtime.model_preset or "default"
+    active = runtime.model_id or loop.model_id
     return "\n".join([
         "## Model",
-        f"- Current model: `{runtime.model}`",
-        f"- Current preset: `{active}`",
-        f"- Available presets: {_format_preset_names(names)}",
+        f"- Current model ID: `{active}`",
+        f"- Upstream model: `{runtime.model}`",
+        f"- Available model IDs: {_format_model_ids(model_ids)}",
     ])
 
 
 async def cmd_model(ctx: CommandContext) -> OutboundMessage:
-    """Show or switch model presets."""
+    """Show or switch the canonical model ID for this session."""
     loop = ctx.loop
-    args = ctx.args.strip()
+    model_id = ctx.args.strip()
     metadata = {**dict(ctx.msg.metadata or {}), "render_as": "text"}
 
-    if not args:
+    if not model_id:
         session = ctx.session or loop.sessions.get_or_create(ctx.key)
         return OutboundMessage(
             channel=ctx.msg.channel,
@@ -380,29 +378,27 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
             metadata=metadata,
         )
 
-    name = args
     try:
-        runtime = loop.set_session_model_preset(ctx.key, name)
+        runtime = loop.set_session_model_id(ctx.key, model_id)
     except (KeyError, ValueError) as exc:
-        names = _model_preset_names(loop)
         return OutboundMessage(
             channel=ctx.msg.channel,
             chat_id=ctx.msg.chat_id,
             content=(
-                f"Could not switch model preset: {_command_error_message(exc)}\n\n"
-                f"Available presets: {_format_preset_names(names)}"
+                f"Could not switch model: {_command_error_message(exc)}\n\n"
+                f"Available model IDs: {_format_model_ids(_model_ids(loop))}"
             ),
             metadata=metadata,
         )
 
     max_tokens = runtime.generation.max_tokens
     lines = [
-        f"Switched model preset to `{runtime.model_preset}`.",
+        f"Switched model to `{runtime.model_id}`.",
         "- Scope: current session",
-        f"- Model: `{runtime.model}`",
+        f"- Upstream model: `{runtime.model}`",
         f"- Context window: {runtime.context_window_tokens}",
+        f"- Max output tokens: {max_tokens}",
     ]
-    lines.append(f"- Max output tokens: {max_tokens}")
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,

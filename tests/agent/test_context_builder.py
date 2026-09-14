@@ -11,6 +11,7 @@ from nanobot.runtime_context import RuntimeContextBlock
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _builder(tmp_path: Path, **kw) -> ContextBuilder:
     return ContextBuilder(workspace=tmp_path, **kw)
 
@@ -187,6 +188,7 @@ class TestIsTemplateContent:
 
     def test_content_matching_template(self):
         from importlib.resources import files as pkg_files
+
         tpl = pkg_files("nanobot") / "templates" / "memory" / "MEMORY.md"
         if not tpl.is_file():
             pytest.skip("MEMORY.md template not bundled")
@@ -195,6 +197,7 @@ class TestIsTemplateContent:
 
     def test_modified_content_returns_false(self):
         from importlib.resources import files as pkg_files
+
         tpl = pkg_files("nanobot") / "templates" / "memory" / "MEMORY.md"
         if not tpl.is_file():
             pytest.skip("MEMORY.md template not bundled")
@@ -202,41 +205,38 @@ class TestIsTemplateContent:
 
 
 # ---------------------------------------------------------------------------
-# Bundled bootstrap templates
+# Bundled Main orchestration contract
 # ---------------------------------------------------------------------------
 
 
-class TestBundledToolContract:
-    def test_tool_contract_balances_general_and_coding_workflows(self):
+class TestBundledMainContract:
+    def test_main_contract_is_orchestration_only(self):
         from importlib.resources import files as pkg_files
 
         tpl = pkg_files("nanobot") / "templates" / "agent" / "tool_contract.md"
         content = tpl.read_text(encoding="utf-8")
 
-        assert "## General Tool Contract" in content
-        assert "Use the narrowest structured tool" in content
-        assert "Do not use `exec` as a universal workaround" in content
-        assert "## File and Coding Workflows" in content
-        assert "`grep` returns matches with five context lines by default" in content
-        assert 'defaults to `output_mode="files_with_matches"`' not in content
-        assert "apply_patch" in content
-        assert "acceptance criteria into concrete checks" in content
-        assert "visual evidence reaches the model" in content
-        assert "clear user request as authorization" in content
-        assert "Never invent missing records or measurements" in content
-        assert "scientific fitting" not in content
-        assert "## Web and External Information" in content
-        assert "## Messaging and Media" in content
-        assert "## Scheduling and Background Work" in content
-        assert "pure coding" not in content.lower()
+        assert "# Main Orchestration Contract" in content
+        assert "Main does not perform operational execution itself" in content
+        assert "Tool Catalog" in content
+        assert "Main-callable tools" in content
+        assert "Prefer a matching active Specialist" in content
+        assert "Use a WorkAgent" in content
+        assert "Every Worker dispatch is asynchronous" in content
+        assert "new Main turn" in content
+        assert "no special per-turn orchestration-call budget" in content
+        assert "## File and Coding Workflows" not in content
+        assert "## Web and External Information" not in content
+        assert "wait=true" not in content
+        assert "wait=false" not in content
 
-    def test_tool_contract_is_injected_without_workspace_file(self, tmp_path):
+    def test_main_contract_is_injected_without_workspace_file(self, tmp_path):
         builder = _builder(tmp_path)
         prompt = builder.build_system_prompt()
 
-        assert "# Tool Usage Notes" in prompt
-        assert "## General Tool Contract" in prompt
-        assert "Do not use `exec` as a universal workaround" in prompt
+        assert "# Main Orchestration Contract" in prompt
+        assert "Main does not perform operational execution itself" in prompt
+        assert "# Worker Execution Contract" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +406,7 @@ class TestBuildMessages:
         assert messages[0]["role"] == "system"
         assert str(messages[0]["content"]).endswith("system event")
 
-    def test_explicit_skill_reference_loads_full_instructions_for_this_turn(self, tmp_path):
+    def test_explicit_skill_reference_is_marked_worker_only_for_main(self, tmp_path):
         skill_dir = tmp_path / "skills" / "review"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
@@ -427,6 +427,8 @@ class TestBuildMessages:
         assert system_prompt == plain_messages[0]["content"]
         assert "Follow the unique review checklist." not in system_prompt
         assert "Please $review this patch" in user_prompt
+        assert "[Worker-only skill guidance" in user_prompt
+        assert "Main must not execute it directly" in user_prompt
         assert "[Active Skills — instructions for this user turn]" in user_prompt
         assert "### Skill: review" in user_prompt
         assert "Follow the unique review checklist." in user_prompt

@@ -1,10 +1,8 @@
 {% if system == 'Windows' %}
-## Platform Policy (Windows)
-- You are running on Windows. Do not assume GNU tools like `grep`, `sed`, or `awk` exist.
-- Prefer Windows-native commands or file tools when they are more reliable.
-- If terminal output is garbled, retry with UTF-8 output enabled.
+## Platform Context (Windows)
+- Workers execute on Windows for this session. When delegating shell or file work, do not assume GNU utilities such as `grep`, `sed`, or `awk` exist.
+- Prefer a Worker with Windows-compatible capabilities and include any platform-sensitive constraint in the delegated task.
 {% else %}
-## Platform Policy (POSIX)
-- You are running on a POSIX system. Prefer UTF-8 and standard shell tools.
-- Use file tools when they are simpler or more reliable than shell commands.
+## Platform Context (POSIX)
+- Workers execute on a POSIX system for this session. Preserve platform-sensitive constraints when delegating shell, file, build, or test work.
 {% endif %}

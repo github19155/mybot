@@ -48,6 +48,10 @@ path.write_text(text)
 # the simulated provider failure belongs to the attempted session switch only.
 path = Path("tests/command/test_model_command.py")
 text = path.read_text()
+text = text.replace(
+    '''        selected = model_config or catalog[model_id]\n        resolved_id = model_id or next(\n            key for key, value in catalog.items() if value is selected\n        )\n''',
+    '''        if model_config is None:\n            assert model_id is not None\n            selected = catalog[model_id]\n            resolved_id = model_id\n        else:\n            selected = model_config\n            resolved_id = model_id or next(\n                key for key, value in catalog.items() if value is selected\n            )\n''',
+)
 old = '''@pytest.mark.asyncio
 async def test_model_command_reports_provider_configuration_errors(tmp_path) -> None:
     def fail_model(**_kwargs):

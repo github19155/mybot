@@ -26,18 +26,16 @@ def build_work_role_definition(
     description: str | None = None,
     system_prompt: str | None = None,
     tools: list[str] | None = None,
-    model_id: str | None = None,
 ) -> ResolvedSubagentRole:
     """Build one non-persistent WorkAgent snapshot.
 
     General contributes only its normal-worker tool set. WorkAgent does not
     inherit General's prompt, model identity, thinking, temperature, timeout,
-    or context tuning. When ``model_id`` is omitted, the launch path inherits
-    the current Main runtime directly.
+    or context tuning. Model selection is a separate per-run concern; when a
+    run omits ``model_id`` the manager inherits the current Main runtime.
     """
     description = _nonempty(description, "description")
     system_prompt = _nonempty(system_prompt, "system_prompt")
-    model_id = _nonempty(model_id, "model_id")
     requested_tools = tuple(tools if tools is not None else general.get("tools", ()))
     requested_tools = tuple(dict.fromkeys((*requested_tools, "report_progress")))
     unknown = {name for name in requested_tools if not is_subagent_tool_name(name)}
@@ -60,7 +58,7 @@ def build_work_role_definition(
         description=effective_description,
         system_prompt=effective_prompt,
         tools=requested_tools,
-        model_id=model_id,
+        model_id=None,
         thinking=None,
         temperature=None,
         timeout_seconds=None,

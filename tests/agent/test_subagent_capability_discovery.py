@@ -7,9 +7,10 @@ import pytest
 from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
+from nanobot.agent.tools.filesystem import FileToolsConfig
 from nanobot.agent.tools.subagent import SubagentTool
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import Config
+from nanobot.config.schema import Config, ToolsConfig
 
 
 def _manager(tmp_path, config: Config | None = None) -> SubagentManager:
@@ -47,6 +48,28 @@ async def test_role_get_separates_declared_allowed_and_available_tools(tmp_path)
     assert "read_file" in payload["available_tools"]
     assert "image_analyze" not in payload["available_tools"]
     assert "generate_image" in payload["worker_tool_catalog"]
+
+
+@pytest.mark.asyncio
+async def test_role_get_does_not_report_config_disabled_tools_as_available(tmp_path) -> None:
+    config = Config(tools=ToolsConfig(file=FileToolsConfig(enable=False)))
+    manager = _manager(tmp_path, config)
+    tool = SubagentTool(manager)
+    token = bind_request_context(RequestContext(
+        channel="test",
+        chat_id="chat",
+        session_key="test:chat",
+        allowed_tools=frozenset({"read_file", "web_search"}),
+    ))
+    try:
+        payload = json.loads(await tool.execute(action="role.get", role="researcher"))
+    finally:
+        reset_request_context(token)
+        await manager.close()
+
+    assert "read_file" in payload["declared_tools"]
+    assert "read_file" in payload["allowed_tools"]
+    assert "read_file" not in payload["available_tools"]
 
 
 def test_generate_image_uses_image_generate_permission_not_generic_tool_use() -> None:

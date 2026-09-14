@@ -101,8 +101,7 @@ class SubagentStatus:
     stop_reason: str | None = None
     error: str | None = None
     role: str = "coder"
-    model: str | None = None
-    model_preset: str | None = None
+    model_id: str | None = None
     origin_channel: str | None = None
     origin_chat_id: str | None = None
     session_key: str | None = None
@@ -275,24 +274,18 @@ class SubagentManager:
         runtime: LLMRuntime,
         *,
         role_definition: ResolvedSubagentRole,
-        model: str | None,
-        model_preset: str | None,
+        model_id: str | None = None,
     ) -> LLMRuntime:
         if role_definition.disabled:
             raise ValueError(f"Subagent role '{role_definition.name}' is disabled")
-        selected_model = model
-        selected_preset = model_preset
-        if selected_model is None and selected_preset is None:
-            selected_model = role_definition.model
-            selected_preset = role_definition.model_preset
-        if selected_model is None and selected_preset is None:
+        selected_model_id = model_id or role_definition.model_id
+        if selected_model_id is None:
             return runtime
         if self.runtime_resolver is None:
             raise ValueError("Subagent model selection requires ModelRuntimeResolver")
         return self.runtime_resolver.resolve_selection(
             runtime,
-            model=selected_model,
-            model_preset=selected_preset,
+            model_id=selected_model_id,
         )
 
     def _subagent_tools_config(self) -> ToolsConfig:
@@ -415,8 +408,7 @@ class SubagentManager:
         *,
         runtime: LLMRuntime,
         role: str = "coder",
-        model: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
         thinking: str | None = None,
         timeout_seconds: float | None = None,
         context: str | None = None,
@@ -441,9 +433,8 @@ class SubagentManager:
                 raise ValueError("timeout_seconds must be greater than zero")
             runtime = self._resolve_task_runtime(
                 runtime,
-                model=model,
-                model_preset=model_preset,
                 role_definition=role_config,
+                model_id=model_id,
             )
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")
@@ -473,9 +464,8 @@ class SubagentManager:
             started_at=time.monotonic(),
             started_at_ms=int(time.time() * 1000),
             phase="queued",
-            role=role,
-            model=runtime.model,
-            model_preset=runtime.model_preset,
+            role=role_config.name,
+            model_id=runtime.model_id,
             thinking=effective_thinking,
             timeout_seconds=effective_timeout,
             context=effective_context,
@@ -1041,7 +1031,7 @@ class SubagentManager:
             "phase": status.phase,
             "iteration": status.iteration,
             "role": status.role,
-            "model": status.model,
+            "model_id": status.model_id,
             "origin": {
                 "channel": status.origin_channel,
                 "chat_id": status.origin_chat_id,

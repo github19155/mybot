@@ -76,8 +76,7 @@ _SUBAGENT_PARAMETERS = tool_parameters_schema(
         nullable=True,
     ),
     disabled=BooleanSchema(description="Disable a role", nullable=True),
-    model=StringSchema("Explicit provider/model", nullable=True),
-    model_preset=StringSchema("Configured model preset", nullable=True),
+    model_id=StringSchema("Canonical model ID for a per-run override or role mutation", nullable=True),
     thinking=StringSchema("Thinking effort", enum=list(_THINKING), nullable=True),
     temperature=NumberSchema(
         description="Sampling temperature",
@@ -136,13 +135,15 @@ class SubagentTool(Tool):
         return (
             "Run and control child agents. Prefer a matching active persistent specialist when one "
             "clearly fits. Omit role with no per-task overrides to use the permanent general worker. "
-            "Omit role and provide any per-task override (description, system_prompt, tools, model, "
-            "model_preset, thinking, temperature, timeout_seconds, or context) to create a temporary "
-            "WorkAgent snapshot that is destroyed after the task and never persisted. "
-            "Do not combine WorkAgent identity/tool overrides with a persistent role. Use role.list "
-            "or role.get to inspect declared, permission-allowed, and currently available worker "
-            "capabilities. Connected MCP tools are reused by workers; discovery never connects an "
-            "MCP server. Every run is asynchronous: successful dispatch returns immediately with "
+            "Omit role and provide any per-task override (description, system_prompt, tools, model_id, "
+            "thinking, temperature, timeout_seconds, or context) to create a temporary WorkAgent "
+            "snapshot that is destroyed after the task and never persisted. When role is provided, "
+            "model_id is a per-run runtime override and may temporarily replace that role's configured "
+            "model_id without changing persistent role configuration. Do not combine WorkAgent "
+            "identity/tool overrides (description, system_prompt, tools) with a persistent role. Use "
+            "role.list or role.get to inspect declared, permission-allowed, and currently available "
+            "worker capabilities. Connected MCP tools are reused by workers; discovery never connects "
+            "an MCP server. Every run is asynchronous: successful dispatch returns immediately with "
             "a task identifier. Background results are delivered automatically, so do not poll or "
             "sleep-and-check. Browser automation is a worker capability, not a separate Agent type. "
             "Children cannot create children."
@@ -261,8 +262,7 @@ class SubagentTool(Tool):
         task_id: str | None = None,
         message: str | None = None,
         role: str | None = None,
-        model: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
         thinking: str | None = None,
         temperature: float | None = None,
         timeout_seconds: float | None = None,
@@ -286,7 +286,9 @@ class SubagentTool(Tool):
             if runtime is None:
                 return ToolResult.error("Error: subagent run requires an active model runtime")
 
-            identity_override = description is not None or system_prompt is not None or tools is not None
+            identity_override = any(
+                value is not None for value in (description, system_prompt, tools)
+            )
             if role is not None and identity_override:
                 return ToolResult.error(
                     "Error: description, system_prompt, and tools are task-scoped WorkAgent "
@@ -298,8 +300,7 @@ class SubagentTool(Tool):
                 description=description,
                 system_prompt=system_prompt,
                 tools=tools,
-                model=model,
-                model_preset=model_preset,
+                model_id=model_id,
                 thinking=thinking,
                 temperature=temperature,
                 timeout_seconds=timeout_seconds,
@@ -309,8 +310,7 @@ class SubagentTool(Tool):
                 task=task.strip(),
                 runtime=runtime,
                 label=label,
-                model=model,
-                model_preset=model_preset,
+                model_id=model_id,
                 thinking=thinking,
                 temperature=temperature,
                 timeout_seconds=timeout_seconds,
@@ -377,8 +377,7 @@ class SubagentTool(Tool):
             for key, value in {
                 "description": description,
                 "system_prompt": system_prompt,
-                "model": model,
-                "model_preset": model_preset,
+                "model_id": model_id,
                 "thinking": thinking,
                 "temperature": temperature,
                 "timeout_seconds": timeout_seconds,

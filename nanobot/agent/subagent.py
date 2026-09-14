@@ -274,16 +274,18 @@ class SubagentManager:
         runtime: LLMRuntime,
         *,
         role_definition: ResolvedSubagentRole,
+        model_id: str | None = None,
     ) -> LLMRuntime:
         if role_definition.disabled:
             raise ValueError(f"Subagent role '{role_definition.name}' is disabled")
-        if role_definition.model_id is None:
+        selected_model_id = model_id or role_definition.model_id
+        if selected_model_id is None:
             return runtime
         if self.runtime_resolver is None:
             raise ValueError("Subagent model selection requires ModelRuntimeResolver")
         return self.runtime_resolver.resolve_selection(
             runtime,
-            model_id=role_definition.model_id,
+            model_id=selected_model_id,
         )
 
     def _subagent_tools_config(self) -> ToolsConfig:
@@ -406,6 +408,7 @@ class SubagentManager:
         *,
         runtime: LLMRuntime,
         role: str = "coder",
+        model_id: str | None = None,
         thinking: str | None = None,
         timeout_seconds: float | None = None,
         context: str | None = None,
@@ -431,6 +434,7 @@ class SubagentManager:
             runtime = self._resolve_task_runtime(
                 runtime,
                 role_definition=role_config,
+                model_id=model_id,
             )
         except ValueError as exc:
             return ToolResult.error(f"Error: {exc}")

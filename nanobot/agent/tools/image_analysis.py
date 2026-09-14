@@ -72,10 +72,16 @@ class ImageAnalysisTool(Tool):
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
+        root_config = (
+            ctx.model_management.config_snapshot
+            if ctx.model_management is not None
+            else None
+        )
+        models = ctx.models or (root_config.models if root_config is not None else {})
         return cls(
             workspace=ctx.workspace,
             config=ctx.config.image_analysis,
-            models=ctx.models,
+            models=models,
             provider_snapshot_loader=ctx.provider_snapshot_loader,
         )
 

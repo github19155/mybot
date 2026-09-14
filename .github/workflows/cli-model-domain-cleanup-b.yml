@@ -15,7 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply scoped cleanup
-        run: python .github/scripts/cli-model-domain-cleanup-b.py
+        run: |
+          python .github/scripts/cli-model-domain-cleanup-b.py
+          python .github/scripts/cli-model-domain-cleanup-b-fix.py
       - name: Scoped legacy sweep
         run: |
           echo '=== runtime sources ==='
@@ -44,6 +46,7 @@ jobs:
       - name: Commit verified cleanup
         run: |
           rm .github/scripts/cli-model-domain-cleanup-b.py
+          rm .github/scripts/cli-model-domain-cleanup-b-fix.py
           rm .github/workflows/cli-model-domain-cleanup-b.yml
           git add -A
           git config user.name 'github-actions[bot]'

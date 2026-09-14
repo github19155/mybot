@@ -41,11 +41,6 @@ async def _drain_subagent_tasks(sm: SubagentManager) -> None:
     await asyncio.sleep(0)
 
 
-# ---------------------------------------------------------------------------
-# Origin fields
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_spawn_status_carries_origin_fields(tmp_path):
     status = SubagentStatus(
@@ -65,11 +60,6 @@ async def test_spawn_status_carries_origin_fields(tmp_path):
     assert status.origin_message_id == "msg-9"
     assert status.started_at_ms is None
     assert status.ended_at_ms is None
-
-
-# ---------------------------------------------------------------------------
-# Per-session spawn budget
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -127,7 +117,6 @@ async def test_spawn_budget_is_per_session(tmp_path):
         runtime=_runtime(),
     )
     assert isinstance(r1, str)
-    # A different session key is still admitted.
     r2 = await sm.spawn(
         "task b",
         origin_channel="weixin",
@@ -139,11 +128,6 @@ async def test_spawn_budget_is_per_session(tmp_path):
     assert not r2.startswith("Error:")
 
     await sm.close()
-
-
-# ---------------------------------------------------------------------------
-# steer — bounded queue, drop-oldest, iteration-boundary drain
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -163,7 +147,7 @@ async def test_steer_drop_oldest_on_overflow(tmp_path):
         state="running",
     )
 
-    for i in range(7):  # maxsize 5 -> oldest 2 dropped
+    for i in range(7):
         assert await sm.steer("t1", f"msg-{i}") is True
 
     items = await sm._drain_steer_queue("t1", limit=10)
@@ -199,11 +183,6 @@ async def test_steer_drain_respects_limit(tmp_path):
         pass
 
 
-# ---------------------------------------------------------------------------
-# Finished history + fleet_snapshot
-# ---------------------------------------------------------------------------
-
-
 def _finished_status(task_id: str, **overrides) -> SubagentStatus:
     defaults = dict(
         task_id=task_id,
@@ -213,7 +192,7 @@ def _finished_status(task_id: str, **overrides) -> SubagentStatus:
         started_at_ms=1_000,
         phase="done",
         role="coder",
-        model="m",
+        model_id="worker-model",
         origin_channel="weixin",
         origin_chat_id="c1",
         session_key="s1",
@@ -245,7 +224,6 @@ def test_record_finished_skips_incomplete(tmp_path):
 
 def test_fleet_snapshot_shape_and_ordering(tmp_path):
     sm = _manager(tmp_path)
-    # A running status and a finished status (finished has an earlier start).
     running = _finished_status(
         "run-1",
         phase="running",
@@ -265,6 +243,8 @@ def test_fleet_snapshot_shape_and_ordering(tmp_path):
     assert running_row["state"] == "running"
     assert running_row["phase"] == "running"
     assert running_row["label"] == "Running task"
+    assert running_row["model_id"] == "worker-model"
+    assert "model" not in running_row
     assert running_row["origin"] == {
         "channel": "weixin",
         "chat_id": "c1",
@@ -278,7 +258,7 @@ def test_fleet_snapshot_shape_and_ordering(tmp_path):
     }
     assert snap["subagents"][1]["state"] == "completed"
     assert snap["subagents"][1]["started_at_ms"] == 1_000
-    assert snap["subagents"][1]["ended_at_ms"] is not None  # stamped on record
+    assert snap["subagents"][1]["ended_at_ms"] is not None
     assert snap["budget"] == {
         "max_per_session": 8,
         "max_global": 16,

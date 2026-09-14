@@ -10,11 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 from nanobot.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from nanobot.api.runtime import ApiRuntime, ApiStartOptions
-from nanobot.audio.transcription import resolve_transcription_config
-from nanobot.audio.transcription_registry import (
-    resolve_transcription_provider,
-    transcription_provider_names,
-)
+from nanobot.audio.transcription_registry import transcription_provider_names
 from nanobot.config.schema import Config
 from nanobot.optional_features import (
     OptionalFeatureError,
@@ -41,9 +37,7 @@ from nanobot.webui.settings_models import (
     mask_secret_hint,
     provider_configured_for_settings,
 )
-from nanobot.webui.workspaces import (
-    read_webui_default_access_mode,
-)
+from nanobot.webui.workspaces import read_webui_default_access_mode
 
 if TYPE_CHECKING:
     from nanobot.webui.settings_services import WebUISettingsServices
@@ -145,6 +139,10 @@ def _transcription_provider_rows(config: Config) -> list[dict[str, Any]]:
     return rows
 
 
+def _selected_model(config: Config, model_id: str | None):
+    return config.models.get(model_id) if model_id is not None else None
+
+
 def capability_settings_payload(
     config: Config,
     *,
@@ -152,20 +150,31 @@ def capability_settings_payload(
 ) -> CapabilitySettingsPayload:
     search_config = config.tools.web.search
     image_config = config.tools.image_generation
-    transcription = resolve_transcription_config(config)
+    transcription = config.transcription
     search_provider = (
         search_config.provider
         if search_config.provider in _WEB_SEARCH_PROVIDER_BY_NAME
         else "duckduckgo"
     )
+    image_model = _selected_model(config, image_config.model_id)
+    transcription_model = _selected_model(config, transcription.model_id)
     image_providers = _image_generation_provider_rows(config, oauth_status=oauth_status)
     selected_image_provider = next(
         (
             provider
             for provider in image_providers
-            if provider["name"] == image_config.provider
+            if image_model is not None and provider["name"] == image_model.provider
         ),
         None,
+    )
+    transcription_provider_configured = bool(
+        transcription_model is not None
+        and getattr(config.providers, transcription_model.provider, None) is not None
+        and getattr(
+            getattr(config.providers, transcription_model.provider),
+            "api_key",
+            None,
+        )
     )
     return {
         "web_search": {
@@ -184,9 +193,7 @@ def capability_settings_payload(
                 "max_results": search_config.max_results,
                 "timeout": search_config.timeout,
             },
-            "fetch": {
-                "use_jina_reader": config.tools.web.fetch.use_jina_reader,
-            },
+            "fetch": {"use_jina_reader": config.tools.web.fetch.use_jina_reader},
         },
         "api": {
             "host": config.api.host,
@@ -205,11 +212,12 @@ def capability_settings_payload(
         },
         "image_generation": {
             "enabled": image_config.enabled,
-            "provider": image_config.provider,
+            "model_id": image_config.model_id,
+            "provider": image_model.provider if image_model is not None else None,
             "provider_configured": bool(
                 selected_image_provider and selected_image_provider["configured"]
             ),
-            "model": image_config.model,
+            "model": image_model.model if image_model is not None else None,
             "default_aspect_ratio": image_config.default_aspect_ratio,
             "default_image_size": image_config.default_image_size,
             "max_images_per_turn": image_config.max_images_per_turn,
@@ -218,9 +226,12 @@ def capability_settings_payload(
         },
         "transcription": {
             "enabled": transcription.enabled,
-            "provider": transcription.provider,
-            "provider_configured": transcription.configured,
-            "model": transcription.model,
+            "model_id": transcription.model_id,
+            "provider": (
+                transcription_model.provider if transcription_model is not None else None
+            ),
+            "provider_configured": transcription_provider_configured,
+            "model": transcription_model.model if transcription_model is not None else None,
             "language": transcription.language,
             "max_duration_sec": transcription.max_duration_sec,
             "max_upload_mb": transcription.max_upload_mb,
@@ -361,7 +372,6 @@ def update_web_search_settings(config: Config, query: QueryParams) -> tuple[bool
 
 
 def update_api_settings(config: Config, query: QueryParams) -> None:
-    """Update the managed OpenAI-compatible API configuration."""
     api = config.api
     host = query_first(query, "host")
     if host is not None:
@@ -408,15 +418,19 @@ def update_image_generation_settings(
     image_config = config.tools.image_generation
     changed = False
 
-    provider_name = query_first(query, "provider")
-    if provider_name is not None:
-        provider_name = provider_name.strip().lower()
-        if not provider_name:
-            raise WebUISettingsError("image generation provider is required")
-        if get_image_gen_provider(provider_name) is None:
-            raise WebUISettingsError("unknown image generation provider")
-        if image_config.provider != provider_name:
-            image_config.provider = provider_name
+    model_id = query_first_alias(query, "model_id", "modelId")
+    if model_id is not None:
+        selected = model_id.strip() or None
+        if selected is not None:
+            model = config.models.get(selected)
+            if model is None:
+                raise WebUISettingsError("unknown image generation model_id")
+            if not model.capabilities.image_generation:
+                raise WebUISettingsError(
+                    "selected model does not support image generation"
+                )
+        if image_config.model_id != selected:
+            image_config.model_id = selected
             changed = True
 
     enabled = query_first(query, "enabled")
@@ -424,17 +438,6 @@ def update_image_generation_settings(
         parsed_enabled = parse_bool(enabled, "enabled")
         if image_config.enabled != parsed_enabled:
             image_config.enabled = parsed_enabled
-            changed = True
-
-    model = query_first(query, "model")
-    if model is not None:
-        model = model.strip()
-        if not model:
-            raise WebUISettingsError("image generation model is required")
-        if len(model) > 200:
-            raise WebUISettingsError("image generation model is too long")
-        if image_config.model != model:
-            image_config.model = model
             changed = True
 
     default_aspect_ratio = query_first_alias(
@@ -485,6 +488,11 @@ def update_image_generation_settings(
             changed = True
 
     if image_config.enabled:
+        if image_config.model_id is None:
+            raise WebUISettingsError("image generation model_id is required")
+        image_model = config.models.get(image_config.model_id)
+        if image_model is None or not image_model.capabilities.image_generation:
+            raise WebUISettingsError("image generation model_id is invalid")
         selected_provider = next(
             (
                 provider
@@ -492,7 +500,7 @@ def update_image_generation_settings(
                     config,
                     oauth_status=oauth_status,
                 )
-                if provider["name"] == image_config.provider
+                if provider["name"] == image_model.provider
             ),
             None,
         )
@@ -512,24 +520,19 @@ def update_transcription_settings(config: Config, query: QueryParams) -> bool:
             transcription.enabled = parsed_enabled
             changed = True
 
-    provider = query_first(query, "provider")
-    if provider is not None:
-        provider = provider.strip().lower()
-        provider_spec = resolve_transcription_provider(provider)
-        if provider_spec is None:
-            raise WebUISettingsError("unknown transcription provider")
-        provider = provider_spec.name
-        if transcription.provider != provider:
-            transcription.provider = provider
-            changed = True
-
-    model = query_first(query, "model")
-    if model is not None:
-        model = model.strip() or None
-        if model is not None and len(model) > 200:
-            raise WebUISettingsError("transcription model is too long")
-        if transcription.model != model:
-            transcription.model = model
+    model_id = query_first_alias(query, "model_id", "modelId")
+    if model_id is not None:
+        selected = model_id.strip() or None
+        if selected is not None:
+            model = config.models.get(selected)
+            if model is None:
+                raise WebUISettingsError("unknown transcription model_id")
+            if not model.capabilities.transcription:
+                raise WebUISettingsError(
+                    "selected model does not support transcription"
+                )
+        if transcription.model_id != selected:
+            transcription.model_id = selected
             changed = True
 
     language = query_first(query, "language")
@@ -570,7 +573,6 @@ def update_transcription_settings(config: Config, query: QueryParams) -> bool:
 
 
 def network_safety_payload(config: Config) -> dict[str, Any]:
-    """Return the network-related fields embedded in the advanced DTO."""
     return {
         "webui_allow_local_service_access": config.tools.webui_allow_local_service_access,
         "allow_local_preview_access": config.tools.webui_allow_local_service_access,
@@ -652,26 +654,10 @@ class CapabilitySettingsHandler:
             return await self._stop_api(operations)
 
         mutation = {
-            "web-search-update": (
-                operations.update_web_search,
-                "browser",
-                False,
-            ),
-            "transcription-update": (
-                operations.update_transcription,
-                None,
-                False,
-            ),
-            "network-update": (
-                operations.update_network,
-                "runtime",
-                False,
-            ),
-            "image-update": (
-                operations.update_image,
-                "image",
-                True,
-            ),
+            "web-search-update": (operations.update_web_search, "browser", False),
+            "transcription-update": (operations.update_transcription, None, False),
+            "network-update": (operations.update_network, "runtime", False),
+            "image-update": (operations.update_image, "image", True),
         }.get(action)
         if mutation is None:
             return SettingsRouteResult.failure(404, "unknown settings action")
@@ -700,7 +686,6 @@ class CapabilitySettingsHandler:
         payload: dict[str, Any],
         reload_image: Callable[[], Awaitable[dict[str, Any]]],
     ) -> tuple[dict[str, Any], bool]:
-        """Hot-apply image settings, preserving restart fallback on failure."""
         if not payload.get("requires_restart"):
             return payload, False
         try:

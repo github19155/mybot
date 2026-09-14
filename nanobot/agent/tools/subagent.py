@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.permissions import PermissionManager
 from nanobot.agent.subagent_role_storage import record_role_use
-from nanobot.agent.subagent_roles import ALL_SUBAGENT_TOOL_NAMES, TOOL_MODULES
+from nanobot.agent.subagent_roles import (
+    ALL_SUBAGENT_TOOL_NAMES,
+    TOOL_MODULES,
+    is_subagent_tool_name,
+)
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext, current_request_context
 from nanobot.agent.tools.loader import ToolLoader
@@ -119,6 +123,9 @@ class SubagentTool(Tool):
         manager = ctx.subagent_manager
         if manager is None:
             raise RuntimeError("SubagentTool requires an initialized subagent manager")
+        if ctx.registry is None:
+            raise RuntimeError("SubagentTool requires the owning system tool registry")
+        manager.system_tools = ctx.registry
         return cls(manager)
 
     @property
@@ -135,7 +142,8 @@ class SubagentTool(Tool):
             "WorkAgent snapshot that is destroyed after the task and never persisted. "
             "Do not combine WorkAgent identity/tool overrides with a persistent role. Use role.list "
             "or role.get to inspect declared, permission-allowed, and currently available worker "
-            "capabilities. Every run is asynchronous: successful dispatch returns immediately with "
+            "capabilities. Connected MCP tools are reused by workers; discovery never connects an "
+            "MCP server. Every run is asynchronous: successful dispatch returns immediately with "
             "a task identifier. Background results are delivered automatically, so do not poll or "
             "sleep-and-check. Browser automation is a worker capability, not a separate Agent type. "
             "Children cannot create children."
@@ -149,12 +157,18 @@ class SubagentTool(Tool):
     def _json(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
+    def _dynamic_mcp_catalog(self) -> set[str]:
+        registry = getattr(self._manager, "system_tools", None)
+        if registry is None:
+            return set()
+        return {name for name in registry.tool_names if name.startswith("mcp_")}
+
     def _available_worker_tools_without_activation(self) -> set[str]:
-        """Return statically loadable worker tools without constructing or starting them."""
+        """Return loadable worker tools plus already-connected MCP tools without activation."""
         config_builder = getattr(self._manager, "_subagent_tools_config", None)
         workspace = getattr(self._manager, "workspace", None)
         if not callable(config_builder) or workspace is None:
-            return set()
+            return self._dynamic_mcp_catalog()
 
         config = config_builder()
         resolver = getattr(self._manager, "runtime_resolver", None)
@@ -209,6 +223,7 @@ class SubagentTool(Tool):
             or config.image_generation.provider not in image_provider_configs
         ):
             available.discard("generate_image")
+        available.update(self._dynamic_mcp_catalog())
         return available
 
     def _role_view(
@@ -221,11 +236,14 @@ class SubagentTool(Tool):
         view = dict(role_data)
         declared = list(dict.fromkeys(str(name) for name in view.pop("tools", ()) if name))
         role_name = str(view.get("name") or "").strip().lower()
+        dynamic_mcp = self._dynamic_mcp_catalog()
+        if role_name == "general":
+            declared = list(dict.fromkeys((*declared, *sorted(dynamic_mcp))))
         subject = PermissionManager.specialist_subject(role_name)
         allowed = [
             name
             for name in declared
-            if name in ALL_SUBAGENT_TOOL_NAMES
+            if is_subagent_tool_name(name)
             and name in request_allowed_tools
             and self._manager.permissions.tool_allowed(subject, name)
         ]
@@ -233,7 +251,7 @@ class SubagentTool(Tool):
         view["declared_tools"] = declared
         view["allowed_tools"] = allowed
         view["available_tools"] = available
-        view["worker_tool_catalog"] = sorted(ALL_SUBAGENT_TOOL_NAMES)
+        view["worker_tool_catalog"] = sorted({*ALL_SUBAGENT_TOOL_NAMES, *dynamic_mcp})
         return view
 
     async def execute(

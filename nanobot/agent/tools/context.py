@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from nanobot.agent.subagent import SubagentManager
     from nanobot.agent.tools.exec_session import ExecSessionManager
     from nanobot.agent.tools.file_state import FileStates
+    from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.agent.tools.runtime_control import RuntimeControl
     from nanobot.bus.queue import MessageBus
     from nanobot.bus.runtime_events import RuntimeEventBus
@@ -104,3 +105,4 @@ class ToolContext:
     runtime_events: RuntimeEventBus | None = None
     runtime_control: RuntimeControl | None = None
     model_management: ModelManagement | None = None
+    registry: ToolRegistry | None = None

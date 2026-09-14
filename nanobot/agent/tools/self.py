@@ -122,7 +122,6 @@ class MyTool(Tool):
     RESTRICTED: dict[str, dict[str, Any]] = {
         "max_iterations":        {"type": int, "min": 1,   "max": 100},
         "context_window_tokens": {"type": int, "min": 4096, "max": 1_000_000},
-        "model_id":              {"type": str, "min_len": 1},
     }
 
     _MAX_RUNTIME_KEYS = 64
@@ -166,7 +165,7 @@ class MyTool(Tool):
             "\n"
             "When to use:\n"
             "- User asks about your model or settings → check that key.\n"
-            "- User asks to switch to a named model preset → set model_id to that preset name.\n"
+            "- User asks to switch models → set model_id to a configured canonical model ID.\n"
             "- A tool fails or behaves unexpectedly → check the related config to diagnose.\n"
             "- User asks you to remember a preference for this session → set to store it in your scratchpad.\n"
             "- About to start a large task → check context_window_tokens and max_iterations first."
@@ -195,9 +194,9 @@ class MyTool(Tool):
                     "type": "string",
                     "description": "Dot-path for check/set. Examples: 'max_iterations', 'workspace', 'provider_retry_mode'. "
                     "Use 'request.channel', 'request.chat_id', or 'request.sender_id' for current routing metadata. "
-                    "Use 'model_id' to switch named model presets. For check without key, shows all config values.",
+                    "Use 'model_id' to switch configured canonical models. For check without key, shows all config values.",
                 },
-                "value": {"description": "New value (for set). Type must match target (int for max_iterations/context_window_tokens, str for model/model_id)."},
+                "value": {"description": "New value (for set). Type must match target (int for max_iterations/context_window_tokens, str for model_id)."},
             },
             "required": ["action"],
         }
@@ -542,14 +541,12 @@ class MyTool(Tool):
             return ToolResult.error(f"Error: '{key}' must be <= {spec['max']}")
         if "min_len" in spec and len(str(value)) < spec["min_len"]:
             return ToolResult.error(f"Error: '{key}' must be at least {spec['min_len']} characters")
-        if key in {"model", "context_window_tokens"} and current_request_session_key():
+        if key == "context_window_tokens" and current_request_session_key():
             return ToolResult.error(
                 f"Error: direct '{key}' changes are instance-wide and disabled "
-                "during an active session; use a configured model_id"
+                "during an active session; switch model_id instead"
             )
-        if key == "model_id":
-            self._runtime_control.set_model_id(cast(str, value))
-        elif key == "context_window_tokens":
+        if key == "context_window_tokens":
             self._runtime_control.set_context_window_tokens(cast(int, value))
         else:
             self._runtime_control.set_max_iterations(cast(int, value))

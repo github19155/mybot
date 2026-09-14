@@ -56,8 +56,8 @@ from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeEventBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults, Config
-from nanobot.model_domain import ModelConfig
 from nanobot.llm_usage.context import source_from_request
+from nanobot.model_domain import ModelConfig
 from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
@@ -294,7 +294,7 @@ class AgentLoop:
         provider_signature: tuple[object, ...] | None = None,
         models: dict[str, ModelConfig] | None = None,
         prompt_for_model: Callable[[str | None], str | None] | None = None,
-        model_catalog_loader: preset_helpers.ModelCatalogLoader | None = None,
+        model_catalog_loader: Callable[[], Mapping[str, ModelConfig]] | None = None,
         model_id: str | None = None,
         runtime_events: RuntimeEventBus | None = None,
         turn_delivery_factory: TurnDeliveryFactory | None = None,
@@ -340,7 +340,7 @@ class AgentLoop:
             initial_context_window = (
                 context_window_tokens
                 if context_window_tokens is not None
-                else defaults.context_window_tokens
+                else 200_000
             )
             initial_runtime = LLMRuntime.capture(
                 provider,
@@ -603,7 +603,7 @@ class AgentLoop:
             if not recover_removed or name in self.runtime_resolver.models:
                 raise
             logger.warning(
-                "Session '{}' references removed model preset '{}'; falling back to default",
+                "Session '{}' references removed model_id '{}'; falling back to default",
                 session.key,
                 name,
             )
@@ -616,7 +616,7 @@ class AgentLoop:
         session_key: str,
         name: str,
     ) -> LLMRuntime:
-        """Validate and persist one session's preset selection."""
+        """Validate and persist one session's canonical model selection."""
         runtime = self.runtime_resolver.resolve_model(name)
         session = self.sessions.get_or_create(session_key)
         session.metadata[SESSION_MODEL_ID_METADATA_KEY] = runtime.model_id
@@ -640,11 +640,11 @@ class AgentLoop:
 
     def set_model_id(
         self,
-        name: str | None,
+        name: str,
         *,
         publish_update: bool = True,
     ) -> LLMRuntime:
-        """Select a named default runtime for future turns."""
+        """Select a canonical model ID for future turns."""
         old_model = self.model
         runtime = self.runtime_resolver.select_model(name)
         self._publish_runtime_selection(runtime, publish_update=publish_update)
@@ -654,10 +654,6 @@ class AgentLoop:
             runtime.model,
         )
         return runtime
-
-    def set_runtime_model(self, model: str) -> LLMRuntime:
-        """Select a model on the current provider for future turns."""
-        return self.runtime_resolver.select_model(model)
 
     def set_runtime_context_window(self, context_window_tokens: int) -> LLMRuntime:
         """Select a context limit for future turns."""

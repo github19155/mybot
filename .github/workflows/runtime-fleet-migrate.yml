@@ -24,10 +24,10 @@ jobs:
           ref: refactor/model-runtime-fleet-v2
           fetch-depth: 0
           path: repo
-      - name: Apply wiring patch
+      - name: Apply canonical cleanup
         working-directory: repo
         run: |
-          python ../staging/.ci/runtime_fleet/patch2.py
+          python ../staging/.ci/runtime_fleet/patch3.py
           git diff --check
           git status --short
       - uses: actions/setup-python@v5
@@ -52,21 +52,16 @@ jobs:
         working-directory: repo
         run: |
           uv run python -m compileall -q \
-            nanobot/providers/factory.py \
-            nanobot/model_fleet.py \
-            nanobot/agent/model_runtime.py \
             nanobot/agent/loop.py \
-            nanobot/agent/tools/runtime_control.py \
             nanobot/agent/tools/self.py \
-            nanobot/session/model_selection.py \
-            nanobot/utils/llm_runtime.py
-      - name: Commit wiring patch
+            nanobot/nanobot.py
+      - name: Commit cleanup
         working-directory: repo
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'refactor(runtime): wire canonical model ids through runtime and fleet'
+          git commit -m 'refactor(runtime): remove legacy model selectors'
           git push origin HEAD:refactor/model-runtime-fleet-v2
       - name: Report validation
         if: always()

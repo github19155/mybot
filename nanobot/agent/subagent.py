@@ -190,6 +190,10 @@ class SubagentManager:
         self.model_management = model_management
         self.runtime_resolver = runtime_resolver
         self.permissions = permission_manager
+        # Bound by the Main-facing SubagentTool when the canonical system
+        # registry is loaded. MCPProvider remains the sole connection owner;
+        # workers only borrow already-connected wrapper objects from this view.
+        self.system_tools: ToolRegistry | None = None
         self._running_tasks: dict[str, asyncio.Task[str]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
         self._session_tasks: dict[str, set[str]] = {}
@@ -305,6 +309,11 @@ class SubagentManager:
 
         return image_gen_provider_configs(config)
 
+    def _dynamic_mcp_tool_names(self) -> set[str]:
+        if self.system_tools is None:
+            return set()
+        return {name for name in self.system_tools.tool_names if name.startswith("mcp_")}
+
     def _build_tools(
         self,
         workspace: Path | None = None,
@@ -314,7 +323,7 @@ class SubagentManager:
         allowed_tools: set[str] | frozenset[str] | None = None,
         role_definition: ResolvedSubagentRole | None = None,
     ) -> ToolRegistry:
-        """Build an isolated subagent tool registry via ToolLoader."""
+        """Build an isolated worker registry and borrow eligible live MCP wrappers."""
         root = self.workspace if workspace is None else workspace
         role_definition = role_definition or self._resolve_role(role)
         subject = (
@@ -345,15 +354,31 @@ class SubagentManager:
             ),
         )
         ToolLoader().load(ctx, registry, scope="subagent")
-        allowed = TOOL_MODULES
+
+        dynamic_mcp = self._dynamic_mcp_tool_names()
         allowed_names = set(role_definition.tools)
+        if role_definition.category == "general":
+            allowed_names.update(dynamic_mcp)
         if allowed_tools is not None:
             allowed_names.intersection_update(allowed_tools)
         allowed_names.discard("subagent")
-        for name in registry.tool_names:
+
+        # MCPProvider owns the live wrappers and their connection/reconnect
+        # callbacks. Register the same objects into this task-local registry;
+        # permission remains bound to the worker subject, not Main.
+        if self.system_tools is not None:
+            for name in sorted(dynamic_mcp & allowed_names):
+                if not self.permissions.tool_allowed(subject, name):
+                    continue
+                tool = self.system_tools.get(name)
+                if tool is not None:
+                    registry.register(tool)
+
+        for name in list(registry.tool_names):
             tool = registry.get(name)
             if name not in allowed_names or (
-                name in allowed and type(tool).__module__ != f"nanobot.agent.tools.{allowed[name]}"
+                name in TOOL_MODULES
+                and type(tool).__module__ != f"nanobot.agent.tools.{TOOL_MODULES[name]}"
             ):
                 registry.unregister(name)
         return registry
@@ -604,6 +629,7 @@ class SubagentManager:
                 cfg = self._subagent_tools_config()
                 cfg.restrict_to_workspace = workspace_scope.restrict_to_workspace
             tools = self._build_tools(
+                workspace=root,
                 tools_config=cfg,
                 role=status.role,
                 allowed_tools=allowed_tools,
@@ -637,9 +663,7 @@ class SubagentManager:
                 message_id=origin_message_id,
                 session_key=sess_key,
                 runtime=runtime,
-                allowed_tools=frozenset(
-                    tools.tool_names if allowed_tools is None else allowed_tools
-                ),
+                allowed_tools=frozenset(tools.tool_names),
                 conversation_history=tuple(portable_history),
                 exec_owner_session_key=self._exec_owner_key(task_id, origin),
             ))

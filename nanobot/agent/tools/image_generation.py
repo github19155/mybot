@@ -102,7 +102,7 @@ class ImageGenerationTool(Tool):
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
         root_config = (
-            ctx.model_management.config_snapshot
+            ctx.model_management.config_snapshot()
             if ctx.model_management is not None
             else None
         )

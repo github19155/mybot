@@ -6,11 +6,12 @@ from pathlib import Path
 from nanobot.agent.tools.subagent import _SUBAGENT_PARAMETERS, SubagentTool
 
 
-def test_main_tool_contract_is_async_first() -> None:
+def test_main_tool_contract_dispatches_workers_asynchronously() -> None:
     contract = Path("nanobot/templates/agent/tool_contract.md").read_text(encoding="utf-8")
 
-    assert "Main is async-first" in contract
-    assert "reply to the user immediately" in contract
+    assert "Every Worker dispatch is asynchronous" in contract
+    assert "end the current Main turn" in contract
+    assert "new Main turn" in contract
 
 
 def test_subagent_run_has_no_wait_parameter() -> None:

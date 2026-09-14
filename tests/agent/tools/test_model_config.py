@@ -126,17 +126,37 @@ async def test_unreferenced_model_can_be_deleted():
 @pytest.mark.asyncio
 async def test_catalog_contains_only_real_models_and_no_credentials():
     config = _config()
-    config.providers.anthropic.extra_headers = {"Authorization": "Bearer private-provider-key"}
+    proxy = "http://user:super-secret-password@proxy.example:8080"
+    config.providers.anthropic.proxy = proxy
+    config.providers.anthropic.extra_headers = {"Authorization": "Bearer header-secret"}
+    config.providers.anthropic.extra_body = {"client_secret": "body-secret"}
+    config.providers.anthropic.extra_query = {"access_token": "query-secret"}
     service = ModelManagement(config)
     catalog = await service.execute("list")
     assert catalog["status"] == "ok"
     assert [row["model_id"] for row in catalog["models"]] == ["main"]
     assert all(row["model_id"].casefold() != "default" for row in catalog["models"])
     assert catalog["models"][0]["is_default"] is True
+
+    anthropic = next(row for row in catalog["providers"] if row["provider"] == "anthropic")
+    assert "proxy" not in anthropic
+    assert "api_key" not in anthropic
+    assert "extra_headers" not in anthropic
+    assert "extra_body" not in anthropic
+    assert "extra_query" not in anthropic
+
     serialized = json.dumps(catalog)
-    assert "private-provider-key" not in serialized
-    assert "cpa-secret" not in serialized
-    assert "extra_headers" not in serialized
+    for secret in (
+        "private-provider-key",
+        "cpa-secret",
+        "super-secret-password",
+        "user:super-secret-password",
+        proxy,
+        "header-secret",
+        "body-secret",
+        "query-secret",
+    ):
+        assert secret not in serialized
 
 
 @pytest.mark.asyncio

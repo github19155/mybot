@@ -13,7 +13,7 @@ def test_attach_fields_restore_session_runtime_metadata() -> None:
     sessions = MagicMock()
     sessions.read_session_metadata.return_value = {
         "metadata": {
-            SESSION_MODEL_ID_METADATA_KEY: "Deep Research",
+            SESSION_MODEL_ID_METADATA_KEY: "deep-research",
             RECOVERY_METADATA_KEY: {
                 "status": "recovered",
                 "recovery_id": "recovery-1",
@@ -26,7 +26,7 @@ def test_attach_fields_restore_session_runtime_metadata() -> None:
     projection = WebUISessionProjection(sessions)
 
     assert projection.attach_fields("websocket:chat-1") == {
-        "model_id": "Deep Research",
+        "model_id": "deep-research",
         "recovery_state": {
             "status": "recovered",
             "recovery_id": "recovery-1",

@@ -19,7 +19,24 @@ jobs:
       - name: Apply cleanup candidate
         run: |
           python .github/scripts/apply-model-domain-cleanup.py
-          python .github/scripts/model-domain-collection-cutover.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("nanobot/agent/loop.py")
+          text = path.read_text()
+          old = '''            ModelManagement(
+              model_management_config,
+              runtime_resolver=self.runtime_resolver,
+              invalidate=self.invalidate_runtime_config,
+            )'''
+          new = '''            ModelManagement(
+              model_management_config,
+              invalidate=self.invalidate_runtime_config,
+            )'''
+          if old not in text:
+              raise RuntimeError("stale ModelManagement runtime_resolver caller not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

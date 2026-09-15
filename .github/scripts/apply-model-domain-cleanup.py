@@ -7,9 +7,9 @@ import re
 def replace(path: str, old: str, new: str) -> None:
     p = Path(path)
     text = p.read_text()
+    if new in text:
+        return
     if old not in text:
-        if new in text:
-            return
         raise RuntimeError(f"pattern not found in {path}: {old[:80]!r}")
     p.write_text(text.replace(old, new))
 

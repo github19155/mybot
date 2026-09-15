@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from nanobot.config.schema import Config
+from nanobot.model_domain import ModelCapabilities, ModelConfig
 from nanobot.webui.settings_capabilities import (
     capability_settings_payload,
     update_api_settings,
@@ -20,6 +21,18 @@ def _oauth_status(_spec: Any) -> dict[str, Any]:
 def test_capability_domain_updates_representative_settings() -> None:
     config = Config()
     config.providers.openrouter.api_key = "sk-test"
+    config.models["image"] = ModelConfig(
+        display_name="Image",
+        provider="openrouter",
+        model="google/gemini-2.5-flash-image",
+        capabilities=ModelCapabilities(image_generation=True),
+    )
+    config.models["speech"] = ModelConfig(
+        display_name="Speech",
+        provider="openrouter",
+        model="openai/whisper-large-v3",
+        capabilities=ModelCapabilities(transcription=True),
+    )
 
     web_changed, web_restart = update_web_search_settings(
         config,
@@ -35,12 +48,12 @@ def test_capability_domain_updates_representative_settings() -> None:
     )
     image_changed = update_image_generation_settings(
         config,
-        {"enabled": ["true"], "provider": ["openrouter"]},
+        {"enabled": ["true"], "model_id": ["image"]},
         oauth_status=_oauth_status,
     )
     transcription_changed = update_transcription_settings(
         config,
-        {"provider": ["openrouter"], "model": ["openai/whisper-large-v3"]},
+        {"model_id": ["speech"]},
     )
     network_changed, access_mode = update_network_safety_settings(
         config,
@@ -58,8 +71,12 @@ def test_capability_domain_updates_representative_settings() -> None:
     assert payload["web_search"]["max_results"] == 7
     assert payload["api"]["host"] == "127.0.0.2"
     assert payload["api"]["port"] == 8900
-    assert payload["image_generation"]["enabled"] is True
+    assert payload["image_generation"]["model_id"] == "image"
+    assert payload["image_generation"]["provider"] == "openrouter"
+    assert payload["image_generation"]["model"] == "google/gemini-2.5-flash-image"
+    assert payload["transcription"]["model_id"] == "speech"
     assert payload["transcription"]["provider"] == "openrouter"
+    assert payload["transcription"]["model"] == "openai/whisper-large-v3"
 
 
 def test_tavily_web_search_keeps_custom_base_url() -> None:

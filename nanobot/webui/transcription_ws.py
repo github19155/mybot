@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from nanobot.audio.transcription import (
-    TranscriptionIngressError,
+    TranscriptionError,
     resolve_transcription_config,
     transcribe_audio_data_url,
 )
@@ -46,6 +46,6 @@ async def webui_transcription_event(
             resolve_transcription_config(load_config(config_path)),
             duration_ms=envelope.get("duration_ms"),
         )
-    except TranscriptionIngressError as exc:
+    except TranscriptionError as exc:
         return error(exc.detail, **exc.extra)
     return "transcription_result", {"request_id": request_id, "text": text}

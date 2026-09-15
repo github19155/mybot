@@ -28,7 +28,6 @@ from nanobot.runtime_context import (
     public_history_message,
 )
 from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
@@ -1803,46 +1802,6 @@ class SessionManager:
         # they opt into a dedicated checkpoint primitive.
         self.save(session)
 
-    def rename_model_preset(self, old_name: str, new_name: str) -> int:
-        """Rename a session-scoped model preset across durable and live sessions."""
-        if old_name == new_name:
-            return 0
-
-        cached = dict(self._overflow_cache.items())
-        cached.update(self._cache)
-        keys = set(cached)
-        keys.update(item["key"] for item in self._store.list_sessions())
-
-        changed: list[Session] = []
-        try:
-            for key in sorted(keys):
-                session = cached.get(key) or self._load(key)
-                if (
-                    session is None
-                    or session.metadata.get(SESSION_MODEL_PRESET_METADATA_KEY) != old_name
-                ):
-                    continue
-                session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = new_name
-                changed.append(session)
-                if session.policy.persist:
-                    self.save(session, fsync=True)
-                else:
-                    self._remember(session)
-        except BaseException:
-            for session in reversed(changed):
-                session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = old_name
-                try:
-                    if session.policy.persist:
-                        self.save(session, fsync=True)
-                    else:
-                        self._remember(session)
-                except Exception:
-                    logger.exception(
-                        "Failed to roll back model preset rename for session {}",
-                        session.key,
-                    )
-            raise
-        return len(changed)
 
     def flush_all(self) -> int:
         """Re-save every cached session with fsync for durable shutdown.

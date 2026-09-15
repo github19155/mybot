@@ -5,10 +5,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from nanobot.agent.tools.image_generation import ImageGenerationTool
+from nanobot.agent.tools.image_generation import ImageGenerationTool, ImageGenerationToolConfig
 from nanobot.config.loader import set_config_path
-from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig
+from nanobot.config.schema import Config, ProviderConfig
+from nanobot.model_domain import ModelCapabilities, ModelConfig
 from nanobot.providers.image_generation import GeneratedImageResponse
 
 PNG_BYTES = (
@@ -36,8 +38,22 @@ class FakeImageClient:
         return GeneratedImageResponse(images=[PNG_DATA_URL], content="", raw={})
 
 
+def _image_model(
+    *,
+    provider: str = "openrouter",
+    upstream: str = "openai/gpt-5.4-image-2",
+    capable: bool = True,
+) -> ModelConfig:
+    return ModelConfig(
+        display_name="Image",
+        provider=provider,
+        model=upstream,
+        capabilities=ModelCapabilities(image_generation=capable),
+    )
+
+
 @pytest.mark.asyncio
-async def test_generate_image_tool_stores_artifact_and_source_images(
+async def test_generate_image_tool_stores_canonical_provenance_and_source_images(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -51,8 +67,13 @@ async def test_generate_image_tool_stores_artifact_and_source_images(
     ref.write_bytes(PNG_BYTES)
     tool = ImageGenerationTool(
         workspace=tmp_path,
-        config=ImageGenerationToolConfig(enabled=True, max_images_per_turn=2),
-        provider_config=ProviderConfig(api_key="sk-or-test"),
+        config=ImageGenerationToolConfig(
+            enabled=True,
+            model_id="image-gen",
+            max_images_per_turn=2,
+        ),
+        models={"image-gen": _image_model()},
+        provider_configs={"openrouter": ProviderConfig(api_key="sk-or-test")},
     )
 
     result = await tool.execute(
@@ -68,61 +89,87 @@ async def test_generate_image_tool_stores_artifact_and_source_images(
     assert len(artifacts) == 2
     assert Path(artifacts[0]["path"]).is_file()
     assert artifacts[0]["source_images"] == [str(ref.resolve())]
+    assert artifacts[0]["provider"] == "openrouter"
     assert artifacts[0]["model"] == "openai/gpt-5.4-image-2"
 
     fake = FakeImageClient.instances[0]
     assert fake.kwargs["api_key"] == "sk-or-test"
     assert len(fake.calls) == 2
+    assert fake.calls[0]["model"] == "openai/gpt-5.4-image-2"
     assert fake.calls[0]["aspect_ratio"] == "16:9"
     assert fake.calls[0]["image_size"] == "2K"
 
 
 @pytest.mark.asyncio
-async def test_generate_image_tool_reports_missing_key(tmp_path: Path) -> None:
+async def test_generate_image_tool_rejects_non_image_generation_model(tmp_path: Path) -> None:
     tool = ImageGenerationTool(
         workspace=tmp_path,
-        config=ImageGenerationToolConfig(enabled=True),
-        provider_config=ProviderConfig(),
+        config=ImageGenerationToolConfig(enabled=True, model_id="text"),
+        models={"text": _image_model(capable=False)},
     )
 
     result = await tool.execute(prompt="draw")
 
-    assert result.startswith("Error: OpenRouter API key is not configured")
+    assert "model_id 'text' does not support image_generation" in result
 
 
 @pytest.mark.asyncio
-async def test_generate_image_tool_selects_aihubmix_provider(
+async def test_generate_image_tool_uses_provider_identity_not_upstream_prefix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     set_config_path(tmp_path / "config.json")
     FakeImageClient.instances = []
+    adapter_lookups: list[str] = []
+
+    def get_adapter(name: str):
+        adapter_lookups.append(name)
+        return FakeImageClient if name == "cpa" else None
+
     monkeypatch.setattr(
         "nanobot.agent.tools.image_generation.get_image_gen_provider",
-        lambda name: FakeImageClient if name == "aihubmix" else None,
+        get_adapter,
     )
     tool = ImageGenerationTool(
         workspace=tmp_path,
-        config=ImageGenerationToolConfig(
-            enabled=True,
-            provider="aihubmix",
-            model="gpt-image-2-free",
-        ),
-        provider_configs={
-            "openrouter": ProviderConfig(api_key="sk-or-test"),
-            "aihubmix": ProviderConfig(api_key="sk-ahm-test", extra_body={"quality": "low"}),
+        config=ImageGenerationToolConfig(enabled=True, model_id="image-cpa"),
+        models={
+            "image-cpa": _image_model(
+                provider="cpa",
+                upstream="openai/gpt-image",
+            )
         },
+        provider_configs={"cpa": ProviderConfig(api_key="cpa-key")},
     )
 
-    result = await tool.execute(prompt="draw a poster", aspect_ratio="3:4")
+    result = await tool.execute(prompt="draw a poster")
 
     payload = json.loads(result)
-    assert len(payload["artifacts"]) == 1
-    fake = FakeImageClient.instances[0]
-    assert fake.kwargs["api_key"] == "sk-ahm-test"
-    assert fake.kwargs["extra_body"] == {"quality": "low"}
-    assert fake.calls[0]["model"] == "gpt-image-2-free"
-    assert fake.calls[0]["aspect_ratio"] == "3:4"
+    assert adapter_lookups == ["cpa"]
+    assert FakeImageClient.instances[0].kwargs["api_key"] == "cpa-key"
+    assert FakeImageClient.instances[0].calls[0]["model"] == "openai/gpt-image"
+    assert payload["artifacts"][0]["provider"] == "cpa"
+    assert payload["artifacts"][0]["model"] == "openai/gpt-image"
+
+
+@pytest.mark.asyncio
+async def test_generate_image_tool_errors_when_provider_has_no_adapter(tmp_path: Path) -> None:
+    tool = ImageGenerationTool(
+        workspace=tmp_path,
+        config=ImageGenerationToolConfig(enabled=True, model_id="image-cpa"),
+        models={
+            "image-cpa": _image_model(
+                provider="cpa",
+                upstream="openai/gpt-image",
+            )
+        },
+        provider_configs={"cpa": ProviderConfig(api_key="cpa-key")},
+    )
+
+    result = await tool.execute(prompt="draw")
+
+    assert "provider 'cpa' has no image-generation adapter" in result
+    assert "model_id 'image-cpa'" in result
 
 
 def test_image_generation_tool_passes_provider_proxy_to_client(
@@ -137,31 +184,21 @@ def test_image_generation_tool_passes_provider_proxy_to_client(
     proxy = "http://127.0.0.1:23458"
     tool = ImageGenerationTool(
         workspace=tmp_path,
-        config=ImageGenerationToolConfig(
-            enabled=True,
-            provider="openai_codex",
-            model="openai-codex/gpt-5.4",
-        ),
+        config=ImageGenerationToolConfig(enabled=True, model_id="codex-image"),
+        models={
+            "codex-image": _image_model(
+                provider="openai_codex",
+                upstream="gpt-5.4",
+            )
+        },
         provider_configs={"openai_codex": ProviderConfig(proxy=proxy)},
     )
 
-    client = tool._provider_client()
+    model_id, model = tool._resolve_model()
+    client = tool._provider_client(model_id, model)
 
     assert client is not None
     assert FakeImageClient.instances[0].kwargs["proxy"] == proxy
-
-
-@pytest.mark.asyncio
-async def test_generate_image_tool_reports_missing_aihubmix_key(tmp_path: Path) -> None:
-    tool = ImageGenerationTool(
-        workspace=tmp_path,
-        config=ImageGenerationToolConfig(enabled=True, provider="aihubmix"),
-        provider_configs={"aihubmix": ProviderConfig()},
-    )
-
-    result = await tool.execute(prompt="draw")
-
-    assert result.startswith("Error: AIHubMix API key is not configured")
 
 
 @pytest.mark.asyncio
@@ -177,11 +214,13 @@ async def test_generate_image_tool_allows_ollama_without_api_key(
     )
     tool = ImageGenerationTool(
         workspace=tmp_path,
-        config=ImageGenerationToolConfig(
-            enabled=True,
-            provider="ollama",
-            model="x/z-image-turbo",
-        ),
+        config=ImageGenerationToolConfig(enabled=True, model_id="local-image"),
+        models={
+            "local-image": _image_model(
+                provider="ollama",
+                upstream="x/z-image-turbo",
+            )
+        },
         provider_configs={"ollama": ProviderConfig(api_base="http://localhost:11434/v1")},
     )
 
@@ -189,29 +228,10 @@ async def test_generate_image_tool_allows_ollama_without_api_key(
 
     payload = json.loads(result)
     assert len(payload["artifacts"]) == 1
-
     fake = FakeImageClient.instances[0]
     assert fake.kwargs["api_key"] is None
     assert fake.kwargs["api_base"] == "http://localhost:11434/v1"
-    assert fake.calls[0]["aspect_ratio"] == "1:1"
-    assert fake.calls[0]["image_size"] == "1K"
-
-
-@pytest.mark.asyncio
-async def test_generate_image_tool_reports_missing_zhipu_key(tmp_path: Path) -> None:
-    tool = ImageGenerationTool(
-        workspace=tmp_path,
-        config=ImageGenerationToolConfig(
-            enabled=True,
-            provider="zhipu",
-            model="glm-image",
-        ),
-        provider_configs={"zhipu": ProviderConfig(api_base="https://open.bigmodel.cn/api/paas/v4")},
-    )
-
-    result = await tool.execute(prompt="draw a cat")
-
-    assert result.startswith("Error: Zhipu API key is not configured")
+    assert fake.calls[0]["model"] == "x/z-image-turbo"
 
 
 @pytest.mark.asyncio
@@ -221,10 +241,46 @@ async def test_generate_image_tool_rejects_reference_outside_workspace(tmp_path:
     outside.write_bytes(PNG_BYTES)
     tool = ImageGenerationTool(
         workspace=tmp_path,
-        config=ImageGenerationToolConfig(enabled=True),
-        provider_config=ProviderConfig(api_key="sk-or-test"),
+        config=ImageGenerationToolConfig(enabled=True, model_id="image-gen"),
+        models={"image-gen": _image_model()},
+        provider_configs={"openrouter": ProviderConfig(api_key="sk-or-test")},
     )
 
     result = await tool.execute(prompt="edit", reference_images=[str(outside)])
 
     assert "reference_images must be inside the workspace" in result
+
+
+def test_image_generation_config_accepts_model_id_and_rejects_legacy_fields() -> None:
+    config = ImageGenerationToolConfig.model_validate({"modelId": "image-gen"})
+    assert config.model_id == "image-gen"
+
+    for legacy in (
+        {"provider": "openrouter"},
+        {"model": "openai/gpt-image"},
+    ):
+        with pytest.raises(ValidationError):
+            ImageGenerationToolConfig.model_validate(legacy)
+
+
+def test_config_requires_image_generation_capability_for_model_id() -> None:
+    with pytest.raises(ValueError, match="does not support image_generation"):
+        Config.model_validate(
+            {
+                "models": {
+                    "main": {
+                        "displayName": "Main",
+                        "provider": "openrouter",
+                        "model": "openai/gpt-4o-mini",
+                        "capabilities": {"text": True},
+                    },
+                    "not-image": {
+                        "displayName": "Not image",
+                        "provider": "openrouter",
+                        "model": "openai/gpt-4o-mini",
+                        "capabilities": {"text": True},
+                    },
+                },
+                "tools": {"imageGeneration": {"modelId": "not-image"}},
+            }
+        )

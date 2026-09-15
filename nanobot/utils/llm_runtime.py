@@ -13,18 +13,13 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class LLMRuntime:
-    """One captured provider/model configuration used for an entire execution.
-
-    The provider itself is stateful, but all mutable selection and generation
-    values are copied into this frozen value.  Consumers must use these fields
-    instead of consulting ``provider.generation`` after admission.
-    """
+    """One captured canonical model/provider configuration for an execution."""
 
     provider: LLMProvider
+    model_id: str | None
     model: str
     generation: GenerationSettings
     context_window_tokens: int
-    model_preset: str | None = None
     system_prompt_prefix: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
     supports_vision: bool = False
@@ -36,7 +31,7 @@ class LLMRuntime:
         model: str,
         *,
         context_window_tokens: int,
-        model_preset: str | None = None,
+        model_id: str | None = None,
         supports_vision: bool = False,
         system_prompt_prefix: str | None = None,
         snapshot_signature: tuple[object, ...] | None = None,
@@ -46,6 +41,7 @@ class LLMRuntime:
         generation = getattr(provider, "generation", defaults)
         return cls(
             provider=provider,
+            model_id=model_id,
             model=model,
             generation=GenerationSettings(
                 temperature=getattr(generation, "temperature", defaults.temperature),
@@ -57,7 +53,6 @@ class LLMRuntime:
                 ),
             ),
             context_window_tokens=context_window_tokens,
-            model_preset=model_preset,
             supports_vision=supports_vision,
             system_prompt_prefix=system_prompt_prefix,
             snapshot_signature=snapshot_signature,
@@ -70,14 +65,11 @@ class LLMRuntime:
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> LLMRuntime:
-        """Return a derived runtime for explicit per-run generation overrides."""
         generation = self.generation
         return replace(
             self,
             generation=GenerationSettings(
-                temperature=(
-                    generation.temperature if temperature is None else temperature
-                ),
+                temperature=generation.temperature if temperature is None else temperature,
                 max_tokens=generation.max_tokens if max_tokens is None else max_tokens,
                 reasoning_effort=(
                     generation.reasoning_effort
@@ -88,17 +80,15 @@ class LLMRuntime:
         )
 
 
-def runtime_from_provider_snapshot(
-    snapshot: ProviderSnapshot,
-) -> LLMRuntime:
+def runtime_from_provider_snapshot(snapshot: ProviderSnapshot) -> LLMRuntime:
     """Convert a provider factory snapshot into the canonical runtime value."""
     if snapshot.generation is not None:
         return LLMRuntime(
             provider=snapshot.provider,
+            model_id=snapshot.model_id,
             model=snapshot.model,
             generation=snapshot.generation,
             context_window_tokens=snapshot.context_window_tokens,
-            model_preset=snapshot.model_preset,
             supports_vision=snapshot.supports_vision,
             system_prompt_prefix=snapshot.system_prompt_prefix,
             snapshot_signature=snapshot.signature,
@@ -106,8 +96,8 @@ def runtime_from_provider_snapshot(
     return LLMRuntime.capture(
         snapshot.provider,
         snapshot.model,
+        model_id=snapshot.model_id,
         context_window_tokens=snapshot.context_window_tokens,
-        model_preset=snapshot.model_preset,
         supports_vision=snapshot.supports_vision,
         system_prompt_prefix=snapshot.system_prompt_prefix,
         snapshot_signature=snapshot.signature,

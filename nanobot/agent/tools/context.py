@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from nanobot.bus.runtime_events import RuntimeEventBus
     from nanobot.config.schema import ProviderConfig, ToolsConfig
     from nanobot.cron.service import CronService
+    from nanobot.model_domain import ModelConfig
     from nanobot.providers.factory import ProviderSnapshot
     from nanobot.security.workspace_access import WorkspaceSandboxStatus
     from nanobot.session.manager import SessionManager
@@ -99,6 +100,7 @@ class ToolContext:
     sessions: SessionManager | None = None
     file_state_store: FileStates | None = None
     provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None
+    models: dict[str, ModelConfig] = field(default_factory=dict)
     image_generation_provider_configs: dict[str, ProviderConfig] | None = None
     timezone: str = "UTC"
     workspace_sandbox: WorkspaceSandboxStatus | None = None

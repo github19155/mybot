@@ -1,9 +1,8 @@
 """Application-level audio transcription service.
 
-This module owns nanobot's transcription behavior: config resolution,
-legacy channel fallback, upload validation, temporary-file handling, and
-dispatch to provider adapters. It deliberately does not know provider-specific
-HTTP details; those live in ``nanobot.providers.transcription``.
+This module owns nanobot's transcription behavior: canonical model resolution,
+upload validation, temporary-file handling, and dispatch to provider adapters.
+Provider-specific HTTP details live in ``nanobot.providers.transcription``.
 """
 
 from __future__ import annotations
@@ -17,18 +16,18 @@ from typing import Any
 from loguru import logger
 
 from nanobot.audio.transcription_registry import (
+    TranscriptionProviderSpec,
     get_transcription_provider,
-    resolve_transcription_provider,
 )
 from nanobot.config.loader import resolve_env_refs
 from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Config, ProviderConfig
+from nanobot.model_domain import require_model_capability
 from nanobot.providers.registry import find_by_name
 from nanobot.utils.media_decode import FileSizeExceeded, save_base64_data_url
 
 TranscriptionProviderName = str
 
-_DEFAULT_PROVIDER: TranscriptionProviderName = "groq"
 _MAX_AUDIO_BYTES_FALLBACK = 25 * 1024 * 1024
 _AUDIO_MIME_ALLOWED: frozenset[str] = frozenset({
     "audio/aac",
@@ -47,8 +46,9 @@ _AUDIO_MIME_ALLOWED: frozenset[str] = frozenset({
 @dataclass(frozen=True)
 class EffectiveTranscriptionConfig:
     enabled: bool
-    provider: TranscriptionProviderName
-    model: str
+    model_id: str | None
+    provider: TranscriptionProviderName | None
+    model: str | None
     language: str | None
     api_key: str = field(repr=False)
     api_base: str
@@ -57,11 +57,17 @@ class EffectiveTranscriptionConfig:
 
     @property
     def configured(self) -> bool:
+        """Whether Transcription is bound to a concrete canonical model."""
+        return bool(self.model_id and self.provider and self.model)
+
+    @property
+    def provider_configured(self) -> bool:
+        """Whether credentials for the resolved provider are currently available."""
         return bool(self.api_key)
 
 
-class TranscriptionIngressError(Exception):
-    """Stable transcription upload error surfaced to WebUI clients."""
+class TranscriptionError(Exception):
+    """Stable transcription service error surfaced to callers such as WebUI."""
 
     def __init__(self, detail: str, **extra: Any):
         super().__init__(detail)
@@ -69,13 +75,19 @@ class TranscriptionIngressError(Exception):
         self.extra = extra
 
 
-def _as_provider(value: Any) -> TranscriptionProviderName | None:
-    spec = resolve_transcription_provider(value)
-    return spec.name if spec else None
+class TranscriptionConfigError(TranscriptionError):
+    """Canonical model/provider configuration cannot serve transcription."""
+
+
+class TranscriptionIngressError(TranscriptionError):
+    """Audio upload or transcription execution failed."""
 
 
 def _provider_config(config: Config, provider: str) -> ProviderConfig | None:
     value = getattr(config.providers, provider, None)
+    if isinstance(value, ProviderConfig):
+        return value
+    value = (config.providers.model_extra or {}).get(provider)
     return value if isinstance(value, ProviderConfig) else None
 
 
@@ -120,31 +132,73 @@ def _extract_data_url_mime(url: str) -> str | None:
 
 
 def resolve_transcription_config(config: Config) -> EffectiveTranscriptionConfig:
-    """Resolve top-level transcription settings with legacy channel fallback."""
-    top = getattr(config, "transcription", None)
-    channels = getattr(config, "channels", None)
-    provider = (
-        _as_provider(getattr(top, "provider", None))
-        or _as_provider(getattr(channels, "transcription_provider", None))
-        or _DEFAULT_PROVIDER
-    )
-    spec = get_transcription_provider(provider)
-    if spec is None:
-        logger.warning("Unknown transcription provider {}; falling back to {}", provider, _DEFAULT_PROVIDER)
-        provider = _DEFAULT_PROVIDER
-        spec = get_transcription_provider(provider)
-    default_model = spec.default_model if spec else ""
+    """Resolve Transcription exclusively through ``transcription.model_id``."""
+    top = config.transcription
+    model_id = top.model_id
+    if model_id is None:
+        return EffectiveTranscriptionConfig(
+            enabled=top.enabled,
+            model_id=None,
+            provider=None,
+            model=None,
+            language=top.language,
+            api_key="",
+            api_base="",
+            max_duration_sec=top.max_duration_sec,
+            max_upload_mb=top.max_upload_mb,
+        )
+
+    try:
+        model_cfg = require_model_capability(config.models, model_id, "transcription")
+    except KeyError as exc:
+        raise TranscriptionConfigError("unknown_model_id", model_id=model_id) from exc
+    except ValueError as exc:
+        if model_id in config.models:
+            raise TranscriptionConfigError(
+                "model_lacks_transcription_capability",
+                model_id=model_id,
+            ) from exc
+        raise TranscriptionConfigError("unknown_model_id", model_id=model_id) from exc
+
+    provider = model_cfg.provider
     provider_cfg = _provider_config(config, provider)
     return EffectiveTranscriptionConfig(
-        enabled=bool(getattr(top, "enabled", True)),
+        enabled=top.enabled,
+        model_id=model_id,
         provider=provider,
-        model=(getattr(top, "model", None) or default_model).strip(),
-        language=getattr(top, "language", None) or getattr(channels, "transcription_language", None),
+        model=model_cfg.model,
+        language=top.language,
         api_key=_resolve_transcription_api_key(provider, provider_cfg),
         api_base=_resolve_transcription_api_base(provider, provider_cfg),
-        max_duration_sec=int(getattr(top, "max_duration_sec", 120)),
-        max_upload_mb=int(getattr(top, "max_upload_mb", 25)),
+        max_duration_sec=top.max_duration_sec,
+        max_upload_mb=top.max_upload_mb,
     )
+
+
+def _require_runnable_transcription(
+    config: EffectiveTranscriptionConfig,
+) -> TranscriptionProviderSpec:
+    if not config.enabled:
+        raise TranscriptionConfigError("disabled")
+    if not config.configured:
+        raise TranscriptionConfigError("no_model_configured")
+
+    provider = config.provider
+    assert provider is not None
+    spec = get_transcription_provider(provider)
+    if spec is None:
+        raise TranscriptionConfigError(
+            "provider_no_transcription_adapter",
+            provider=provider,
+            model_id=config.model_id,
+        )
+    if not config.provider_configured:
+        raise TranscriptionConfigError(
+            "provider_not_configured",
+            provider=provider,
+            model_id=config.model_id,
+        )
+    return spec
 
 
 async def transcribe_audio_data_url(
@@ -154,12 +208,9 @@ async def transcribe_audio_data_url(
     duration_ms: Any = None,
 ) -> str:
     """Validate, persist, transcribe, and remove a WebUI audio data URL."""
+    _require_runnable_transcription(config)
     if not isinstance(data_url, str) or not data_url:
         raise TranscriptionIngressError("missing_audio")
-    if not config.enabled:
-        raise TranscriptionIngressError("disabled")
-    if not config.configured:
-        raise TranscriptionIngressError("not_configured", provider=config.provider)
     if (
         isinstance(duration_ms, (int, float))
         and duration_ms > (config.max_duration_sec * 1000 + 1000)
@@ -192,7 +243,7 @@ async def transcribe_audio_data_url(
         with suppress(OSError):
             Path(audio_path).unlink(missing_ok=True)
     if not text:
-        raise TranscriptionIngressError("empty")
+        raise TranscriptionIngressError("transcription_failed", provider=config.provider)
     return text
 
 
@@ -200,17 +251,32 @@ async def transcribe_audio_file(
     file_path: str | Path,
     config: EffectiveTranscriptionConfig,
 ) -> str:
-    """Transcribe *file_path* using the already-resolved transcription config."""
-    if not config.enabled or not config.configured:
-        return ""
-    spec = get_transcription_provider(config.provider)
-    if spec is None:
-        logger.warning("Unknown transcription provider: {}", config.provider)
-        return ""
-    provider = spec.load_adapter()(
+    """Transcribe *file_path* using an already-resolved canonical model route."""
+    spec = _require_runnable_transcription(config)
+    provider_name = config.provider
+    model = config.model
+    assert provider_name is not None
+    assert model is not None
+
+    adapter = spec.load_adapter()(
         api_key=config.api_key,
         api_base=config.api_base or None,
         language=config.language,
-        model=config.model,
+        model=model,
     )
-    return await provider.transcribe(file_path)
+    try:
+        text = await adapter.transcribe(file_path)
+    except Exception as exc:
+        logger.exception("{} transcription failed: {}", provider_name, exc)
+        raise TranscriptionIngressError(
+            "transcription_failed",
+            provider=provider_name,
+            model_id=config.model_id,
+        ) from exc
+    if not text:
+        raise TranscriptionIngressError(
+            "transcription_failed",
+            provider=provider_name,
+            model_id=config.model_id,
+        )
+    return text

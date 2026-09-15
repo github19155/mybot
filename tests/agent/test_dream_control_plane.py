@@ -18,9 +18,9 @@ from nanobot.agent.dream import (
     build_dream_tools,
     parse_dream_result,
 )
+from nanobot.agent.dream_runtime import resolve_dream_runtime
 from nanobot.agent.dream_worker import run_dream_worker
 from nanobot.agent.memory import MemoryStore
-from nanobot.agent.model_management import ModelManagement
 from nanobot.agent.permissions import PermissionManager
 from nanobot.bus.events import InboundMessage
 from nanobot.command.dream_commands import cmd_dream
@@ -51,6 +51,8 @@ def test_dream_config_is_single_bounded_policy_source() -> None:
     assert config.pool_for(DREAM_CONSOLIDATION) == "dream-cheap"
     assert not hasattr(config, "cron")
     assert not hasattr(config, "interval_h")
+    assert not hasattr(config, "model_override")
+    assert not hasattr(config, "fallback_preset")
 
 
 def test_trigger_controller_pressure_idle_and_cooldown(tmp_path: Path) -> None:
@@ -193,9 +195,12 @@ async def _cancel_worker_sleep(_seconds: float) -> None:
 
 def _worker_agent(tmp_path: Path, config: Config, memory: MemoryStore) -> SimpleNamespace:
     runtime = SimpleNamespace(
-        model="dream-test-model",
-        model_preset="dream-test",
+        model_id="dream-model",
         provider=SimpleNamespace(provider_name="test"),
+    )
+    resolver = SimpleNamespace(
+        runtime=SimpleNamespace(model_id="main"),
+        resolve_selection=MagicMock(return_value=runtime),
     )
     process_direct = AsyncMock(
         return_value=SimpleNamespace(
@@ -211,11 +216,15 @@ def _worker_agent(tmp_path: Path, config: Config, memory: MemoryStore) -> Simple
     )
     management = SimpleNamespace(
         config_snapshot=lambda: config,
-        resolve_dream_runtime=AsyncMock(return_value=runtime),
+        fleet_recommend=AsyncMock(return_value={
+            "status": "ok",
+            "recommended": {"model_id": "dream-model"},
+        }),
     )
     return SimpleNamespace(
         workspace=tmp_path,
         model_management=management,
+        runtime_resolver=resolver,
         permissions=PermissionManager(lambda: config),
         context=SimpleNamespace(memory=memory),
         process_direct=process_direct,
@@ -255,6 +264,8 @@ async def test_background_worker_executes_read_only_dream_path(
     )
     assert row["metadata"]["side_effects"] == "none"
     assert row["metadata"]["operational_authority"] == "main"
+    assert row["metadata"]["model_id"] == "dream-model"
+    assert "model_preset" not in row["metadata"]
 
 
 @pytest.mark.asyncio
@@ -305,62 +316,82 @@ async def test_manual_dream_request_is_consumed_by_same_worker(
 
 @pytest.mark.asyncio
 async def test_dream_routing_never_falls_back_to_main_implicitly() -> None:
-    management = ModelManagement(Config())
-    management.fleet_recommend = AsyncMock(
-        return_value={"status": "error", "message": "no candidates"},
-    )
+    resolver = MagicMock()
+    resolver.runtime = object()
+    recommend = AsyncMock(return_value={"status": "error", "message": "no candidates"})
 
     with pytest.raises(RuntimeError, match="no eligible model route"):
-        await management.resolve_dream_runtime(DREAM_CONSOLIDATION)
+        await resolve_dream_runtime(
+            DREAM_CONSOLIDATION,
+            config=DreamConfig(),
+            runtime_resolver=resolver,
+            fleet_recommend=recommend,
+        )
+    resolver.resolve_selection.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_dream_override_bypasses_fleet_and_disables_main_fallbacks() -> None:
-    config = Config(modelPresets={"dream": {"model": "provider/dream"}})
-    config.agents.defaults.dream.model_override = "dream"
+async def test_dream_explicit_model_id_bypasses_fleet() -> None:
     resolver = MagicMock()
     resolver.runtime = object()
     resolved = object()
     resolver.resolve_selection.return_value = resolved
-    management = ModelManagement(config, runtime_resolver=resolver)
-    management.fleet_recommend = AsyncMock()
+    recommend = AsyncMock()
 
-    assert await management.resolve_dream_runtime(DREAM_CONSOLIDATION) is resolved
-    management.fleet_recommend.assert_not_awaited()
+    assert await resolve_dream_runtime(
+        DREAM_CONSOLIDATION,
+        config=DreamConfig(model_id="dream-explicit"),
+        runtime_resolver=resolver,
+        fleet_recommend=recommend,
+    ) is resolved
+    recommend.assert_not_awaited()
     resolver.resolve_selection.assert_called_once_with(
         resolver.runtime,
-        model_preset="dream",
+        model_id="dream-explicit",
     )
 
 
 @pytest.mark.asyncio
-async def test_dream_fleet_then_dream_fallback_choose_only_the_preset() -> None:
-    config = Config(modelPresets={
-        "fleet": {"model": "provider/fleet"},
-        "fallback": {"model": "provider/fallback"},
-    })
+async def test_dream_fleet_then_fallback_use_model_id_and_workload_pool() -> None:
     resolver = MagicMock()
     resolver.runtime = object()
     resolver.resolve_selection.side_effect = ["fleet-runtime", "fallback-runtime"]
-    management = ModelManagement(config, runtime_resolver=resolver)
-    management.fleet_recommend = AsyncMock(return_value={
+    config = DreamConfig(
+        fallback_model_id="fallback-model",
+        pools={DREAM_CONSOLIDATION: "dream-cheap"},
+    )
+    recommend = AsyncMock(return_value={
         "status": "ok",
-        "recommended": {"preset": "fleet"},
+        "recommended": {"model_id": "fleet-model"},
     })
 
-    assert await management.resolve_dream_runtime(DREAM_CONSOLIDATION) == "fleet-runtime"
+    assert await resolve_dream_runtime(
+        DREAM_CONSOLIDATION,
+        config=config,
+        runtime_resolver=resolver,
+        fleet_recommend=recommend,
+    ) == "fleet-runtime"
+    recommend.assert_awaited_once_with(
+        pool="dream-cheap",
+        task_type="background",
+        min_context_tokens=16_000,
+    )
     resolver.resolve_selection.assert_called_once_with(
         resolver.runtime,
-        model_preset="fleet",
+        model_id="fleet-model",
     )
 
     resolver.resolve_selection.reset_mock()
-    management.fleet_recommend = AsyncMock(return_value={"status": "error"})
-    config.agents.defaults.dream.fallback_preset = "fallback"
-    assert await management.resolve_dream_runtime(DREAM_CONSOLIDATION) == "fallback-runtime"
+    recommend = AsyncMock(return_value={"status": "error"})
+    assert await resolve_dream_runtime(
+        DREAM_CONSOLIDATION,
+        config=config,
+        runtime_resolver=resolver,
+        fleet_recommend=recommend,
+    ) == "fallback-runtime"
     resolver.resolve_selection.assert_called_once_with(
         resolver.runtime,
-        model_preset="fallback",
+        model_id="fallback-model",
     )
 
 

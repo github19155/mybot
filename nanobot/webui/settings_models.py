@@ -1,8 +1,8 @@
 """Model and provider settings domain logic.
 
-This module owns model/provider DTO construction, validation, configuration
-updates, model discovery, and OAuth workflows. It deliberately has no
-dependency on the WebSocket transport.
+The WebUI model surface is a view over the canonical ``Config.models`` registry.
+Stable ``model_id`` keys are consumer identity; provider and upstream model values
+live only inside ``ModelConfig``. Provider settings remain an independent domain.
 """
 
 # oauth-cli-kit does not publish type stubs.
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import os
 import re
 import secrets
@@ -24,16 +23,10 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict, cast
 
 import httpx
 
+from nanobot import model_settings as core_models
 from nanobot.agent.subagent_roles import SUBAGENT_ROLES
 from nanobot.config.loader import resolve_config_env_vars
-from nanobot.config.schema import (
-    Config,
-    ModelPresetConfig,
-    ProviderConfig,
-    SubagentRoleConfig,
-    SubagentRoleName,
-    SystemPromptOverrideConfig,
-)
+from nanobot.config.schema import Config, ProviderConfig, SystemPromptOverrideConfig
 from nanobot.providers.image_generation import get_image_gen_provider
 from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
 from nanobot.providers.oauth_model_catalog import (
@@ -86,7 +79,7 @@ class ModelSettingsOperations:
 
 class ModelSettingsPayload(TypedDict):
     agent: dict[str, Any]
-    model_presets: list[dict[str, Any]]
+    models: list[dict[str, Any]]
     image_analysis: dict[str, Any]
     system_prompt_overrides: list[dict[str, Any]]
     providers: list[dict[str, Any]]
@@ -94,30 +87,31 @@ class ModelSettingsPayload(TypedDict):
     max_concurrent_subagents: int
 
 
-_CONTEXT_WINDOW_TOKEN_OPTIONS = {65_536, 200_000, 262_144, 500_000, 1_048_576}
 _OAUTH_PROXY_PROVIDERS = {"openai_codex", "xai_grok"}
 _WEBUI_OAUTH_TIMEOUT_S = 600
 _MODEL_CONFIGURATION_SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _REDACTED_PROVIDER_SECRET = "••••••••"
 _PROVIDER_STRUCTURED_FIELDS = ("extra_headers", "extra_body", "extra_query")
-_PROVIDER_SECRET_KEYS = frozenset({
-    "auth",
-    "authentication",
-    "authorization",
-    "bearer",
-    "cookie",
-    "credential",
-    "credentials",
-    "hmac",
-    "key",
-    "passphrase",
-    "passwd",
-    "proxyauthorization",
-    "setcookie",
-    "sig",
-    "signature",
-})
+_PROVIDER_SECRET_KEYS = frozenset(
+    {
+        "auth",
+        "authentication",
+        "authorization",
+        "bearer",
+        "cookie",
+        "credential",
+        "credentials",
+        "hmac",
+        "key",
+        "passphrase",
+        "passwd",
+        "proxyauthorization",
+        "setcookie",
+        "sig",
+        "signature",
+    }
+)
 _PROVIDER_SECRET_KEY_SUFFIXES = (
     "accesskey",
     "apikey",
@@ -130,6 +124,13 @@ _PROVIDER_SECRET_KEY_SUFFIXES = (
     "subscriptionkey",
     "token",
 )
+
+
+def _core_model_call(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    try:
+        return operation(*args, **kwargs)
+    except core_models.ModelSettingsError as exc:
+        raise WebUISettingsError(exc.message, status=exc.status) from exc
 
 
 def _provider_json_setting(
@@ -151,7 +152,9 @@ def _provider_json_setting(
 
 def _provider_setting_key_is_secret(key: str) -> bool:
     compact = re.sub(r"[^a-z0-9]", "", key.lower())
-    return compact in _PROVIDER_SECRET_KEYS or compact.endswith(_PROVIDER_SECRET_KEY_SUFFIXES)
+    return compact in _PROVIDER_SECRET_KEYS or compact.endswith(
+        _PROVIDER_SECRET_KEY_SUFFIXES
+    )
 
 
 def _redact_provider_secret_values(value: Any, *, secret: bool = False) -> Any:
@@ -591,13 +594,25 @@ def _model_row_payload(row: Any) -> dict[str, Any] | None:
     owned_by: str | None = None
     if isinstance(row, dict):
         row_mapping = cast(dict[str, Any], row)
-        raw_label = row_mapping.get("display_name") or row_mapping.get("label") or row_mapping.get("name")
-        if isinstance(raw_label, str) and raw_label.strip() and raw_label.strip() != model_id:
+        raw_label = (
+            row_mapping.get("display_name")
+            or row_mapping.get("label")
+            or row_mapping.get("name")
+        )
+        if (
+            isinstance(raw_label, str)
+            and raw_label.strip()
+            and raw_label.strip() != model_id
+        ):
             label = raw_label.strip()
         raw_description = row_mapping.get("description")
         if isinstance(raw_description, str) and raw_description.strip():
             description = raw_description.strip()
-        raw_owner = row_mapping.get("owned_by") or row_mapping.get("owner") or row_mapping.get("organization")
+        raw_owner = (
+            row_mapping.get("owned_by")
+            or row_mapping.get("owner")
+            or row_mapping.get("organization")
+        )
         if isinstance(raw_owner, str) and raw_owner.strip():
             owned_by = raw_owner.strip()
     payload = {
@@ -632,7 +647,7 @@ def provider_models_payload(
     *,
     http_get: HttpGet,
 ) -> dict[str, Any]:
-    """Fetch an advisory model list without mutating configuration."""
+    """Fetch an advisory upstream model list without mutating configuration."""
     provider_name = (query_first(query, "provider") or "").strip()
     if not provider_name:
         raise WebUISettingsError("provider is required")
@@ -766,107 +781,235 @@ def provider_models_payload(
     }
 
 
-def _parse_context_window_tokens(value: str | None) -> int | None:
-    if value is None:
-        return None
-    try:
-        parsed = int(value)
-    except ValueError:
-        raise WebUISettingsError("context_window_tokens must be an integer") from None
-    if parsed not in _CONTEXT_WINDOW_TOKEN_OPTIONS:
-        raise WebUISettingsError(
-            "context_window_tokens must be 65536, 200000, 262144, 500000, or 1048576"
-        )
-    return parsed
+def reasoning_effort_values_for(provider_name: str, model: str) -> list[str]:
+    return core_models.reasoning_effort_values_for(provider_name, model)
 
 
-def _parse_positive_int(value: str | None, field: str) -> int | None:
-    if value is None:
-        return None
-    try:
-        parsed = int(value)
-    except ValueError:
-        raise WebUISettingsError(f"{field} must be an integer") from None
-    if parsed <= 0:
-        raise WebUISettingsError(f"{field} must be greater than zero")
-    return parsed
+def _model_settings_row(config: Config, model_id: str) -> dict[str, Any]:
+    model = config.models[model_id]
+    return {
+        "model_id": model_id,
+        **model.model_dump(mode="python"),
+        "is_default": config.agents.defaults.model_id == model_id,
+        "usages": core_models.find_model_usages(config, model_id),
+        "reasoning_effort_values": reasoning_effort_values_for(
+            model.provider,
+            model.model,
+        ),
+    }
 
 
-def _parse_temperature(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        parsed = float(value)
-    except ValueError:
-        raise WebUISettingsError("temperature must be a number") from None
-    if not math.isfinite(parsed) or parsed < 0 or parsed > 2:
-        raise WebUISettingsError("temperature must be between 0 and 2")
-    return parsed
-
-
-def _model_configuration_slug(label: str) -> str:
-    normalized = _MODEL_CONFIGURATION_SLUG_RE.sub("-", label.strip().lower())
-    normalized = normalized.strip("-_")
-    if not normalized:
-        raise WebUISettingsError("configuration name is required")
-    if normalized == "default":
-        raise WebUISettingsError("configuration name is reserved")
-    if len(normalized) > 48:
-        normalized = normalized[:48].rstrip("-_")
-    return normalized
-
-
-def _model_configuration_name(value: str) -> str:
-    """Validate a user-facing preset name without inventing a second identity."""
-    name = value.strip()
-    if not name:
-        raise WebUISettingsError("configuration name is required")
-    if name.casefold() == "default":
-        raise WebUISettingsError("configuration name is reserved")
-    if len(name) > 48:
-        raise WebUISettingsError("configuration name must be 48 characters or fewer")
-    if not name.isprintable():
-        raise WebUISettingsError("configuration name contains unsupported characters")
-    return name
-
-
-def _model_configuration_name_exists(
+def model_settings_payload(
     config: Config,
-    name: str,
     *,
-    exclude: str | None = None,
+    oauth_status: OAuthStatusReader,
+) -> ModelSettingsPayload:
+    defaults = config.agents.defaults
+    selected_model = config.models[defaults.model_id]
+    selected_provider = selected_model.provider
+    resolved_provider = resolve_settings_provider(config, selected_provider)
+    provider_config = resolved_provider[2] if resolved_provider is not None else None
+
+    providers = _provider_settings_rows(config, selected_provider, oauth_status)
+    known_provider_names = {row["name"] for row in providers}
+    for provider_key, provider_config_row in _dynamic_provider_items(config):
+        if provider_key in known_provider_names:
+            continue
+        providers.append(
+            _provider_settings_row(
+                provider_key,
+                create_dynamic_spec(
+                    provider_key,
+                    display_name=provider_config_row.display_name or "",
+                    thinking_style=provider_config_row.thinking_style or "",
+                ),
+                provider_config_row,
+                oauth_status,
+            )
+        )
+
+    return {
+        "agent": {
+            "model_id": defaults.model_id,
+            "display_name": selected_model.display_name,
+            "provider": selected_model.provider,
+            "model": selected_model.model,
+            "capabilities": selected_model.capabilities.model_dump(mode="python"),
+            "context_window_tokens": selected_model.context_window_tokens,
+            "generation_defaults": selected_model.generation_defaults.model_dump(
+                mode="python"
+            ),
+            "has_api_key": bool(
+                provider_config is not None and provider_config.api_key
+            ),
+            "image_analysis_model_id": config.tools.image_analysis.model_id,
+            "timezone": defaults.timezone,
+            "tool_hint_max_length": defaults.tool_hint_max_length,
+        },
+        "models": [
+            _model_settings_row(config, model_id) for model_id in sorted(config.models)
+        ],
+        "image_analysis": {
+            "enabled": config.tools.image_analysis.enabled,
+            "model_id": config.tools.image_analysis.model_id,
+            "max_image_mb": config.tools.image_analysis.max_image_mb,
+            "max_images": config.tools.image_analysis.max_images,
+        },
+        "system_prompt_overrides": [
+            {"prompt": row.prompt, "model_ids": list(row.model_ids)}
+            for row in config.system_prompt_overrides
+        ],
+        "providers": providers,
+        "subagent_roles": [
+            {
+                "name": name,
+                **(SUBAGENT_ROLES.get(name) or {}),
+                "model_id": config.subagent_roles[name].model_id
+                if name in config.subagent_roles
+                else None,
+            }
+            for name in sorted(set(SUBAGENT_ROLES) | set(config.subagent_roles))
+        ],
+        "max_concurrent_subagents": defaults.max_concurrent_subagents,
+    }
+
+
+def update_agent_model_settings(
+    config: Config,
+    query: QueryParams,
+    *,
+    oauth_status: OAuthStatusReader,
 ) -> bool:
-    normalized = name.casefold()
-    return any(
-        existing != exclude and existing.casefold() == normalized
-        for existing in config.model_presets
+    del oauth_status
+    defaults = config.agents.defaults
+    changed = False
+
+    model_id = query_first_alias(query, "model_id", "modelId")
+    if model_id is not None:
+        selected = model_id.strip()
+        if not selected:
+            raise WebUISettingsError("model_id is required")
+        if selected not in config.models:
+            raise WebUISettingsError("unknown model_id")
+        if defaults.model_id != selected:
+            defaults.model_id = selected
+            changed = True
+
+    image_model_id = query_first_alias(
+        query,
+        "image_analysis_model_id",
+        "imageAnalysisModelId",
+    )
+    if image_model_id is not None:
+        selected_image = image_model_id.strip() or None
+        if selected_image is not None:
+            model = config.models.get(selected_image)
+            if model is None:
+                raise WebUISettingsError("unknown image analysis model_id")
+            if not model.capabilities.vision:
+                raise WebUISettingsError(
+                    "image analysis model_id must support vision"
+                )
+        if config.tools.image_analysis.model_id != selected_image:
+            config.tools.image_analysis.model_id = selected_image
+            changed = True
+
+    return changed
+
+
+def create_model_configuration(
+    config: Config,
+    query: QueryParams,
+    *,
+    oauth_status: OAuthStatusReader,
+) -> str:
+    del oauth_status
+    return cast(
+        str,
+        _core_model_call(core_models.create_model_configuration, config, query),
     )
 
 
-def _rename_model_configuration(config: Config, old_name: str, new_name: str) -> bool:
-    """Rename one preset and every config reference to it."""
-    if old_name == new_name:
-        return False
-    if _model_configuration_name_exists(config, new_name, exclude=old_name):
-        raise WebUISettingsError("configuration already exists", status=409)
+def update_model_configuration(
+    config: Config,
+    query: QueryParams,
+    *,
+    oauth_status: OAuthStatusReader,
+) -> bool:
+    del oauth_status
+    if query_has_alias(query, "new_name", "newName"):
+        raise WebUISettingsError("model_id cannot be renamed")
+    return bool(_core_model_call(core_models.update_model_configuration, config, query))
 
-    config.model_presets = {
-        (new_name if name == old_name else name): preset
-        for name, preset in config.model_presets.items()
-    }
-    defaults = config.agents.defaults
-    if defaults.model_preset == old_name:
-        defaults.model_preset = new_name
-    if defaults.dream.model_override == old_name:
-        defaults.dream.model_override = new_name
-    for binding in config.subagent_roles.values():
-        if binding.model_preset == old_name:
-            binding.model_preset = new_name
-    return True
+
+def update_model_prompt_overrides(config: Config, query: QueryParams) -> bool:
+    raw_overrides = query_first_alias(query, "overrides", "systemPromptOverrides")
+    if raw_overrides is None:
+        raise WebUISettingsError("system prompt overrides are required")
+    try:
+        parsed: object = json.loads(raw_overrides)
+    except json.JSONDecodeError:
+        raise WebUISettingsError("system prompt overrides must be a JSON array") from None
+    if not isinstance(parsed, list):
+        raise WebUISettingsError("system prompt overrides must be a JSON array")
+
+    rows: list[SystemPromptOverrideConfig] = []
+    bound: set[str] = set()
+    for item in cast(list[object], parsed):
+        if not isinstance(item, dict):
+            raise WebUISettingsError(
+                "each override must be an object with prompt and model_ids"
+            )
+        prompt = str(item.get("prompt") or "").strip()
+        raw_model_ids = item.get("model_ids", item.get("modelIds"))
+        model_ids: list[str] = []
+        if isinstance(raw_model_ids, list):
+            model_ids = [
+                model_id.strip()
+                for model_id in raw_model_ids
+                if isinstance(model_id, str) and model_id.strip()
+            ]
+            model_ids = list(dict.fromkeys(model_ids))
+        if not prompt:
+            raise WebUISettingsError("override prompt must not be blank")
+        if not model_ids:
+            raise WebUISettingsError("each override must bind at least one model_id")
+        unknown = next(
+            (model_id for model_id in model_ids if model_id not in config.models),
+            None,
+        )
+        if unknown is not None:
+            raise WebUISettingsError(f"unknown model_id {unknown!r}")
+        duplicate = next((model_id for model_id in model_ids if model_id in bound), None)
+        if duplicate:
+            raise WebUISettingsError(
+                f"model_id {duplicate!r} is already bound to another prompt"
+            )
+        bound.update(model_ids)
+        rows.append(SystemPromptOverrideConfig(prompt=prompt, model_ids=model_ids))
+
+    changed = [
+        (row.prompt, tuple(row.model_ids)) for row in rows
+    ] != [
+        (row.prompt, tuple(row.model_ids)) for row in config.system_prompt_overrides
+    ]
+    if changed:
+        config.system_prompt_overrides = rows
+    return changed
+
+
+def delete_model_configuration(config: Config, query: QueryParams) -> None:
+    _core_model_call(core_models.delete_model_configuration, config, query)
+
+
+def update_subagent_roles(config: Config, query: QueryParams) -> None:
+    _core_model_call(core_models.update_subagent_roles, config, query)
 
 
 def _custom_provider_key(config: Config, display_name: str) -> str:
-    slug = _MODEL_CONFIGURATION_SLUG_RE.sub("-", display_name.strip().lower()).strip("-_")
+    slug = _MODEL_CONFIGURATION_SLUG_RE.sub("-", display_name.strip().lower()).strip(
+        "-_"
+    )
     base = f"custom-{slug or 'provider'}"
     if len(base) > 56:
         base = base[:56].rstrip("-_")
@@ -901,542 +1044,6 @@ def _provider_display_name_exists(
         if label.strip().casefold() == normalized:
             return True
     return False
-
-
-def _validate_configured_provider(
-    config: Config,
-    provider: str,
-    oauth_status: OAuthStatusReader,
-) -> None:
-    if provider == "auto":
-        return
-    resolved_provider = resolve_settings_provider(config, provider)
-    if resolved_provider is None:
-        raise WebUISettingsError("unknown provider")
-    spec, _, provider_config = resolved_provider
-    if spec.is_transcription_only:
-        raise WebUISettingsError("provider does not support chat models")
-    if not provider_configured_for_settings(spec, provider_config, oauth_status):
-        raise WebUISettingsError("provider is not configured")
-
-
-_DEFAULT_REASONING_EFFORT_VALUES: tuple[str, ...] = ("", "low", "medium", "high")
-
-
-def reasoning_effort_values_for(provider_name: str, model: str) -> list[str]:
-    """Return user-facing reasoning_effort options for this provider+model."""
-    spec = find_by_name(provider_name) if provider_name else None
-    if spec is None:
-        return list(_DEFAULT_REASONING_EFFORT_VALUES)
-
-    model_lower = (model or "").lower()
-    if model_lower.rsplit("/", 1)[-1] == "kimi-k3":
-        return ["", "max"]
-
-    implicit = getattr(spec, "implicit_reasoning_models", ())
-    if implicit and any(pattern in model_lower for pattern in implicit):
-        return [""]
-
-    remap = getattr(spec, "reasoning_effort_remap", ())
-    if remap:
-        wire_values: list[str] = []
-        for _user_value, wire_value in remap:
-            if wire_value and wire_value != "none" and wire_value not in wire_values:
-                wire_values.append(wire_value)
-        return ["", *wire_values]
-
-    return list(_DEFAULT_REASONING_EFFORT_VALUES)
-
-
-def model_settings_payload(
-    config: Config,
-    *,
-    oauth_status: OAuthStatusReader,
-) -> ModelSettingsPayload:
-    defaults = config.agents.defaults
-    active_preset_name = defaults.model_preset or "default"
-    effective_preset = config.resolve_preset()
-    provider_name = (
-        config.get_provider_name(effective_preset.model, preset=effective_preset)
-        or effective_preset.provider
-    )
-    provider = config.get_provider(effective_preset.model, preset=effective_preset)
-    selected_provider = provider_name
-    if effective_preset.provider != "auto":
-        spec = find_by_name(effective_preset.provider)
-        selected_provider = spec.name if spec else provider_name
-
-    providers = _provider_settings_rows(config, selected_provider, oauth_status)
-    for provider_key, provider_config in _dynamic_provider_items(config):
-        providers.append(
-            _provider_settings_row(
-                provider_key,
-                create_dynamic_spec(
-                    provider_key,
-                    display_name=provider_config.display_name or "",
-                    thinking_style=provider_config.thinking_style or "",
-                ),
-                provider_config,
-                oauth_status,
-            )
-        )
-
-    model_presets = [
-        {
-            "name": "default",
-            # Kept on the wire for older WebUI clients. It is no longer a
-            # separate product concept and always mirrors the canonical name.
-            "label": "Default",
-            "active": active_preset_name == "default",
-            "is_default": True,
-            "model": defaults.model,
-            "provider": defaults.provider,
-            "resolved_provider": config.get_provider_name(
-                defaults.model,
-                preset=config.resolve_default_preset(),
-            ),
-            "max_tokens": defaults.max_tokens,
-            "context_window_tokens": defaults.context_window_tokens,
-            "temperature": defaults.temperature,
-            "reasoning_effort": defaults.reasoning_effort,
-            "supports_vision": defaults.supports_vision,
-            "supports_image_generation": False,
-            "reasoning_effort_values": reasoning_effort_values_for(
-                config.get_provider_name(
-                    defaults.model,
-                    preset=config.resolve_default_preset(),
-                )
-                or defaults.provider,
-                defaults.model,
-            ),
-        }
-    ]
-    for name, preset in config.model_presets.items():
-        resolved_preset_provider = (
-            config.get_provider_name(preset.model, preset=preset) or preset.provider
-        )
-        model_presets.append(
-            {
-                "name": name,
-                "label": name,
-                "active": active_preset_name == name,
-                "is_default": False,
-                "model": preset.model,
-                "provider": preset.provider,
-                "resolved_provider": resolved_preset_provider,
-                "max_tokens": preset.max_tokens,
-                "context_window_tokens": preset.context_window_tokens,
-                "temperature": preset.temperature,
-                "reasoning_effort": preset.reasoning_effort,
-                "supports_vision": preset.supports_vision,
-                "supports_image_generation": preset.supports_image_generation,
-                "reasoning_effort_values": reasoning_effort_values_for(
-                    resolved_preset_provider,
-                    preset.model,
-                ),
-            }
-        )
-
-    return {
-        "agent": {
-            "model": effective_preset.model,
-            "provider": selected_provider,
-            "resolved_provider": provider_name,
-            "has_api_key": bool(provider and provider.api_key),
-            "model_preset": active_preset_name,
-            "max_tokens": effective_preset.max_tokens,
-            "context_window_tokens": effective_preset.context_window_tokens,
-            "temperature": effective_preset.temperature,
-            "reasoning_effort": effective_preset.reasoning_effort,
-            "supports_vision": effective_preset.supports_vision,
-            "image_analysis_model_preset": config.tools.image_analysis.model_preset,
-            "timezone": defaults.timezone,
-            "tool_hint_max_length": defaults.tool_hint_max_length,
-        },
-        "model_presets": model_presets,
-        "image_analysis": {
-            "enabled": config.tools.image_analysis.enabled,
-            "model_preset": config.tools.image_analysis.model_preset,
-            "max_image_mb": config.tools.image_analysis.max_image_mb,
-            "max_images": config.tools.image_analysis.max_images,
-        },
-        "system_prompt_overrides": [
-            {"prompt": row.prompt, "models": list(row.models)}
-            for row in config.system_prompt_overrides
-        ],
-        "providers": providers,
-        "subagent_roles": [
-            {
-                "name": name,
-                **metadata,
-                "model_preset": config.subagent_roles.get(
-                    name,
-                    SubagentRoleConfig(),
-                ).model_preset,
-            }
-            for name, metadata in SUBAGENT_ROLES.items()
-        ],
-        "max_concurrent_subagents": defaults.max_concurrent_subagents,
-    }
-
-
-def update_agent_model_settings(
-    config: Config,
-    query: QueryParams,
-    *,
-    oauth_status: OAuthStatusReader,
-) -> bool:
-    defaults = config.agents.defaults
-    changed = False
-
-    if "model_preset" in query or "modelPreset" in query:
-        preset = (query_first_alias(query, "model_preset", "modelPreset") or "").strip()
-        preset_value = None if not preset or preset == "default" else preset
-        if preset_value is not None and preset_value not in config.model_presets:
-            raise WebUISettingsError("unknown model preset")
-        if defaults.model_preset != preset_value:
-            defaults.model_preset = preset_value
-            changed = True
-
-    model = query_first(query, "model")
-    if model is not None:
-        model = model.strip()
-        if not model:
-            raise WebUISettingsError("model is required")
-        if defaults.model != model:
-            defaults.model = model
-            changed = True
-
-    provider = query_first(query, "provider")
-    if provider is not None:
-        provider = provider.strip()
-        if not provider:
-            raise WebUISettingsError("provider is required")
-        _validate_configured_provider(config, provider, oauth_status)
-        if defaults.provider != provider:
-            defaults.provider = provider
-            changed = True
-
-    context_window_tokens = _parse_context_window_tokens(
-        query_first_alias(query, "context_window_tokens", "contextWindowTokens")
-    )
-    if (
-        context_window_tokens is not None
-        and defaults.context_window_tokens != context_window_tokens
-    ):
-        defaults.context_window_tokens = context_window_tokens
-        changed = True
-
-    if query_has_alias(query, "supports_vision", "supportsVision"):
-        supports_vision = parse_bool(
-            query_first_alias(query, "supports_vision", "supportsVision") or "",
-            "supports_vision",
-        )
-        if defaults.supports_vision != supports_vision:
-            defaults.supports_vision = supports_vision
-            changed = True
-
-    if query_has_alias(query, "image_analysis_model_preset", "imageAnalysisModelPreset"):
-        selected = (
-            query_first_alias(query, "image_analysis_model_preset", "imageAnalysisModelPreset")
-            or ""
-        ).strip()
-        selected_value = selected or None
-        if selected_value is not None:
-            if selected_value == "default":
-                if not config.resolve_default_preset().supports_vision:
-                    raise WebUISettingsError(
-                        "the default model must be marked supportsVision=true"
-                    )
-            elif selected_value not in config.model_presets:
-                raise WebUISettingsError("unknown image analysis model preset")
-            elif not config.model_presets[selected_value].supports_vision:
-                raise WebUISettingsError(
-                    "image analysis model preset must be marked supportsVision=true"
-                )
-        if config.tools.image_analysis.model_preset != selected_value:
-            config.tools.image_analysis.model_preset = selected_value
-            changed = True
-
-    return changed
-
-
-def create_model_configuration(
-    config: Config,
-    query: QueryParams,
-    *,
-    oauth_status: OAuthStatusReader,
-) -> str:
-    raw_name = query_first(query, "name")
-    legacy_label = query_first_alias(query, "label", "displayName")
-    model = (query_first(query, "model") or "").strip()
-    provider = (query_first(query, "provider") or "").strip()
-
-    if not model:
-        raise WebUISettingsError("model is required")
-    if not provider:
-        raise WebUISettingsError("provider is required")
-
-    # Old clients only sent `label`; preserve their slugging behaviour while
-    # new clients provide the one canonical, user-visible name directly.
-    name = (
-        _model_configuration_name(raw_name)
-        if raw_name is not None
-        else _model_configuration_slug(legacy_label or "")
-    )
-    if _model_configuration_name_exists(config, name):
-        raise WebUISettingsError("configuration already exists", status=409)
-    _validate_configured_provider(config, provider, oauth_status)
-
-    activate_as_primary = not config.model_presets
-
-    base = config.resolve_preset()
-    max_tokens = _parse_positive_int(
-        query_first_alias(query, "max_tokens", "maxTokens"),
-        "max_tokens",
-    )
-    context_window_tokens = _parse_positive_int(
-        query_first_alias(query, "context_window_tokens", "contextWindowTokens"),
-        "context_window_tokens",
-    )
-    temperature = _parse_temperature(query_first(query, "temperature"))
-    reasoning_effort = base.reasoning_effort
-    supports_vision = base.supports_vision
-    supports_image_generation = base.supports_image_generation
-    if query_has_alias(query, "supports_vision", "supportsVision"):
-        supports_vision = parse_bool(
-            query_first_alias(query, "supports_vision", "supportsVision") or "",
-            "supports_vision",
-        )
-    if query_has_alias(query, "supports_image_generation", "supportsImageGeneration"):
-        supports_image_generation = parse_bool(
-            query_first_alias(
-                query,
-                "supports_image_generation",
-                "supportsImageGeneration",
-            )
-            or "",
-            "supports_image_generation",
-        )
-    if "reasoning_effort" in query or "reasoningEffort" in query:
-        reasoning_effort = (
-            query_first_alias(query, "reasoning_effort", "reasoningEffort") or ""
-        ).strip() or None
-    config.model_presets[name] = ModelPresetConfig(
-        model=model,
-        provider=provider,
-        max_tokens=max_tokens if max_tokens is not None else base.max_tokens,
-        context_window_tokens=(
-            context_window_tokens
-            if context_window_tokens is not None
-            else base.context_window_tokens
-        ),
-        temperature=temperature if temperature is not None else base.temperature,
-        reasoning_effort=reasoning_effort,
-        supports_vision=supports_vision,
-        supports_image_generation=supports_image_generation,
-    )
-    if activate_as_primary:
-        config.agents.defaults.model_preset = name
-    return name
-
-
-def update_model_configuration(
-    config: Config,
-    query: QueryParams,
-    *,
-    oauth_status: OAuthStatusReader,
-) -> bool:
-    name = (query_first(query, "name") or "").strip()
-    if not name or name == "default":
-        raise WebUISettingsError("model configuration is required")
-
-    preset = config.model_presets.get(name)
-    if preset is None:
-        raise WebUISettingsError("unknown model configuration")
-
-    changed = False
-    new_name_value = query_first_alias(query, "new_name", "newName")
-    if new_name_value is not None:
-        new_name = _model_configuration_name(new_name_value)
-        changed = _rename_model_configuration(config, name, new_name) or changed
-        name = new_name
-        preset = config.model_presets[name]
-
-    model = query_first(query, "model")
-    if model is not None:
-        model = model.strip()
-        if not model:
-            raise WebUISettingsError("model is required")
-        if preset.model != model:
-            preset.model = model
-            changed = True
-
-    provider = query_first(query, "provider")
-    if provider is not None:
-        provider = provider.strip()
-        if not provider:
-            raise WebUISettingsError("provider is required")
-        _validate_configured_provider(config, provider, oauth_status)
-        if preset.provider != provider:
-            preset.provider = provider
-            changed = True
-
-    context_window_tokens = _parse_positive_int(
-        query_first_alias(query, "context_window_tokens", "contextWindowTokens"),
-        "context_window_tokens",
-    )
-    if (
-        context_window_tokens is not None
-        and preset.context_window_tokens != context_window_tokens
-    ):
-        preset.context_window_tokens = context_window_tokens
-        changed = True
-
-    max_tokens = _parse_positive_int(
-        query_first_alias(query, "max_tokens", "maxTokens"),
-        "max_tokens",
-    )
-    if max_tokens is not None and preset.max_tokens != max_tokens:
-        preset.max_tokens = max_tokens
-        changed = True
-
-    temperature = _parse_temperature(query_first(query, "temperature"))
-    if temperature is not None and preset.temperature != temperature:
-        preset.temperature = temperature
-        changed = True
-
-    if query_has_alias(query, "supports_vision", "supportsVision"):
-        supports_vision = parse_bool(
-            query_first_alias(query, "supports_vision", "supportsVision") or "",
-            "supports_vision",
-        )
-        if preset.supports_vision != supports_vision:
-            preset.supports_vision = supports_vision
-            changed = True
-
-    if query_has_alias(query, "supports_image_generation", "supportsImageGeneration"):
-        supports_image_generation = parse_bool(
-            query_first_alias(
-                query,
-                "supports_image_generation",
-                "supportsImageGeneration",
-            )
-            or "",
-            "supports_image_generation",
-        )
-        if preset.supports_image_generation != supports_image_generation:
-            preset.supports_image_generation = supports_image_generation
-            changed = True
-
-    if "reasoning_effort" in query or "reasoningEffort" in query:
-        reasoning_effort = (
-            query_first_alias(query, "reasoning_effort", "reasoningEffort") or ""
-        ).strip() or None
-        if preset.reasoning_effort != reasoning_effort:
-            preset.reasoning_effort = reasoning_effort
-            changed = True
-    return changed
-
-
-def update_model_prompt_overrides(config: Config, query: QueryParams) -> bool:
-    """Replace the system prompt override table from a WebUI mutation."""
-    raw_overrides = query_first_alias(query, "overrides", "systemPromptOverrides")
-    if raw_overrides is None:
-        raise WebUISettingsError("system prompt overrides are required")
-    try:
-        parsed: object = json.loads(raw_overrides)
-    except json.JSONDecodeError:
-        raise WebUISettingsError("system prompt overrides must be a JSON array") from None
-    if not isinstance(parsed, list):
-        raise WebUISettingsError("system prompt overrides must be a JSON array")
-
-    rows: list[SystemPromptOverrideConfig] = []
-    bound: set[str] = set()
-    for item in cast(list[object], parsed):
-        if not isinstance(item, dict):
-            raise WebUISettingsError(
-                "each override must be an object with prompt and models"
-            )
-        prompt = str(item.get("prompt") or "").strip()
-        raw_models = item.get("models")
-        models: list[str] = []
-        if isinstance(raw_models, list):
-            models = [
-                model.strip()
-                for model in raw_models
-                if isinstance(model, str) and model.strip()
-            ]
-            models = list(dict.fromkeys(models))
-        if not prompt:
-            raise WebUISettingsError("override prompt must not be blank")
-        if not models:
-            raise WebUISettingsError("each override must bind at least one model")
-        duplicate = next((model for model in models if model in bound), None)
-        if duplicate:
-            raise WebUISettingsError(
-                f"model {duplicate!r} is already bound to another prompt"
-            )
-        bound.update(models)
-        rows.append(SystemPromptOverrideConfig(prompt=prompt, models=models))
-
-    changed = [
-        (row.prompt, tuple(row.models)) for row in rows
-    ] != [
-        (row.prompt, tuple(row.models)) for row in config.system_prompt_overrides
-    ]
-    if changed:
-        config.system_prompt_overrides = rows
-    return changed
-
-
-def delete_model_configuration(config: Config, query: QueryParams) -> None:
-    name = (query_first(query, "name") or "").strip()
-    if not name or name == "default":
-        raise WebUISettingsError("model configuration is required")
-    if name not in config.model_presets:
-        raise WebUISettingsError("unknown model configuration")
-    bound_roles = [role for role, binding in config.subagent_roles.items() if binding.model_preset == name]
-    if bound_roles:
-        raise WebUISettingsError(
-            "Rebind or clear these subagent roles before deleting the preset: " + ", ".join(bound_roles),
-            status=409,
-        )
-    defaults = config.agents.defaults
-    if defaults.model_preset == name:
-        raise WebUISettingsError(
-            "select another model preset before deleting it",
-            status=409,
-        )
-    if config.tools.image_analysis.model_preset == name:
-        raise WebUISettingsError(
-            "clear the image analysis model preset before deleting it",
-            status=409,
-        )
-    del config.model_presets[name]
-
-
-def update_subagent_roles(config: Config, query: QueryParams) -> None:
-    raw = query_first(query, "bindings")
-    try:
-        bindings = json.loads(raw) if raw is not None else None
-    except (TypeError, json.JSONDecodeError):
-        raise WebUISettingsError("bindings must be an object of role names to presets or null") from None
-    if not isinstance(bindings, dict):
-        raise WebUISettingsError("bindings must be an object of role names to presets or null")
-    updates: dict[SubagentRoleName, SubagentRoleConfig] = {}
-    for name, preset in cast(dict[str, str | None], bindings).items():
-        if name not in SUBAGENT_ROLES:
-            raise WebUISettingsError("unknown subagent role")
-        if preset is not None and preset != "default" and preset not in config.model_presets:
-            raise WebUISettingsError("unknown model preset in role bindings")
-        current = config.subagent_roles.get(name, SubagentRoleConfig())
-        values = current.model_dump()
-        values["model_preset"] = preset
-        if preset is not None:
-            values["model"] = None
-        updates[name] = SubagentRoleConfig.model_validate(values)
-    config.subagent_roles.update(updates)
 
 
 def create_provider_settings(config: Config, query: QueryParams) -> str:
@@ -1524,10 +1131,14 @@ def update_provider_settings(
     if changed:
         setattr(config.providers, provider_key, updated_provider_config)
     image_config = config.tools.image_generation
+    image_provider: str | None = None
+    if image_config.model_id is not None:
+        image_model = config.models.get(image_config.model_id)
+        image_provider = image_model.provider if image_model is not None else None
     restart_required = (
         changed
         and image_config.enabled
-        and image_config.provider == provider_key
+        and image_provider == provider_key
         and get_image_gen_provider(provider_key) is not None
     )
     return changed, restart_required
@@ -1748,7 +1359,6 @@ class ModelSettingsHandler:
         self.logger = logger
 
     def _refresh_runtime_config(self) -> None:
-        """Make a successful model-settings mutation visible to live clients now."""
         if self.settings.refresh_runtime_config is not None:
             self.settings.refresh_runtime_config()
 
@@ -1769,11 +1379,7 @@ class ModelSettingsHandler:
                 )
 
             if action == "model-update":
-                payload = self.settings.mutate(
-                    operations.update_model,
-                    request.query,
-                    rename_model_preset=self.settings.rename_model_preset,
-                )
+                payload = self.settings.mutate(operations.update_model, request.query)
                 self._refresh_runtime_config()
                 return SettingsRouteResult.success(payload, decorate_restart=True)
 
@@ -1794,8 +1400,8 @@ class ModelSettingsHandler:
                     operations.update_provider,
                     request.query,
                 )
-                payload, image_restart_cleared = await operations.apply_image_runtime_change(
-                    payload
+                payload, image_restart_cleared = (
+                    await operations.apply_image_runtime_change(payload)
                 )
                 self._refresh_runtime_config()
                 return SettingsRouteResult.success(

@@ -22,6 +22,10 @@ from typing import Any, AsyncIterator, Literal, Mapping, Sequence
 
 from loguru import logger
 
+from nanobot.config.schema import ProviderConfig
+from nanobot.model_domain import get_model
+from nanobot.providers.registry import find_by_name
+
 FleetPriority = Literal["main", "worker", "background", "dream"]
 RateLimitScope = Literal["provider", "model"]
 
@@ -31,7 +35,7 @@ class ModelOffering:
     offering_id: str
     provider: str
     model: str
-    preset_name: str | None = None
+    model_id: str | None = None
     pools: tuple[str, ...] = ()
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
@@ -248,7 +252,7 @@ class ModelFleetStore:
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS offerings (
                     offering_id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL,
-                    preset_name TEXT, pools_json TEXT NOT NULL DEFAULT '[]',
+                    model_id TEXT, pools_json TEXT NOT NULL DEFAULT '[]',
                     input_cost_per_million REAL, output_cost_per_million REAL,
                     cached_input_cost_per_million REAL, supports_vision INTEGER NOT NULL DEFAULT 0,
                     context_window_tokens INTEGER, updated_at_ms INTEGER NOT NULL
@@ -284,6 +288,14 @@ class ModelFleetStore:
                 );
                 """
             )
+            offering_columns = {
+                str(row["name"])
+                for row in self._db.execute("PRAGMA table_info(offerings)")
+            }
+            if "preset_name" in offering_columns and "model_id" not in offering_columns:
+                self._db.execute(
+                    "ALTER TABLE offerings RENAME COLUMN preset_name TO model_id"
+                )
 
     def upsert_offering(self, offering: ModelOffering) -> None:
         with self._lock, self._db:
@@ -292,7 +304,7 @@ class ModelFleetStore:
                 INSERT INTO offerings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(offering_id) DO UPDATE SET
                     provider=excluded.provider, model=excluded.model,
-                    preset_name=COALESCE(excluded.preset_name, offerings.preset_name),
+                    model_id=COALESCE(excluded.model_id, offerings.model_id),
                     pools_json=excluded.pools_json,
                     input_cost_per_million=excluded.input_cost_per_million,
                     output_cost_per_million=excluded.output_cost_per_million,
@@ -302,7 +314,7 @@ class ModelFleetStore:
                     updated_at_ms=excluded.updated_at_ms
                 """,
                 (
-                    offering.offering_id, offering.provider, offering.model, offering.preset_name,
+                    offering.offering_id, offering.provider, offering.model, offering.model_id,
                     json.dumps(list(offering.pools)), offering.input_cost_per_million,
                     offering.output_cost_per_million, offering.cached_input_cost_per_million,
                     int(offering.supports_vision), offering.context_window_tokens,
@@ -659,7 +671,7 @@ class ModelFleetManager:
             declared = rows.get(offering_id)
             items.append({
                 "offering_id": offering_id,
-                "preset": offering.preset_name,
+                "model_id": offering.model_id,
                 "provider": offering.provider,
                 "model": offering.model,
                 "pools": list(offering.pools),
@@ -748,7 +760,7 @@ class ModelFleetManager:
             adjusted = raw * (0.65 + 0.35 * confidence)
             ranked.append({
                 "offering_id": item.offering_id,
-                "preset": item.preset_name,
+                "model_id": item.model_id,
                 "provider": item.provider,
                 "model": item.model,
                 "score": round(raw, 3),
@@ -801,27 +813,35 @@ def get_model_fleet(config: Any) -> ModelFleetManager:
 def offering_from_config(
     config: Any,
     *,
-    preset: Any,
-    preset_name: str | None,
-    provider_name: str,
+    model_id: str,
 ) -> ModelOffering:
-    model = str(preset.model)
-    explicit = str(getattr(preset, "offering_id", "") or "").strip()
-    provider_cfg = config.get_provider(model, preset=preset)
+    model_config = get_model(config.models, model_id)
+    provider_name = model_config.provider
+    spec = find_by_name(provider_name)
+    provider_cfg = (
+        getattr(config.providers, spec.name, None)
+        if spec is not None
+        else (config.providers.model_extra or {}).get(provider_name)
+    )
+    if not isinstance(provider_cfg, ProviderConfig):
+        provider_cfg = None
+    pricing = model_config.pricing
     return ModelOffering(
-        offering_id=explicit or f"{provider_name}:{model}",
+        offering_id=model_config.offering_id or f"{provider_name}:{model_config.model}",
         provider=provider_name,
-        model=model,
-        preset_name=preset_name,
-        pools=tuple(str(item) for item in (getattr(preset, "fleet_pools", None) or [])),
-        input_cost_per_million=getattr(preset, "input_cost_per_million", None),
-        output_cost_per_million=getattr(preset, "output_cost_per_million", None),
-        cached_input_cost_per_million=getattr(preset, "cached_input_cost_per_million", None),
-        max_concurrent_requests=getattr(preset, "max_concurrent_requests", None),
-        provider_max_concurrent_requests=getattr(provider_cfg, "max_concurrent_requests", None),
-        rate_limit_scope=getattr(provider_cfg, "rate_limit_scope", "provider"),
-        supports_vision=bool(getattr(preset, "supports_vision", False)),
-        context_window_tokens=getattr(preset, "context_window_tokens", None),
+        model=model_config.model,
+        model_id=model_id,
+        pools=tuple(model_config.pools),
+        input_cost_per_million=pricing.input,
+        output_cost_per_million=pricing.output,
+        cached_input_cost_per_million=pricing.cache_read,
+        max_concurrent_requests=model_config.max_concurrent_requests,
+        provider_max_concurrent_requests=(
+            provider_cfg.max_concurrent_requests if provider_cfg else None
+        ),
+        rate_limit_scope=(provider_cfg.rate_limit_scope if provider_cfg else "provider"),
+        supports_vision=model_config.capabilities.vision,
+        context_window_tokens=model_config.context_window_tokens,
     )
 
 

@@ -30,14 +30,13 @@ def build_work_role_definition(
     """Build one non-persistent WorkAgent snapshot.
 
     General contributes only its normal-worker tool set. WorkAgent does not
-    inherit General's prompt, model, thinking, temperature, timeout, or context
-    tuning; unspecified runtime settings continue from the current Main runtime.
+    inherit General's prompt, model identity, thinking, temperature, timeout,
+    or context tuning. Model selection is a separate per-run concern; when a
+    run omits ``model_id`` the manager inherits the current Main runtime.
     """
     description = _nonempty(description, "description")
     system_prompt = _nonempty(system_prompt, "system_prompt")
     requested_tools = tuple(tools if tools is not None else general.get("tools", ()))
-    # Milestone reporting is task transport metadata rather than execution
-    # authority, so it remains available even on a narrowly scoped WorkAgent.
     requested_tools = tuple(dict.fromkeys((*requested_tools, "report_progress")))
     unknown = {name for name in requested_tools if not is_subagent_tool_name(name)}
     if "subagent" in requested_tools:
@@ -59,8 +58,7 @@ def build_work_role_definition(
         description=effective_description,
         system_prompt=effective_prompt,
         tools=requested_tools,
-        model=None,
-        model_preset=None,
+        model_id=None,
         thinking=None,
         temperature=None,
         timeout_seconds=None,
@@ -78,8 +76,7 @@ def has_work_override(
     description: str | None,
     system_prompt: str | None,
     tools: list[str] | None,
-    model: str | None,
-    model_preset: str | None,
+    model_id: str | None,
     thinking: str | None,
     temperature: float | None,
     timeout_seconds: float | None,
@@ -90,8 +87,7 @@ def has_work_override(
         description,
         system_prompt,
         tools,
-        model,
-        model_preset,
+        model_id,
         thinking,
         temperature,
         timeout_seconds,

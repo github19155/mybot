@@ -103,7 +103,7 @@ def launch_tui(
                 ),
                 "NANOBOT_TUI_API_URL": base_url,
                 "NANOBOT_TUI_MODEL": _model_display(config)[0],
-                "NANOBOT_TUI_MODEL_PRESET": config.agents.defaults.model_preset or "default",
+                "NANOBOT_TUI_MODEL_ID": config.agents.defaults.model_id,
                 "NANOBOT_TUI_WORKSPACE": str(tui_workspace),
                 "NANOBOT_TUI_VERSION": __version__,
                 "NANOBOT_TUI_ACCESS": (

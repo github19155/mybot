@@ -80,11 +80,6 @@ def build_gateway_services(
 ) -> GatewayServices:
     settings = WebUISettingsServices.create(
         config_path or get_config_path(),
-        rename_model_preset=(
-            session_manager.rename_model_preset
-            if session_manager is not None
-            else None
-        ),
         refresh_runtime_config=refresh_runtime_config,
     )
     tokens = GatewayTokenStore()

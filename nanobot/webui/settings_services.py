@@ -86,7 +86,6 @@ class WebUISettingsServices:
 
     config: ConfigStore
     oauth_flows: WebUIOAuthFlowRegistry
-    rename_model_preset: Callable[[str, str], int] | None = None
     refresh_runtime_config: Callable[[], None] | None = None
 
     @classmethod
@@ -94,13 +93,11 @@ class WebUISettingsServices:
         cls,
         config_path: Path,
         *,
-        rename_model_preset: Callable[[str, str], int] | None = None,
         refresh_runtime_config: Callable[[], None] | None = None,
     ) -> WebUISettingsServices:
         return cls(
             config=ConfigStore(config_path),
             oauth_flows=WebUIOAuthFlowRegistry(),
-            rename_model_preset=rename_model_preset,
             refresh_runtime_config=refresh_runtime_config,
         )
 

@@ -102,7 +102,7 @@ async def aiohttp_client():
 async def test_stream_true_returns_sse(aiohttp_client) -> None:
     """stream=true should return text/event-stream with SSE chunks."""
     agent = _make_streaming_agent(["Hello", " world"])
-    app = create_app(agent, model_name="test-model", api_key=API_KEY)
+    app = create_app(agent, model_id="test-model", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -136,7 +136,7 @@ async def test_stream_false_returns_json(aiohttp_client) -> None:
     agent.process_direct = AsyncMock(return_value="normal reply")
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -158,7 +158,7 @@ async def test_stream_default_is_false(aiohttp_client) -> None:
     agent.process_direct = AsyncMock(return_value="default reply")
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -176,7 +176,7 @@ async def test_stream_default_is_false(aiohttp_client) -> None:
 async def test_stream_sse_chunk_ids_are_consistent(aiohttp_client) -> None:
     """All SSE chunks in a single stream should share the same id."""
     agent = _make_streaming_agent(["A", "B", "C"])
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -213,7 +213,7 @@ async def test_stream_passes_on_stream_callbacks(aiohttp_client) -> None:
     agent.process_direct = fake_process_direct
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -245,7 +245,7 @@ async def test_stream_segment_end_does_not_close_sse(aiohttp_client) -> None:
     agent.process_direct = fake_process_direct
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -283,7 +283,7 @@ async def test_stream_uses_final_response_when_no_deltas(aiohttp_client) -> None
     agent.process_direct = fake_process_direct
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -324,7 +324,7 @@ async def test_stream_with_session_id(aiohttp_client) -> None:
     agent.process_direct = fake_process_direct
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(
@@ -352,7 +352,7 @@ async def test_streaming_backend_failure_does_not_emit_success_terminator(aiohtt
     agent.process_direct = boom
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     resp = await client.post(

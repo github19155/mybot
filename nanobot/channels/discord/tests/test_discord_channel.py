@@ -945,7 +945,7 @@ async def test_slash_commands_forward_via_handle_message(slash_name: str) -> Non
 
 
 @pytest.mark.asyncio
-async def test_slash_model_forwards_optional_preset() -> None:
+async def test_slash_model_forwards_optional_model_id() -> None:
     channel = DiscordChannel(DiscordConfig(enabled=True, allow_from=["*"]), MessageBus())
     handled: list[dict] = []
 
@@ -959,7 +959,7 @@ async def test_slash_model_forwards_optional_preset() -> None:
 
     model_cmd = client.tree.get_command("model")
     assert model_cmd is not None
-    await model_cmd.callback(interaction, preset="fast")
+    await model_cmd.callback(interaction, model_id="fast")
 
     assert interaction.response.messages == [
         {"content": "Processing /model fast...", "ephemeral": True}

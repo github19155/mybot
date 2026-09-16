@@ -41,7 +41,7 @@ The default instance lives under `~/.nanobot/`:
 
 | Path | Meaning |
 |---|---|
-| `~/.nanobot/config.json` | Instance configuration: providers, model defaults, channels, tools, gateway, API, and runtime options |
+| `~/.nanobot/config.json` | Instance configuration: providers, configured models, model defaults, channels, tools, gateway, API, and runtime options |
 | `~/.nanobot/workspace/` | Agent workspace: memory, heartbeat tasks, cron jobs, skills, and generated artifacts |
 | `~/.nanobot/sessions/<workspace-id>/` | Session history stored outside the agent-accessible workspace; the opaque ID follows workspace moves |
 
@@ -74,7 +74,7 @@ a second agent or relocate the configured agent workspace.
 
 ## Config Format
 
-`config.json` accepts both camelCase and snake_case keys. The docs use camelCase because nanobot writes config back to disk with camelCase aliases, for example `apiKey`, `modelPresets`, `intervalS`, and `maxToolResultChars`.
+`config.json` accepts both camelCase and snake_case keys. The docs use camelCase because nanobot writes config back to disk with camelCase aliases, for example `apiKey`, `models`, `intervalS`, and `maxToolResultChars`.
 
 Most examples are partial snippets. Merge them into the existing file created by `nanobot onboard`; do not replace the whole file unless you want to reset the instance.
 
@@ -104,33 +104,40 @@ The WebUI launcher is the normal browser entry point. Underneath, the gateway ke
 
 ## Provider and Model Selection
 
-The active model should normally come from a named `modelPresets` entry selected by `agents.defaults.modelPreset`. Direct `agents.defaults.provider` and `agents.defaults.model` still form the implicit `default` preset for older or minimal configs. The active provider is resolved in this order:
+`Config.models` is the canonical model registry. Each key is a stable `model_id` that resolves to one entry containing the display name, concrete provider, upstream model, capabilities, and model defaults. Providers remain responsible for credentials and endpoints; a model entry records which concrete provider route it uses.
 
-1. If the active preset provider or implicit default provider is not `"auto"`, nanobot uses that provider.
-2. If provider is `"auto"`, nanobot tries to infer the provider from the model name, configured API keys, local provider base URLs, or gateway providers.
-3. OAuth providers such as OpenAI Codex and GitHub Copilot require explicit login and explicit provider/model selection inside the active preset.
-
-Pin the provider inside the preset when setting up for the first time. It is easier to debug:
+Set `agents.defaults.model_id` to the key of the model that should handle normal turns:
 
 ```json
 {
-  "modelPresets": {
-    "primary": {
+  "providers": {
+    "openrouter": {
+      "apiKey": "${OPENROUTER_API_KEY}"
+    }
+  },
+  "models": {
+    "main": {
+      "displayName": "Primary Claude",
       "provider": "openrouter",
-      "model": "anthropic/claude-opus-4.5"
+      "model": "anthropic/claude-opus-4.5",
+      "capabilities": {
+        "text": true
+      }
     }
   },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "main"
     }
   }
 }
 ```
 
-At runtime, Main, Subagents, and Dream decide which inherited/default/preset/override selection applies, but `ModelRuntimeResolver` is the single authority that converts that selection into `LLMRuntime`. `ProviderSnapshot` conversion also goes through this resolver path. `ModelFleet` may recommend an eligible configured offering when policy calls for automatic selection, but it does not construct the runtime.
+Every model entry must name a concrete provider; provider guessing and `provider: "auto"` are not part of canonical model configuration. The upstream `model` value belongs inside its `models.<model_id>` entry and is not a selector. To change a session's model, use `/model <model_id>` with a key present in `Config.models`; sessions without a saved selection follow `agents.defaults.model_id`.
 
-See [`providers.md`](./providers.md) for practical examples and [`configuration.md#providers`](./configuration.md#providers) for the full provider reference.
+At runtime, Main, Subagents, and Dream resolve their canonical model IDs through `ModelRuntimeResolver`, which converts the selected `Config.models` entry into an immutable `LLMRuntime`. `ProviderSnapshot` conversion also goes through this resolver path. `ModelFleet` may recommend an eligible configured offering when policy calls for automatic selection, but it does not construct the runtime.
+
+See [`providers.md`](./providers.md) for practical provider examples and [`configuration.md#providers`](./configuration.md#providers) for the provider reference.
 
 ## Channels and Sessions
 

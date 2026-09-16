@@ -22,7 +22,8 @@ from nanobot.cli.onboard import (
     run_onboard,
 )
 from nanobot.config.loader import merge_missing_defaults
-from nanobot.config.schema import Config, ModelPresetConfig
+from nanobot.config.schema import Config
+from nanobot.model_domain import ModelCapabilities, ModelConfig
 from nanobot.utils.helpers import sync_workspace_templates
 
 
@@ -537,7 +538,7 @@ class TestRunOnboardExitBehavior:
 
         def fake_configure_general_settings(config, section):
             if section == "Agent Settings":
-                config.agents.defaults.model = "test/provider-model"
+                config.agents.defaults.model_id = "alternate"
 
         monkeypatch.setattr(onboard_wizard, "_show_main_menu_header", lambda: None)
         monkeypatch.setattr(onboard_wizard, "_select_with_back", fake_select_with_back)
@@ -1035,14 +1036,14 @@ class TestMainMenuUpdate:
 
         assert oauth_calls == [(config, "openai_codex")]
         assert model_prompts == [
-            ("Model ID", "openai-codex/gpt-5.6-sol", "openai_codex")
+            ("Upstream model", "openai-codex/gpt-5.6-sol", "openai_codex")
         ]
         assert config.providers.openai_codex.api_key is None
-        assert config.model_presets["primary"].provider == "openai_codex"
-        assert config.model_presets["primary"].model == "openai-codex/gpt-5.6-sol"
+        assert config.models["main"].provider == "openai_codex"
+        assert config.models["main"].model == "openai-codex/gpt-5.6-sol"
 
-    def test_quick_start_openai_codex_login_failure_does_not_create_preset(self, monkeypatch):
-        """A failed Codex login must not leave a ready-looking model preset."""
+    def test_quick_start_openai_codex_login_failure_does_not_create_model(self, monkeypatch):
+        """A failed Codex login must not leave a ready-looking model."""
         config = Config()
 
         monkeypatch.setattr(onboard_wizard, "_show_quick_start_progress", lambda *_args: None)
@@ -1059,7 +1060,7 @@ class TestMainMenuUpdate:
         monkeypatch.setattr(onboard_wizard, "_quick_start_oauth_login", lambda *args: False)
 
         assert onboard_wizard._configure_quick_start_provider(config) is False
-        assert "primary" not in config.model_presets
+        assert config.models["main"].provider == "anthropic"
 
     def test_quick_start_openai_codex_login_reuses_existing_token(self, monkeypatch):
         """Quick Start should not open a new login flow when Codex is already authenticated."""
@@ -1194,9 +1195,8 @@ class TestMainMenuUpdate:
     def test_quick_start_summary_reports_missing_codex_oauth(self, monkeypatch):
         """The review step should distinguish OAuth from an API-key setup."""
         config = Config()
-        config.model_presets["primary"] = ModelPresetConfig(
-            model="openai-codex/gpt-5.6-sol",
-            provider="openai_codex",
+        config.models["main"] = ModelConfig(
+            display_name="Test", provider="openai_codex", model="openai-codex/gpt-5.6-sol",
         )
         captured: dict[str, list[tuple[str, str]]] = {}
 
@@ -1260,9 +1260,9 @@ class TestMainMenuUpdate:
         assert pause_messages == ["Press Enter to save and exit..."]
         assert config.providers.deepseek.api_key == "sk-ds-test"
         assert config.providers.deepseek.api_base == "https://api.deepseek.com"
-        assert config.agents.defaults.model_preset == "primary"
-        assert config.model_presets["primary"].provider == "deepseek"
-        assert config.model_presets["primary"].model == "deepseek-v4-flash"
+        assert config.agents.defaults.model_id == "main"
+        assert config.models["main"].provider == "deepseek"
+        assert config.models["main"].model == "deepseek-v4-flash"
         websocket = getattr(config.channels, "websocket")
         assert websocket["enabled"] is True
         assert websocket["websocketRequiresToken"] is True
@@ -1280,7 +1280,7 @@ class TestMainMenuUpdate:
         )
 
         assert onboard_wizard._configure_quick_start_provider(config) is onboard_wizard._BACK_PRESSED
-        assert "primary" not in config.model_presets
+        assert config.models["main"].provider == "anthropic"
 
     def test_quick_start_provider_back_skips_pause(self, monkeypatch):
         """Returning from Quick Start should not require an extra Enter key press."""
@@ -1342,7 +1342,7 @@ class TestMainMenuUpdate:
         assert config.model_dump(by_alias=True) == original
         assert getattr(config.channels, "websocket", None) is None
 
-    def test_quick_start_provider_choice_asks_for_model_id(self, monkeypatch):
+    def test_quick_start_provider_choice_asks_for_upstream_model(self, monkeypatch):
         """Known providers should ask users for the model instead of fetching one."""
         config = Config()
         model_prompts: list[tuple[str, str, str]] = []
@@ -1359,11 +1359,11 @@ class TestMainMenuUpdate:
 
         assert onboard_wizard._configure_quick_start_provider(config) is True
 
-        assert model_prompts == [("Model ID", "", "openrouter")]
+        assert model_prompts == [("Upstream model", "", "openrouter")]
         assert config.providers.openrouter.api_key == "sk-or-test"
         assert config.providers.openrouter.api_base == "https://openrouter.ai/api/v1"
-        assert config.model_presets["primary"].provider == "openrouter"
-        assert config.model_presets["primary"].model == "openai/gpt-4o-mini"
+        assert config.models["main"].provider == "openrouter"
+        assert config.models["main"].model == "openai/gpt-4o-mini"
 
     def test_quick_start_local_provider_skips_api_key(self, monkeypatch):
         """Local providers should only need a model when they have a default base URL."""
@@ -1386,8 +1386,8 @@ class TestMainMenuUpdate:
 
         assert config.providers.ollama.api_key is None
         assert config.providers.ollama.api_base == "http://localhost:11434/v1"
-        assert config.model_presets["primary"].provider == "ollama"
-        assert config.model_presets["primary"].model == "llama3.2"
+        assert config.models["main"].provider == "ollama"
+        assert config.models["main"].model == "llama3.2"
 
     def test_quick_start_openai_stores_key_and_model_without_base(self, monkeypatch):
         """OpenAI should support key-only setup without storing a default base URL."""
@@ -1406,8 +1406,8 @@ class TestMainMenuUpdate:
 
         assert config.providers.openai.api_key == "sk-openai-test"
         assert config.providers.openai.api_base is None
-        assert config.model_presets["primary"].provider == "openai"
-        assert config.model_presets["primary"].model == "gpt-4o-mini"
+        assert config.models["main"].provider == "openai"
+        assert config.models["main"].model == "gpt-4o-mini"
 
     def test_quick_start_api_key_escape_returns_to_provider_choice(self, monkeypatch):
         """Esc from an API-key prompt should go back to provider selection."""
@@ -1435,7 +1435,7 @@ class TestMainMenuUpdate:
         assert selected_providers == ["DeepSeek", "OpenAI"]
         assert config.providers.deepseek.api_key is None
         assert config.providers.openai.api_key == "sk-openai-test"
-        assert config.model_presets["primary"].provider == "openai"
+        assert config.models["main"].provider == "openai"
 
     def test_quick_start_zhipu_coding_plan_uses_coding_base_url(self, monkeypatch):
         """Zhipu Coding Plan should not use the standard Zhipu base URL."""
@@ -1455,8 +1455,8 @@ class TestMainMenuUpdate:
 
         assert config.providers.zhipu.api_key == "zhipu-key"
         assert config.providers.zhipu.api_base == "https://open.bigmodel.cn/api/coding/paas/v4"
-        assert config.model_presets["primary"].provider == "zhipu"
-        assert config.model_presets["primary"].model == "glm-4.6"
+        assert config.models["main"].provider == "zhipu"
+        assert config.models["main"].model == "glm-4.6"
 
     def test_quick_start_minimax_mainland_token_plan_uses_mainland_base_url(self, monkeypatch):
         """MiniMax mainland token plan should not use the global MiniMax base URL."""
@@ -1476,8 +1476,8 @@ class TestMainMenuUpdate:
 
         assert config.providers.minimax.api_key == "minimax-key"
         assert config.providers.minimax.api_base == "https://api.minimaxi.com/v1"
-        assert config.model_presets["primary"].provider == "minimax"
-        assert config.model_presets["primary"].model == "MiniMax-M2"
+        assert config.models["main"].provider == "minimax"
+        assert config.models["main"].model == "MiniMax-M2"
 
     def test_quick_start_stepfun_step_plan_uses_plan_base_url(self, monkeypatch):
         """StepFun Step Plan should not use the standard StepFun base URL."""
@@ -1497,8 +1497,8 @@ class TestMainMenuUpdate:
 
         assert config.providers.stepfun.api_key == "stepfun-key"
         assert config.providers.stepfun.api_base == "https://api.stepfun.ai/step_plan/v1"
-        assert config.model_presets["primary"].provider == "stepfun"
-        assert config.model_presets["primary"].model == "step-3.5-flash"
+        assert config.models["main"].provider == "stepfun"
+        assert config.models["main"].model == "step-3.5-flash"
 
     def test_quick_start_xiaomi_mimo_token_plan_uses_token_plan_base_url(self, monkeypatch):
         """Xiaomi MiMo Token Plan should not use the standard MiMo base URL."""
@@ -1518,10 +1518,10 @@ class TestMainMenuUpdate:
 
         assert config.providers.xiaomi_mimo.api_key == "mimo-key"
         assert config.providers.xiaomi_mimo.api_base == "https://token-plan-sgp.xiaomimimo.com/v1"
-        assert config.model_presets["primary"].provider == "xiaomi_mimo"
-        assert config.model_presets["primary"].model == "mimo-v2.5-pro"
+        assert config.models["main"].provider == "xiaomi_mimo"
+        assert config.models["main"].model == "mimo-v2.5-pro"
 
-    def test_quick_start_custom_base_url_asks_for_model_id(self, monkeypatch):
+    def test_quick_start_custom_base_url_asks_for_upstream_model(self, monkeypatch):
         """Custom providers should ask for base URL and model ID."""
         config = Config()
         text_answers = iter(["sk-custom-test", "https://api.example.test/v1"])
@@ -1543,8 +1543,8 @@ class TestMainMenuUpdate:
 
         assert config.providers.custom.api_key == "sk-custom-test"
         assert config.providers.custom.api_base == "https://api.example.test/v1"
-        assert config.model_presets["primary"].provider == "custom"
-        assert config.model_presets["primary"].model == "custom-model"
+        assert config.models["main"].provider == "custom"
+        assert config.models["main"].model == "custom-model"
 
     def test_quick_start_provider_without_default_base_url_prompts_for_base(self, monkeypatch):
         """Providers that require an endpoint should ask for a base URL in Quick Start."""
@@ -1564,8 +1564,8 @@ class TestMainMenuUpdate:
 
         assert config.providers.azure_openai.api_key == "azure-key"
         assert config.providers.azure_openai.api_base == "https://azure.example.test/openai"
-        assert config.model_presets["primary"].provider == "azure_openai"
-        assert config.model_presets["primary"].model == "deployment-name"
+        assert config.models["main"].provider == "azure_openai"
+        assert config.models["main"].model == "deployment-name"
 
     def test_quick_start_websocket_step_explains_channel_enablement(self, monkeypatch):
         """Quick Start should confirm and protect WebSocket for WebUI."""
@@ -1660,10 +1660,10 @@ class TestMainMenuUpdate:
         assert config.providers.deepseek.api_base is None
         assert config.providers.custom.api_key is None
         assert config.providers.custom.api_base is None
-        assert "primary" not in config.model_presets
+        assert config.models["main"].provider == "anthropic"
 
-    def test_quick_start_requires_model_id_before_setting_defaults(self, monkeypatch):
-        """Quick Start should not create a preset without an explicit model ID."""
+    def test_quick_start_requires_upstream_model_before_setting_defaults(self, monkeypatch):
+        """Quick Start should not configure a model without an explicit upstream model."""
         config = Config()
 
         monkeypatch.setattr(onboard_wizard, "_show_quick_start_progress", lambda *_args: None)
@@ -1675,14 +1675,13 @@ class TestMainMenuUpdate:
 
         assert config.providers.deepseek.api_key is None
         assert config.providers.deepseek.api_base is None
-        assert "primary" not in config.model_presets
+        assert config.models["main"].provider == "anthropic"
 
     def test_quick_start_summary_calls_out_missing_api_key(self, monkeypatch):
         """Quick Start summary should retain the missing-key status."""
         config = Config()
-        config.model_presets["primary"] = ModelPresetConfig(
-            model="deepseek-v4-flash",
-            provider="deepseek",
+        config.models["main"] = ModelConfig(
+            display_name="Test", provider="deepseek", model="deepseek-v4-flash",
         )
 
         captured: dict[str, list[tuple[str, str]]] = {}
@@ -2002,198 +2001,149 @@ class TestConfigurePydanticModelEmptyString:
         assert result.api_key == ""
 
 
-class TestModelPresetWizard:
-    """Tests for model preset CRUD in the onboard wizard."""
+class TestModelWizard:
+    """Tests for canonical model CRUD in the onboard wizard."""
 
-    def test_sync_preset_cache(self):
-        """_sync_preset_cache should populate the module-level cache."""
-        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _sync_preset_cache
-        from nanobot.config.schema import ModelPresetConfig
-
+    def test_sync_model_id_cache(self):
+        from nanobot.cli.onboard import _MODEL_ID_CACHE, _sync_model_id_cache
         config = Config()
-        config.model_presets["fast"] = ModelPresetConfig(model="gpt-4.1-mini")
-        config.model_presets["power"] = ModelPresetConfig(model="gpt-4.1")
-        _sync_preset_cache(config)
-        assert _MODEL_PRESET_CACHE == {"fast", "power"}
-        _MODEL_PRESET_CACHE.clear()
-
-    def test_model_preset_add(self, monkeypatch):
-        """_configure_model_presets should add a new preset."""
-        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _configure_model_presets
-        from nanobot.config.schema import ModelPresetConfig
-
-        config = Config()
-        _MODEL_PRESET_CACHE.clear()
-
-        responses = iter([
-            "[+] Add new preset",
-            "my-preset",
-            "<- Back",
-        ])
-
-        class FakePrompt:
-            def __init__(self, response):
-                self.response = response
-
-            def ask(self):
-                return self.response
-
-        def fake_text(*_args, **_kwargs):
-            return FakePrompt(next(responses))
-
-        def fake_configure(*_model, **_kwargs):
-            return ModelPresetConfig(model="gpt-test", temperature=0.5)
-
-        def fake_select_with_back(*_args, **_kwargs):
-            return next(responses)
-
-        monkeypatch.setattr(onboard_wizard, "_select_with_back", fake_select_with_back)
-        monkeypatch.setattr(onboard_wizard, "questionary", SimpleNamespace(text=fake_text))
-        monkeypatch.setattr(onboard_wizard, "_configure_pydantic_model", fake_configure)
-        monkeypatch.setattr(onboard_wizard, "_show_section_header", lambda *a, **kw: None)
-        monkeypatch.setattr(onboard_wizard, "console", SimpleNamespace(clear=lambda: None))
-
-        _configure_model_presets(config)
-
-        assert "my-preset" in config.model_presets
-        assert config.model_presets["my-preset"].model == "gpt-test"
-        assert config.model_presets["my-preset"].temperature == 0.5
-        _MODEL_PRESET_CACHE.clear()
-
-    def test_model_preset_delete(self, monkeypatch):
-        """_configure_model_presets should delete an existing preset."""
-        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _configure_model_presets
-        from nanobot.config.schema import ModelPresetConfig
-
-        config = Config()
-        config.model_presets["old - preset"] = ModelPresetConfig(model="x")
-        _MODEL_PRESET_CACHE.clear()
-        _MODEL_PRESET_CACHE.update({"old - preset", "default"})
-
-        responses = iter([
-            "old - preset - x",
-            "Delete",
-            True,
-            "<- Back",
-        ])
-
-        class FakePrompt:
-            def __init__(self, response):
-                self.response = response
-
-            def ask(self):
-                if isinstance(self.response, BaseException):
-                    raise self.response
-                return self.response
-
-        def fake_select(*_args, **_kwargs):
-            return FakePrompt(next(responses))
-
-        def fake_confirm(*_args, **_kwargs):
-            return FakePrompt(next(responses))
-
-        def fake_select_with_back(*_args, **_kwargs):
-            return next(responses)
-
-        monkeypatch.setattr(onboard_wizard, "_select_with_back", fake_select_with_back)
-        monkeypatch.setattr(
-            onboard_wizard, "questionary", SimpleNamespace(select=fake_select, confirm=fake_confirm)
+        config.models["fast"] = ModelConfig(
+            display_name="Fast", provider="openai", model="gpt-4.1-mini"
         )
-        monkeypatch.setattr(onboard_wizard, "_show_section_header", lambda *a, **kw: None)
-        monkeypatch.setattr(onboard_wizard, "console", SimpleNamespace(clear=lambda: None))
+        _sync_model_id_cache(config)
+        assert _MODEL_ID_CACHE == {"main", "fast"}
+        _MODEL_ID_CACHE.clear()
 
-        _configure_model_presets(config)
-
-        assert "old - preset" not in config.model_presets
-        assert "old - preset" not in _MODEL_PRESET_CACHE
-        _MODEL_PRESET_CACHE.clear()
-
-    def test_model_preset_field_handler(self, monkeypatch):
-        """_handle_model_preset_field should set a preset name from choices."""
-        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_model_preset_field
+    def test_model_id_field_handler(self, monkeypatch):
+        from nanobot.cli.onboard import _MODEL_ID_CACHE, _handle_model_id_field
         from nanobot.config.schema import AgentDefaults
-
-        _MODEL_PRESET_CACHE.clear()
-        _MODEL_PRESET_CACHE.update({"fast", "power", "default"})
-
+        _MODEL_ID_CACHE.clear()
+        _MODEL_ID_CACHE.update({"main", "fast"})
         monkeypatch.setattr(onboard_wizard, "_select_with_back", lambda *a, **kw: "fast")
-
         defaults = AgentDefaults()
-        _handle_model_preset_field(defaults, "model_preset", "Model Preset", None)
-        assert defaults.model_preset == "fast"
-        _MODEL_PRESET_CACHE.clear()
+        _handle_model_id_field(defaults, "model_id", "Model ID", "main")
+        assert defaults.model_id == "fast"
+        _MODEL_ID_CACHE.clear()
 
-    def test_model_preset_field_handler_clear(self, monkeypatch):
-        """_handle_model_preset_field should clear preset when Clear value is chosen."""
-        from nanobot.cli.onboard import (
-            _CLEAR_CHOICE,
-            _MODEL_PRESET_CACHE,
-            _handle_model_preset_field,
-        )
-        from nanobot.config.schema import AgentDefaults
+    def test_main_menu_dispatch_includes_models(self):
+        from nanobot.cli.onboard import _configure_models
+        assert callable(_configure_models)
 
-        _MODEL_PRESET_CACHE.clear()
-        _MODEL_PRESET_CACHE.add("fast")
-
-        monkeypatch.setattr(onboard_wizard, "_select_with_back", lambda *a, **kw: _CLEAR_CHOICE)
-
-        defaults = AgentDefaults(model_preset="fast")
-        _handle_model_preset_field(defaults, "model_preset", "Model Preset", "fast")
-        assert defaults.model_preset is None
-        _MODEL_PRESET_CACHE.clear()
-
-    def test_main_menu_dispatch_includes_model_presets(self):
-        """_configure_model_presets should be importable and callable."""
-        from nanobot.cli.onboard import _configure_model_presets
-
-        assert callable(_configure_model_presets)
-
-    def test_run_onboard_model_presets_edit(self, monkeypatch):
-        """run_onboard should handle [M] Model Presets through Advanced Settings."""
-        from nanobot.config.schema import ModelPresetConfig
-
+    def test_run_onboard_models_edit(self, monkeypatch):
         initial_config = Config()
-
         responses = iter([
-            "[A] Advanced Settings",
-            "[M] Model Presets",
-            KeyboardInterrupt(),
-            "[S] Save and Exit",
+            "[A] Advanced Settings", "[M] Models", KeyboardInterrupt(), "[S] Save and Exit"
         ])
-
         def fake_select_with_back(*_args, **_kwargs):
             response = next(responses)
             if isinstance(response, BaseException):
                 raise response
             return response
-
-        preset_mutated = {"n": 0}
-
-        def fake_configure_model_presets(config):
-            preset_mutated["n"] += 1
-            config.model_presets["test"] = ModelPresetConfig(model="gpt-test")
-
+        mutated = {"n": 0}
+        def fake_configure_models(config):
+            mutated["n"] += 1
+            config.models["test"] = ModelConfig(
+                display_name="Test", provider="openai", model="gpt-test",
+                capabilities=ModelCapabilities(text=True),
+            )
         monkeypatch.setattr(onboard_wizard, "_select_with_back", fake_select_with_back)
-        monkeypatch.setattr(onboard_wizard, "_configure_model_presets", fake_configure_model_presets)
+        monkeypatch.setattr(onboard_wizard, "_configure_models", fake_configure_models)
         monkeypatch.setattr(onboard_wizard, "_show_main_menu_header", lambda: None)
         monkeypatch.setattr(onboard_wizard, "_show_section_header", lambda *a, **kw: None)
         monkeypatch.setattr(onboard_wizard, "console", SimpleNamespace(clear=lambda: None))
-
         result = run_onboard(initial_config)
         assert result.should_save is True
-        assert preset_mutated["n"] == 1
-        assert "test" in result.config.model_presets
+        assert mutated["n"] == 1
+        assert "test" in result.config.models
+
+    def test_delete_model_blocks_all_canonical_usages(self, monkeypatch):
+        from nanobot.config.schema import SystemPromptOverrideConfig
+
+        config = Config()
+        config.models["fast"] = ModelConfig(
+            display_name="Fast",
+            provider="openai",
+            model="gpt-fast",
+            capabilities=ModelCapabilities(
+                text=True,
+                vision=True,
+                image_generation=True,
+                transcription=True,
+            ),
+        )
+        config.agents.defaults.model_id = "fast"
+        config.agents.defaults.dream.model_id = "fast"
+        config.agents.defaults.dream.fallback_model_id = "fast"
+        config.subagent_roles["general"].model_id = "fast"
+        config.transcription.model_id = "fast"
+        config.tools.image_analysis.model_id = "fast"
+        config.tools.image_generation.model_id = "fast"
+        config.system_prompt_overrides = [
+            SystemPromptOverrideConfig(prompt="bound", model_ids=["fast"])
+        ]
+
+        answers = iter(["fast - gpt-fast", "Delete", "<- Back"])
+        printed: list[str] = []
+        pauses: list[bool] = []
+
+        class NoConfirm:
+            @staticmethod
+            def confirm(*_args, **_kwargs):
+                raise AssertionError("referenced models must be rejected before confirmation")
+
+        monkeypatch.setattr(onboard_wizard.console, "clear", lambda: None)
+        monkeypatch.setattr(
+            onboard_wizard.console,
+            "print",
+            lambda message, *args, **kwargs: printed.append(str(message)),
+        )
+        monkeypatch.setattr(onboard_wizard, "_show_section_header", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            onboard_wizard,
+            "_select_with_back",
+            lambda *a, **kw: next(answers),
+        )
+        monkeypatch.setattr(onboard_wizard, "_get_questionary", lambda: NoConfirm())
+        monkeypatch.setattr(onboard_wizard, "_pause", lambda *a, **kw: pauses.append(True))
+
+        onboard_wizard._configure_models(config)
+
+        assert "fast" in config.models
+        assert pauses == [True]
+        message = "\n".join(printed)
+        for usage in (
+            "agents.defaults.model_id",
+            "dream.model_id",
+            "dream.fallback_model_id",
+            "subagent_roles.general.model_id",
+            "transcription.model_id",
+            "system_prompt_overrides[0].model_ids",
+            "tools.image_analysis.model_id",
+            "tools.image_generation.model_id",
+        ):
+            assert usage in message
 
     def test_provider_field_handler(self, monkeypatch):
         """_handle_provider_field should set provider from choices."""
         from nanobot.cli.onboard import _handle_provider_field
-        from nanobot.config.schema import AgentDefaults
-
         monkeypatch.setattr(onboard_wizard, "_select_with_back", lambda *a, **kw: "anthropic")
 
-        defaults = AgentDefaults()
-        _handle_provider_field(defaults, "provider", "Provider", "auto")
-        assert defaults.provider == "anthropic"
+        model = ModelConfig(display_name="Test", provider="openai", model="gpt-test")
+        _handle_provider_field(model, "provider", "Provider", "openai")
+        assert model.provider == "anthropic"
+    def test_current_provider_rejects_missing_provider(self):
+        """Model prompts must not silently fall back to the ``auto`` selector."""
+        from nanobot.cli.onboard import _get_current_provider
+
+        class ModelWithoutProvider(BaseModel):
+            model: str = "gpt-test"
+
+        try:
+            _get_current_provider(ModelWithoutProvider())
+        except ValueError as exc:
+            assert "provider" in str(exc)
+        else:
+            raise AssertionError("model prompts must require an explicit provider")
 
     def test_search_provider_field_handler(self, monkeypatch):
         """_handle_search_provider_field should set the search engine from choices."""

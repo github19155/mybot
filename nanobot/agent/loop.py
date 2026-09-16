@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, cast
 from loguru import logger
 
 from nanobot.agent import context as agent_context
-from nanobot.agent import model_presets as preset_helpers
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
@@ -56,8 +55,9 @@ from nanobot.bus.outbound_events import StreamedResponseEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeEventBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
-from nanobot.config.schema import AgentDefaults, Config, ModelPresetConfig
+from nanobot.config.schema import AgentDefaults, Config
 from nanobot.llm_usage.context import source_from_request
+from nanobot.model_domain import ModelConfig
 from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
@@ -88,8 +88,8 @@ from nanobot.session.keys import (
 )
 from nanobot.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
 from nanobot.session.model_selection import (
-    SESSION_MODEL_PRESET_METADATA_KEY,
-    model_preset_from_metadata,
+    SESSION_MODEL_ID_METADATA_KEY,
+    model_id_from_metadata,
 )
 from nanobot.session.recovery import (
     PENDING_FOLLOWUP_ID_KEY,
@@ -232,17 +232,17 @@ class AgentLoop:
         return self.runtime_resolver.runtime.context_window_tokens
 
     @property
-    def model_presets(self) -> Mapping[str, ModelPresetConfig]:
-        """Configured model presets exposed for selection and display."""
-        return self.runtime_resolver.model_presets
+    def models(self) -> Mapping[str, ModelConfig]:
+        """Configured models exposed for selection and display."""
+        return self.runtime_resolver.models
 
     @property
-    def model_preset(self) -> str | None:
-        return self.runtime_resolver.model_preset
+    def model_id(self) -> str | None:
+        return self.runtime_resolver.model_id
 
-    @model_preset.setter
-    def model_preset(self, name: str | None) -> None:
-        self.set_model_preset(name)
+    @model_id.setter
+    def model_id(self, name: str) -> None:
+        self.set_model_id(name)
 
     def llm_runtime(self) -> LLMRuntime:
         """Resolve the immutable default used to admit the next turn."""
@@ -250,7 +250,7 @@ class AgentLoop:
         runtime = self.runtime_resolver.admit()
         if (
             runtime.model != previous.model
-            or runtime.model_preset != previous.model_preset
+            or runtime.model_id != previous.model_id
             or runtime.supports_vision != previous.supports_vision
             or runtime.snapshot_signature != previous.snapshot_signature
         ):
@@ -292,10 +292,10 @@ class AgentLoop:
         provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None,
         provider_snapshot: ProviderSnapshot | None = None,
         provider_signature: tuple[object, ...] | None = None,
-        model_presets: dict[str, ModelPresetConfig] | None = None,
+        models: dict[str, ModelConfig] | None = None,
         prompt_for_model: Callable[[str | None], str | None] | None = None,
-        preset_catalog_loader: preset_helpers.PresetCatalogLoader | None = None,
-        model_preset: str | None = None,
+        model_catalog_loader: Callable[[], Mapping[str, ModelConfig]] | None = None,
+        model_id: str | None = None,
         runtime_events: RuntimeEventBus | None = None,
         turn_delivery_factory: TurnDeliveryFactory | None = None,
         runtime_model_publisher: Callable[[str, str | None], None] | None = None,
@@ -340,7 +340,7 @@ class AgentLoop:
             initial_context_window = (
                 context_window_tokens
                 if context_window_tokens is not None
-                else defaults.context_window_tokens
+                else 200_000
             )
             initial_runtime = LLMRuntime.capture(
                 provider,
@@ -352,11 +352,11 @@ class AgentLoop:
                     prompt_for_model(initial_model) if prompt_for_model else None
                 ),
             )
-        configured_presets = model_presets or {}
+        configured_models = models or {}
         self.runtime_resolver = ModelRuntimeResolver(
             initial_runtime,
-            model_presets=configured_presets,
-            preset_catalog_loader=preset_catalog_loader,
+            models=configured_models,
+            model_catalog_loader=model_catalog_loader,
             provider_snapshot_loader=provider_snapshot_loader,
         )
         self.context_block_limit = context_block_limit
@@ -405,7 +405,6 @@ class AgentLoop:
         self.model_management = (
             ModelManagement(
                 model_management_config,
-                runtime_resolver=self.runtime_resolver,
                 invalidate=self.invalidate_runtime_config,
             )
             if model_management_config is not None else None
@@ -484,8 +483,8 @@ class AgentLoop:
         )
         self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
         self._next_idle_compact_check_at = time.monotonic()
-        if model_preset and self.runtime_resolver.model_preset != model_preset:
-            self.set_model_preset(model_preset, publish_update=False)
+        if model_id and self.runtime_resolver.model_id != model_id:
+            self.set_model_id(model_id, publish_update=False)
         self._register_default_tools(provider_snapshot_loader=provider_snapshot_loader)
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
@@ -505,14 +504,9 @@ class AgentLoop:
         if bus is None:
             bus = MessageBus()
         defaults = config.agents.defaults
-        if "session_manager" not in extra:
-            data_dir = config.runtime_data_dir
-            extra["session_manager"] = SessionManager(
-                config.workspace_path,
-                sessions_root=data_dir / "sessions" if data_dir is not None else None,
-            )
 
-        explicit_provider = extra.pop("provider", None)
+        if "provider" in extra:
+            raise ValueError("raw provider overrides are not supported; use provider_snapshot")
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
         supplied_snapshot_loader = provider_snapshot_loader is not None
         if provider_snapshot_loader is None:
@@ -524,28 +518,31 @@ class AgentLoop:
             provider_snapshot_loader = _load_provider_snapshot
 
         provider_snapshot = extra.pop("provider_snapshot", None)
-        if provider_snapshot is None and explicit_provider is None:
+        if provider_snapshot is None:
             if supplied_snapshot_loader:
                 provider_snapshot = provider_snapshot_loader()
             else:
                 provider_snapshot = build_provider_snapshot(config)
+        if provider_snapshot is None:
+            raise RuntimeError("provider snapshot is required")
+        if "session_manager" not in extra:
+            data_dir = config.runtime_data_dir
+            extra["session_manager"] = SessionManager(
+                config.workspace_path,
+                sessions_root=data_dir / "sessions" if data_dir is not None else None,
+            )
 
-        model_override = extra.pop("model", None)
-        preset_override = extra.pop("model_preset", None)
+        model_id_override = extra.pop("model_id", None)
+        if "model" in extra:
+            raise ValueError("raw model overrides are not supported; use model_id")
         context_window_override = extra.pop("context_window_tokens", None)
-        if model_override is not None and preset_override is not None:
-            raise ValueError("model and model_preset are mutually exclusive")
 
         loop = cls(
             bus=bus,
-            provider=(
-                provider_snapshot.provider
-                if provider_snapshot is not None
-                else explicit_provider
-            ),
+            provider=provider_snapshot.provider,
             provider_snapshot=provider_snapshot,
             workspace=config.workspace_path,
-            model=model_override if explicit_provider is not None else None,
+            model=None,
             max_iterations=defaults.max_tool_iterations,
             max_concurrent_subagents=defaults.max_concurrent_subagents,
             context_block_limit=defaults.context_block_limit,
@@ -560,17 +557,15 @@ class AgentLoop:
             session_ttl_minutes=defaults.session_ttl_minutes,
             idle_compact_check_interval_seconds=defaults.idle_compact_check_interval_seconds,
             tools_config=config.tools,
-            model_presets=preset_helpers.configured_model_presets(config),
+            models=config.models,
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
             tool_registry=tool_registry,
             model_management_config=config,
             **extra,
         )
-        if model_override is not None and explicit_provider is None:
-            loop.runtime_resolver.select_model(model_override)
-        elif preset_override is not None:
-            loop.set_model_preset(preset_override, publish_update=False)
+        if model_id_override is not None:
+            loop.set_model_id(model_id_override, publish_update=False)
         if context_window_override is not None:
             loop.set_runtime_context_window(context_window_override)
         return loop
@@ -597,32 +592,32 @@ class AgentLoop:
         recover_removed: bool = True,
     ) -> LLMRuntime:
         """Resolve the immutable runtime selected by one session."""
-        name = model_preset_from_metadata(session.metadata)
+        name = model_id_from_metadata(session.metadata)
         if name is None:
             return self.llm_runtime()
         try:
-            return self.runtime_resolver.resolve_preset(name)
+            return self.runtime_resolver.resolve_model(name)
         except KeyError:
-            if not recover_removed or name in self.runtime_resolver.model_presets:
+            if not recover_removed or name in self.runtime_resolver.models:
                 raise
             logger.warning(
-                "Session '{}' references removed model preset '{}'; falling back to default",
+                "Session '{}' references removed model_id '{}'; falling back to default",
                 session.key,
                 name,
             )
-            session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)
+            session.metadata.pop(SESSION_MODEL_ID_METADATA_KEY, None)
             self.sessions.save(session)
             return self.llm_runtime()
 
-    def set_session_model_preset(
+    def set_session_model_id(
         self,
         session_key: str,
         name: str,
     ) -> LLMRuntime:
-        """Validate and persist one session's preset selection."""
-        runtime = self.runtime_resolver.resolve_preset(name)
+        """Validate and persist one session's canonical model selection."""
+        runtime = self.runtime_resolver.resolve_model(name)
         session = self.sessions.get_or_create(session_key)
-        session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
+        session.metadata[SESSION_MODEL_ID_METADATA_KEY] = runtime.model_id
         self.sessions.save(session)
         return runtime
 
@@ -635,21 +630,21 @@ class AgentLoop:
         if not publish_update:
             return
         if self._runtime_model_publisher is not None:
-            self._runtime_model_publisher(runtime.model, runtime.model_preset)
+            self._runtime_model_publisher(runtime.model, runtime.model_id)
         self.runtime_event_publisher.runtime_model_changed(
             runtime.model,
-            runtime.model_preset,
+            runtime.model_id,
         )
 
-    def set_model_preset(
+    def set_model_id(
         self,
-        name: str | None,
+        name: str,
         *,
         publish_update: bool = True,
     ) -> LLMRuntime:
-        """Select a named default runtime for future turns."""
+        """Select a canonical model ID for future turns."""
         old_model = self.model
-        runtime = self.runtime_resolver.select_preset(name)
+        runtime = self.runtime_resolver.select_model(name)
         self._publish_runtime_selection(runtime, publish_update=publish_update)
         logger.info(
             "Runtime model switched for next turn: {} -> {}",
@@ -657,10 +652,6 @@ class AgentLoop:
             runtime.model,
         )
         return runtime
-
-    def set_runtime_model(self, model: str) -> LLMRuntime:
-        """Select a model on the current provider for future turns."""
-        return self.runtime_resolver.select_model(model)
 
     def set_runtime_context_window(self, context_window_tokens: int) -> LLMRuntime:
         """Select a context limit for future turns."""
@@ -1962,9 +1953,9 @@ class AgentLoop:
         ctx.tools = self._tools_for_runtime(ctx.tools or self.tools, runtime)
         if ctx.session_key.startswith("dream:"):
             logger.info(
-                "Dream run using model={} (preset={})",
+                "Dream run using model={} (model_id={})",
                 runtime.model,
-                runtime.model_preset or "default",
+                runtime.model_id or "unbound",
             )
         if ctx.on_runtime_admitted is not None:
             await ctx.on_runtime_admitted(runtime)

@@ -1,8 +1,8 @@
-"""Stable compatibility facade for WebUI settings.
+"""Stable facade for WebUI settings.
 
 The gateway owns serialization and the explicit config path. Business DTOs,
 validation, and updates live in the model/provider, capability, and system
-domains; this module preserves the established Python and HTTP-facing seams.
+domains.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
 RuntimeSurface = Literal["browser", "native"]
 
-# Preserve established direct imports of focused helpers.
 _docs_version = system.docs_version
 _parse_bool = contracts.parse_bool
 _query_first = contracts.query_first
@@ -131,7 +130,6 @@ def decorate_settings_payload(
     restart_required_sections: list[str] | None = None,
     apply_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Attach runtime-surface metadata without changing the core settings shape."""
     surface_value = _normalize_surface(surface)
     sections = restart_required_sections
     if sections is None:
@@ -173,10 +171,7 @@ def settings_payload(
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
     payload: dict[str, Any] = {
-        **models.model_settings_payload(
-            config,
-            oauth_status=_oauth_provider_status,
-        ),
+        **models.model_settings_payload(config, oauth_status=_oauth_provider_status),
         **capabilities.capability_settings_payload(
             config,
             oauth_status=_oauth_provider_status,
@@ -227,7 +222,7 @@ def create_model_configuration(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    name = cast(
+    model_id = cast(
         str,
         _core_model_call(
             core_models.create_model_configuration,
@@ -238,7 +233,7 @@ def create_model_configuration(
     )
     _save_settings_config(config, config_path)
     payload = settings_payload(config_path=config_path)
-    payload["created_model_preset"] = name
+    payload["created_model_id"] = model_id
     return payload
 
 
@@ -246,35 +241,15 @@ def update_model_configuration(
     query: QueryParams,
     *,
     config_path: Path | None = None,
-    rename_model_preset: Callable[[str, str], int] | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    names_before = set(config.model_presets)
-    changed = bool(
-        _core_model_call(
-            core_models.update_model_configuration,
-            config,
-            query,
-            oauth_status=_oauth_provider_status,
-        )
+    changed = models.update_model_configuration(
+        config,
+        query,
+        oauth_status=_oauth_provider_status,
     )
     if changed:
-        removed = names_before - set(config.model_presets)
-        added = set(config.model_presets) - names_before
-        rename = (
-            (next(iter(removed)), next(iter(added)))
-            if len(removed) == len(added) == 1
-            else None
-        )
-        if rename is not None and rename_model_preset is not None:
-            rename_model_preset(*rename)
-            try:
-                _save_settings_config(config, config_path)
-            except BaseException:
-                rename_model_preset(rename[1], rename[0])
-                raise
-        else:
-            _save_settings_config(config, config_path)
+        _save_settings_config(config, config_path)
     return settings_payload(config_path=config_path)
 
 
@@ -317,10 +292,7 @@ def create_provider_settings(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    provider_key = cast(
-        str,
-        _core_model_call(core_models.create_provider_settings, config, query),
-    )
+    provider_key = models.create_provider_settings(config, query)
     _save_settings_config(config, config_path)
     payload = settings_payload(config_path=config_path)
     payload["created_provider"] = provider_key
@@ -333,10 +305,7 @@ def update_provider_settings(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     config = _load_settings_config(config_path)
-    changed, restart_required = cast(
-        tuple[bool, bool],
-        _core_model_call(core_models.update_provider_settings, config, query),
-    )
+    changed, restart_required = models.update_provider_settings(config, query)
     if changed:
         _save_settings_config(config, config_path)
     return settings_payload(

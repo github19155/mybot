@@ -18,11 +18,11 @@ def find_model_info(model_name: str) -> dict[str, Any] | None:
     return None
 
 
-def get_model_context_limit(model: str, provider: str = "auto") -> int | None:
+def get_model_context_limit(model: str, provider: str) -> int | None:
     return None
 
 
-def get_model_suggestions(_partial: str, provider: str = "auto", limit: int = 20) -> list[str]:
+def get_model_suggestions(_partial: str, provider: str, limit: int = 20) -> list[str]:
     return []
 
 

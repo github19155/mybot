@@ -67,9 +67,9 @@ import {
   WorkspaceProjectPicker,
 } from "@/components/thread/WorkspaceControls";
 import {
-  ModelPresetBadge,
-  type ModelPresetOption,
-} from "@/components/thread/ModelPresetBadge";
+  ModelBadge,
+  type ModelOption,
+} from "@/components/thread/ModelBadge";
 import {
   ComposerUsagePopover,
   type ComposerContextUsage,
@@ -195,9 +195,10 @@ interface ThreadComposerProps {
   isStreaming?: boolean;
   modelLabel?: string | null;
   modelDetail?: string | null;
-  modelPreset?: string | null;
-  modelPresets?: ModelPresetOption[];
-  onModelPresetChange?: (name: string) => void;
+  modelId?: string | null;
+  /** Active canonical model_id. */
+  models?: ModelOption[];
+  onModelIdChange?: (modelId: string) => void;
   modelProvider?: string | null;
   modelProviderLabel?: string | null;
   modelNeedsSetup?: boolean;
@@ -894,9 +895,9 @@ export function ThreadComposer({
   isStreaming = false,
   modelLabel = null,
   modelDetail = null,
-  modelPreset = null,
-  modelPresets = [],
-  onModelPresetChange,
+  modelId = null,
+  models = [],
+  onModelIdChange,
   modelProvider = null,
   modelProviderLabel = null,
   modelNeedsSetup = false,
@@ -2441,12 +2442,12 @@ export function ThreadComposer({
             )}
           >
             {modelLabel && !voiceRecorder.isRecording ? (
-              <ModelPresetBadge
+              <ModelBadge
                 label={modelLabel}
                 modelDetail={modelDetail}
-                modelPreset={modelPreset}
-                modelPresets={modelPresets}
-                onPresetChange={onModelPresetChange}
+                modelId={modelId}
+                models={models}
+                onModelIdChange={onModelIdChange}
                 onManageModels={onManageModels}
                 onRequestComposerFocus={() => textareaRef.current?.focus()}
                 provider={modelProvider}

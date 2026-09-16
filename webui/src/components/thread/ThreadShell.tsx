@@ -14,7 +14,7 @@ import type {
   ComposerContextUsage,
   ComposerRoundUsage,
 } from "@/components/thread/ComposerUsagePopover";
-import type { ModelPresetOption } from "@/components/thread/ModelPresetBadge";
+import type { ModelOption } from "@/components/thread/ModelBadge";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
@@ -39,7 +39,7 @@ import {
   isMcpPresetsPayload,
 } from "@/lib/mcp-preset-events";
 import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
-import { inferProviderFromModelName, providerDisplayLabel } from "@/lib/provider-brand";
+import { providerDisplayLabel } from "@/lib/provider-brand";
 import type {
   ChatSummary,
   RoundUsage,
@@ -392,7 +392,6 @@ interface ThreadShellProps {
   onCreateChat?: (
     workspaceScope?: WorkspaceScopePayload | null,
     initialMessage?: string,
-    modelPreset?: string | null,
   ) => Promise<string | null>;
   onForkChat?: (sourceChatId: string, beforeUserIndex: number) => Promise<string | null>;
   onTurnEnd?: () => void;
@@ -438,75 +437,40 @@ interface ModelBadgeInfo {
   needsSetup: boolean;
 }
 
-function modelPresetForBadge(
-  settings: SettingsPayload | null,
-  scopedPreset: string | null,
-): SettingsPayload["model_presets"][number] | null {
-  if (!settings) return null;
-  if (scopedPreset) {
-    return settings.model_presets.find((preset) => preset.name === scopedPreset) ?? null;
-  }
-  const configured = settings.agent.model_preset || "default";
-  return (
-    settings.model_presets.find((preset) => preset.name === configured)
-    ?? settings.model_presets.find((preset) => preset.active)
-    ?? null
-  );
-}
 
 function toModelBadgeInfo(
-  modelName: string | null,
   settings: SettingsPayload | null,
-  modelPreset: string | null = null,
+  modelId: string | null = null,
 ): ModelBadgeInfo {
-  const scopedPreset = modelPreset?.trim() || null;
-  const preset = modelPresetForBadge(settings, scopedPreset);
-  const model = scopedPreset
-    ? preset?.model || null
-    : settings?.agent.model || modelName || null;
-  const label = preset
-    ? preset.is_default
-      ? preset.label?.trim() || "Default"
-      : preset.name.trim()
-    : scopedPreset || toModelBadgeLabel(model);
-  const rawProvider = preset?.provider
-    || (!scopedPreset ? settings?.agent.provider : null)
-    || null;
-  const provider = rawProvider === "auto"
-    ? preset?.resolved_provider
-      || (!scopedPreset ? settings?.agent.resolved_provider : null)
-      || null
-    : rawProvider || inferProviderFromModelName(model);
+  const scopedModelId = modelId?.trim() || null;
+  const row = scopedModelId
+    ? settings?.models.find((candidate) => candidate.model_id === scopedModelId) ?? null
+    : null;
+  const provider = row?.provider ?? null;
   const providerRow = provider
     ? settings?.providers.find((item) => item.name === provider)
     : null;
-  const needsSetup = Boolean(
-    settings && (!model || !provider || !providerRow || !providerRow.configured),
-  );
   return {
-    label,
-    model: toModelBadgeLabel(model),
+    label: row?.display_name ?? null,
+    model: toModelBadgeLabel(row?.model ?? null),
     provider,
     providerLabel: provider ? providerDisplayLabel(settings?.providers ?? [], provider) : null,
-    needsSetup,
+    needsSetup: Boolean(settings && (!row || !providerRow?.configured)),
   };
 }
-
-function modelPresetOptionsFromSettings(
+function modelOptionsFromSettings(
   settings: SettingsPayload | null,
-): ModelPresetOption[] {
+): ModelOption[] {
   if (!settings) return [];
-  return settings.model_presets
-    .filter((preset) => !preset.is_default && preset.name.trim())
-    .sort((a, b) => Number(b.active) - Number(a.active))
-    .map((preset) => {
-      const name = preset.name.trim();
-      return {
-        name,
-        model: preset.model,
-        provider: preset.resolved_provider || preset.provider,
-      };
-    });
+  return [...settings.models]
+    .filter((row) => Boolean(row.model_id))
+    .sort((left, right) => Number(right.is_default) - Number(left.is_default))
+    .map((row) => ({
+      modelId: row.model_id,
+      label: row.display_name,
+      model: row.model,
+      provider: row.provider,
+    }));
 }
 
 const HERO_GREETING_KEYS = [
@@ -738,7 +702,7 @@ export function ThreadShell({
     version: historyVersion,
     forkBoundaryMessageCount,
   } = useSessionHistory(historyKey);
-  const { client, getToken, ingressLimits, modelName, token } = useClient();
+  const { client, getToken, ingressLimits, token } = useClient();
   const pickWorkspaceFolder = useCallback(async (): Promise<string | null> => {
     const response = await client.requestMutation<{ path: unknown }>(
       "workspace.pick_folder",
@@ -972,33 +936,35 @@ export function ThreadShell({
   const showHeroComposer = displayMessages.length === 0 && !loading;
   const composerVariant = showHeroComposer ? emptyComposerVariant : "thread";
   const wasShowingHeroComposerRef = useRef(showHeroComposer);
-  const sessionModelPreset = session?.modelPreset?.trim() || null;
-  const [localModelPreset, setLocalModelPreset] = useState<string | null>(null);
+  const sessionModelId = session?.modelId?.trim() || null;
+  const [localModelId, setLocalModelId] = useState<string | null>(null);
   useEffect(() => {
-    setLocalModelPreset(null);
-  }, [session?.key, sessionModelPreset]);
-  const configuredPresetNames = useMemo(
-    () => new Set(settings?.model_presets.map((preset) => preset.name) ?? []),
+    setLocalModelId(null);
+  }, [session?.key, sessionModelId]);
+  const configuredModelIds = useMemo(
+    () => new Set(settings?.models.map((row) => row.model_id) ?? []),
     [settings],
   );
-  const activeModelPreset = (
-    (localModelPreset && (!settings || configuredPresetNames.has(localModelPreset))
-      ? localModelPreset
+  const configuredModelId = settings?.agent.model_id;
+  const activeModelId = (
+    (localModelId && (!settings || configuredModelIds.has(localModelId))
+      ? localModelId
       : null)
-    || (sessionModelPreset && (!settings || configuredPresetNames.has(sessionModelPreset))
-      ? sessionModelPreset
+    || (sessionModelId && (!settings || configuredModelIds.has(sessionModelId))
+      ? sessionModelId
       : null)
-    || settings?.agent.model_preset
-    || "default"
+    || (configuredModelId && (!settings || configuredModelIds.has(configuredModelId))
+      ? configuredModelId
+      : null)
   );
-  const handleModelPresetChange = useCallback((name: string) => {
-    setLocalModelPreset(name);
+  const handleModelIdChange = useCallback((modelId: string) => {
+    setLocalModelId(modelId);
     if (chatId) {
-      void client.sendSystemCommand(chatId, `/model ${name}`).catch(() => {});
+      void client.sendSystemCommand(chatId, `/model ${modelId}`).catch(() => {});
     }
   }, [chatId, client]);
-  const modelPresetOptions = useMemo(
-    () => modelPresetOptionsFromSettings(settings),
+  const modelOptions = useMemo(
+    () => modelOptionsFromSettings(settings),
     [settings],
   );
   const availableSlashCommands = useMemo(
@@ -1008,8 +974,8 @@ export function ThreadShell({
     [slashCommands, temporary],
   );
   const modelBadge = useMemo(
-    () => toModelBadgeInfo(modelName, settings, activeModelPreset),
-    [activeModelPreset, modelName, settings],
+    () => toModelBadgeInfo(settings, activeModelId),
+    [activeModelId, settings],
   );
   const modelBadgeLabel = modelBadge.needsSetup
     ? t("thread.composer.chooseAI", { defaultValue: "Choose your AI" })
@@ -1389,20 +1355,17 @@ export function ThreadShell({
       setBooting(true);
       pendingFirstRef.current = { content, images, options: withWorkspaceScope(options) };
       setPendingFirstTargetChatId(null);
-      const newId = await onCreateChat?.(workspaceScope, content, localModelPreset);
+      const newId = await onCreateChat?.(workspaceScope, content);
       if (!newId) {
         pendingFirstRef.current = null;
         setPendingFirstTargetChatId(null);
         setBooting(false);
         return false;
       }
-      if (localModelPreset) {
-        await client.sendSystemCommand(newId, `/model ${localModelPreset}`).catch(() => {});
-      }
       setPendingFirstTargetChatId(newId);
       return true;
     },
-    [booting, client, localModelPreset, onCreateChat, withWorkspaceScope, workspaceScope],
+    [booting, client, onCreateChat, withWorkspaceScope, workspaceScope],
   );
 
   const handleThreadSend = useCallback(
@@ -1549,9 +1512,9 @@ export function ThreadShell({
           }
           modelLabel={modelBadgeLabel}
           modelDetail={modelBadge.model}
-          modelPreset={activeModelPreset}
-          modelPresets={modelPresetOptions}
-          onModelPresetChange={handleModelPresetChange}
+          modelId={activeModelId}
+          models={modelOptions}
+          onModelIdChange={handleModelIdChange}
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
@@ -1579,7 +1542,7 @@ export function ThreadShell({
           }
           onWorkspaceScopeChange={onWorkspaceScopeChange}
           pendingQueueKey={temporary ? null : chatId}
-          transcriptionProvider={settingsSnapshot?.transcription?.provider}
+          transcriptionProvider={null}
           ingressLimits={ingressLimits}
           quotedContext={quotedContext}
           focusRequest={composerFocusSignal}
@@ -1598,9 +1561,9 @@ export function ThreadShell({
           }
           modelLabel={modelBadgeLabel}
           modelDetail={modelBadge.model}
-          modelPreset={activeModelPreset}
-          modelPresets={modelPresetOptions}
-          onModelPresetChange={handleModelPresetChange}
+          modelId={activeModelId}
+          models={modelOptions}
+          onModelIdChange={handleModelIdChange}
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
@@ -1627,7 +1590,7 @@ export function ThreadShell({
             workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
           }
           onWorkspaceScopeChange={onWorkspaceScopeChange}
-          transcriptionProvider={settingsSnapshot?.transcription?.provider}
+          transcriptionProvider={null}
           ingressLimits={ingressLimits}
         />
       )}

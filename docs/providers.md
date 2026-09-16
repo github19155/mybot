@@ -2,7 +2,7 @@
 
 Use this page when the first reply fails because of provider/model mismatch, or when you want to adapt the concrete setup example to a different provider. If you already know which provider you want and only need a pasteable setup, use [`provider-cookbook.md`](./provider-cookbook.md).
 
-For normal local setup, open **Settings → Models** in the WebUI to add provider credentials, create a model preset, and select the active model. Use the JSON below for manual deployments, local endpoints, provider-specific fields, or diagnosis.
+For normal local setup, open **Settings → Models** in the WebUI to add provider credentials, create entries in the canonical `models` registry, and select the active model. Use the JSON below for manual deployments, local endpoints, provider-specific fields, or diagnosis.
 
 For every setup, answer three questions:
 
@@ -10,19 +10,19 @@ For every setup, answer three questions:
 2. What model name does that provider expect?
 3. Does the provider need `apiKey`, `apiBase`, OAuth login, cloud credentials, or only a local server URL?
 
-Prefer a named `modelPresets` entry for the model/provider pair, then select it with `agents.defaults.modelPreset`. Direct `agents.defaults.provider` and `agents.defaults.model` still work for existing configs, but presets make runtime `/model` switching clearer. Pin `provider` inside the preset while setting up; you can switch back to `"auto"` later.
+Prefer a named `models` entry for the model/provider pair, then select it with `agents.defaults.modelId`; this selects a top-level `models.<model_id>` entry whose explicit `provider` and upstream `model` values define the runtime route.
 
-## Choose a Provider Without Guessing
+## Choose a Provider Explicitly
 
 The docs show concrete provider names so the JSON is copyable, not because nanobot ranks providers. Start from the service or endpoint you actually control:
 
 | If you have... | Configure... |
 |---|---|
-| An API key from a hosted provider or gateway | That provider's `providers.<name>.apiKey`, then a preset with that provider name and a model ID from that service. |
-| An OpenCode Zen or Go key | `providers.opencodeZen.apiKey` or `providers.opencodeGo.apiKey`, then a preset with `provider: "opencode_zen"` or `provider: "opencode_go"`. |
+| An API key from a hosted provider or gateway | That provider's `providers.<name>.apiKey`, then a `models.<model_id>` entry with that concrete provider and a model ID from the service. |
+| An OpenCode Zen or Go key | `providers.opencodeZen.apiKey` or `providers.opencodeGo.apiKey`, then a model entry with `provider: "opencode_zen"` or `provider: "opencode_go"`. |
 | A company proxy or regional endpoint | The matching provider block plus `apiBase` if the proxy gives you a URL. |
-| A local OpenAI-compatible server | A local provider block such as `ollama`, `vllm`, `lmStudio`, or `custom`, usually with `apiBase`. |
-| An OAuth-based account | Run the matching `nanobot provider login ...` command, then select that provider explicitly in a preset. |
+| A local OpenAI-compatible server | A local provider block such as `ollama`, `vllm`, `lmStudio`, or `custom`, usually with `apiBase`, plus an explicit model entry. |
+| An OAuth-based account | Run the matching `nanobot provider login ...` command, then reference the resulting concrete provider from a model entry. |
 | No provider yet | Pick one outside nanobot based on account access, pricing, regional availability, privacy requirements, and the model IDs you need. Then come back with its key and model ID. |
 
 ## Minimal Shape
@@ -34,24 +34,30 @@ The docs show concrete provider names so the JSON is copyable, not because nanob
       "apiKey": "sk-or-v1-xxx"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "openrouter",
-      "model": "anthropic/claude-opus-4.5",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-4.5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192,
+        "temperature": 0.1
+      }
     }
   }
 }
 ```
 
-The provider config gives nanobot credentials and endpoint details. The model preset names the provider/model pair. The agent defaults choose which named preset to use for normal turns. Replace the example provider and model together; mixing an API key from one provider with a model ID from another is the most common first-run failure.
+The provider config gives nanobot credentials and endpoint details. The model registry entry combines one concrete provider with its upstream model route. Agent defaults select a canonical model ID. Replace the example provider and model facts together; mixing a credential from one provider with a model entry for another is the most common first-run failure.
 
 ## Provider, Model, API Key, and Base URL
 
@@ -59,8 +65,8 @@ These fields answer different questions:
 
 | Field | Where it lives | Meaning |
 |---|---|---|
-| `provider` | `modelPresets.<name>.provider` | Which nanobot provider adapter should send the request. |
-| `model` | `modelPresets.<name>.model` | The model ID expected by that provider or gateway. |
+| `provider` | `models.<model_id>.provider` | Concrete nanobot provider adapter for this model entry. |
+| `model` | `models.<model_id>.model` | Upstream model ID expected by that provider or gateway; it is not a consumer selector. |
 | `apiKey` | `providers.<provider>.apiKey` | Credential for that provider. Use `${ENV_VAR}` for secrets. |
 | `apiBase` | `providers.<provider>.apiBase` | HTTP base URL of the provider endpoint. |
 | `proxy` | `providers.<provider>.proxy` | Optional HTTP proxy for this provider only. Supported for OpenAI-compatible providers, OpenAI Codex, and xAI OAuth. |
@@ -82,17 +88,23 @@ Gateway-style setup for model IDs served through OpenRouter.
       "apiKey": "${OPENROUTER_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "openrouter",
-      "model": "anthropic/claude-opus-4.5",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-4.5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -135,27 +147,29 @@ the built-in `orcarouter` provider and use a model ID from OrcaRouter's catalog:
       "apiKey": "${ORCAROUTER_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "orcarouter",
-      "model": "orcarouter/auto",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "orcarouter",
+      "model": "orcarouter/auto",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
 ```
 
-Use the model ID exactly as OrcaRouter lists it. `orcarouter/auto` routes to a
-suitable upstream automatically; explicit IDs such as
-`anthropic/claude-sonnet-4.6` or `openai/gpt-5` are also accepted. OrcaRouter API keys start with
-`sk-orca-`. The WebUI can load the account's model catalog after the API key is saved under
-**Settings → Models**.
+Use an explicit upstream model ID exactly as OrcaRouter lists it. Gateway routing choices belong to the upstream service; nanobot does not select a provider from a model-name prefix. OrcaRouter API keys start with `sk-orca-`. The WebUI can load the account's model catalog after the API key is saved under **Settings → Models**.
 
 ### Eden AI Gateway
 
@@ -170,22 +184,28 @@ the full `provider/model` identifier listed by Eden AI:
       "apiKey": "${EDENAI_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "edenai",
-      "model": "anthropic/claude-sonnet-4-5",
-      "maxTokens": 8192
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "edenai",
+      "model": "anthropic/claude-sonnet-4-5",
+      "capabilities": {
+        "text": true
+      },
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
 ```
 
-Nanobot sends the model ID unchanged, including its provider prefix. Use
+Nanobot sends the upstream model ID unchanged. Use
 Eden AI's [model listing](https://www.edenai.co/docs/v3/llms/listing-models)
 to choose a currently available model. The WebUI can also load that catalog
 after the Eden AI API key is saved under **Settings → Models**.
@@ -203,23 +223,29 @@ URLs in nanobot.
       "apiKey": "${OPENCODE_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "opencode_zen",
-      "model": "opencode/deepseek-v4-pro",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "opencode_zen",
+      "model": "opencode/deepseek-v4-pro",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
 ```
 
-For OpenCode Go, switch the provider block and preset:
+For OpenCode Go, switch the provider block and model entry:
 
 ```json
 {
@@ -228,20 +254,24 @@ For OpenCode Go, switch the provider block and preset:
       "apiKey": "${OPENCODE_API_KEY}"
     }
   },
-  "modelPresets": {
+  "models": {
     "primary": {
+      "displayName": "Primary",
       "provider": "opencode_go",
       "model": "opencode-go/deepseek-v4-flash",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
 ```
 
-OpenCode documents model IDs with `opencode/<model-id>` for Zen and
-`opencode-go/<model-id>` for Go. nanobot accepts those prefixes and strips them
-before sending the request to OpenCode. Use model IDs that OpenCode lists under
+OpenCode documents the upstream model IDs for each endpoint. Store the exact upstream string in the model entry; the canonical registry key remains the only Nanobot selector. Use model IDs that OpenCode lists under
 the `chat/completions` endpoint; models listed only under `responses`,
 `messages`, or provider-specific endpoints are not handled by this
 OpenAI-compatible provider path.
@@ -255,17 +285,23 @@ OpenAI-compatible provider path.
       "apiKey": "${ANTHROPIC_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "anthropic",
-      "model": "claude-opus-4-5",
-      "maxTokens": 8192,
-      "contextWindowTokens": 200000
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "anthropic",
+      "model": "claude-opus-4-5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 200000,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -283,10 +319,14 @@ If you use an Anthropic-compatible proxy, keep the provider as `anthropic` and o
       "apiBase": "https://anthropic-proxy.example.com"
     }
   },
-  "modelPresets": {
+  "models": {
     "primary": {
+      "displayName": "Primary",
       "provider": "anthropic",
-      "model": "claude-sonnet-4-5"
+      "model": "claude-sonnet-4-5",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -303,17 +343,23 @@ Arbitrary custom provider names are OpenAI-compatible only; they do not use the 
       "apiKey": "${OPENAI_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "openai",
-      "model": "gpt-5",
-      "maxTokens": 8192,
-      "contextWindowTokens": 128000
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "openai",
+      "model": "gpt-5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 128000,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -335,17 +381,23 @@ The `custom` provider fits one OpenAI-compatible endpoint that is not represente
       "apiBase": "https://example.com/v1"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "custom",
-      "model": "provider-model-name",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "custom",
+      "model": "provider-model-name",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -353,7 +405,7 @@ The `custom` provider fits one OpenAI-compatible endpoint that is not represente
 
 `custom` does not infer a default base URL. Set `apiBase`.
 
-If you have more than one custom OpenAI-compatible endpoint, give each endpoint its own provider key under `providers` and use that same key in the model preset. The key can be a name that makes sense in your environment, such as `companyProxy`, `tenant-a`, or `dev-local`.
+If you have more than one custom OpenAI-compatible endpoint, give each endpoint its own provider key under `providers` and use that same key in its explicit `models.<model_id>.provider` field. The key can be a name that makes sense in your environment, such as `companyProxy`, `tenant-a`, or `dev-local`.
 
 ```json
 {
@@ -366,23 +418,35 @@ If you have more than one custom OpenAI-compatible endpoint, give each endpoint 
       "apiBase": "https://tenant-a.example.com/v1"
     }
   },
-  "modelPresets": {
-    "company": {
-      "provider": "companyProxy",
-      "model": "gpt-4o-mini",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    },
-    "tenantA": {
-      "provider": "tenant-a",
-      "model": "served-model-name",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "company"
+      "modelId": "company"
+    }
+  },
+  "models": {
+    "company": {
+      "displayName": "Company",
+      "provider": "companyProxy",
+      "model": "gpt-4o-mini",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
+    },
+    "tenanta": {
+      "displayName": "Tenanta",
+      "provider": "tenant-a",
+      "model": "served-model-name",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -392,7 +456,7 @@ Custom provider keys are treated as direct OpenAI-compatible providers. `apiBase
 
 If your custom endpoint documents a nonstandard thinking toggle, set `providers.<name>.thinkingStyle` to `thinking_type`, `enable_thinking`, or `reasoning_split`; nanobot then maps `reasoningEffort` onto that provider-specific request body. Leave it unset for ordinary OpenAI-compatible endpoints.
 
-This named custom provider path is not for Anthropic-compatible endpoints. For Anthropic-compatible proxies, use `providers.anthropic.apiBase` and set the preset provider to `anthropic`.
+This named custom provider path is not for Anthropic-compatible endpoints. For Anthropic-compatible proxies, use `providers.anthropic.apiBase` and set the model entry provider to `anthropic`.
 
 ### ModelScope
 
@@ -407,17 +471,23 @@ Create a ModelScope [access token](https://modelscope.cn/my/myaccesstoken), then
       "apiKey": "${MODELSCOPE_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "modelscope",
-      "model": "Qwen/Qwen3-32B",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "modelscope",
+      "model": "Qwen/Qwen3-32B",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -425,21 +495,28 @@ Create a ModelScope [access token](https://modelscope.cn/my/myaccesstoken), then
 
 Use an inference-enabled model ID exactly as ModelScope publishes it (usually `Namespace/model-name`). The default base URL is `https://api-inference.modelscope.cn/v1`; override `providers.modelscope.apiBase` only if your account routes through a different host. Chat model IDs may optionally be prefixed with `modelscope/`; nanobot strips that routing prefix before sending the request.
 
-ModelScope image generation reuses the same provider key but is configured under `tools.imageGeneration`, not in a model preset:
+ModelScope image generation uses a canonical image model entry and `tools.imageGeneration.modelId`:
 
 ```json
 {
+  "models": {
+    "image-prod": {
+      "displayName": "Image production",
+      "provider": "modelscope",
+      "model": "Qwen/Qwen-Image-2512",
+      "capabilities": { "imageGeneration": true }
+    }
+  },
   "tools": {
     "imageGeneration": {
       "enabled": true,
-      "provider": "modelscope",
-      "model": "Qwen/Qwen-Image-2512"
+      "modelId": "image-prod"
     }
   }
 }
 ```
 
-Use the image model's exact ModelScope ID without a leading `modelscope/`; the image client sends this value unchanged and handles ModelScope's async submit/poll flow. The example uses [`Qwen/Qwen-Image-2512`](https://modelscope.cn/models/Qwen/Qwen-Image-2512). See [Image Generation](./image-generation.md#modelscope) for supported sizes, aspect ratios, and the complete provider configuration.
+Use the image model's exact upstream ModelScope ID in its `models.<model_id>.model` field. The image client sends this value unchanged and handles ModelScope's async submit/poll flow. See [Image Generation](./image-generation.md#modelscope) for supported sizes, aspect ratios, and complete provider configuration.
 
 ### Ollama
 
@@ -452,17 +529,23 @@ Start Ollama separately, then point nanobot at the OpenAI-compatible endpoint.
       "apiBase": "http://localhost:11434/v1"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "ollama",
-      "model": "llama3.2",
-      "maxTokens": 4096,
-      "contextWindowTokens": 32768
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 32768,
+      "generationDefaults": {
+        "maxTokens": 4096
+      }
     }
   }
 }
@@ -487,17 +570,23 @@ log pattern and a tested `llama3.1:8b` workaround.
       "apiKey": "EMPTY"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "vllm",
-      "model": "served-model-name",
-      "maxTokens": 8192,
-      "contextWindowTokens": 65536
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "vllm",
+      "model": "served-model-name",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -514,23 +603,29 @@ Some OpenAI-compatible local servers require any non-empty API key even when the
       "apiBase": "http://localhost:1234/v1"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "lm_studio",
-      "model": "local-model",
-      "maxTokens": 4096,
-      "contextWindowTokens": 32768
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "lm_studio",
+      "model": "local-model",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 32768,
+      "generationDefaults": {
+        "maxTokens": 4096
+      }
     }
   }
 }
 ```
 
-Config keys may be camelCase or snake_case. Provider names in model presets should use the registry name, such as `lm_studio`.
+Config keys may be camelCase or snake_case. Provider names belong in the concrete `models.<model_id>.provider` field and should use the registry name, such as `lm_studio`.
 
 ### AWS Bedrock
 
@@ -544,17 +639,23 @@ Bedrock can use the AWS credential chain, profile, region, or Bedrock bearer tok
       "profile": "default"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "bedrock",
-      "model": "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
-      "maxTokens": 8192,
-      "contextWindowTokens": 200000
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "bedrock",
+      "model": "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 200000,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -613,65 +714,42 @@ transport and hides models that it cannot route safely.
 
 Each command authenticates the selected provider and makes its current default model active. OpenAI Codex and eligible GitHub Copilot models participate in [Responses state retention](./configuration.md#responses-state-and-compaction), while native compaction remains provider-capability-specific. See [`troubleshooting.md`](./troubleshooting.md#provider-and-model-problems) for proxy, headless-login, model-name, and config-key errors.
 
-## Provider Resolution
+## Model Selection
 
-The recommended path is a named preset selected by `agents.defaults.modelPreset`. The effective model parameters come from:
+Nanobot resolves model selection only through the canonical top-level `models` registry. `agents.defaults.modelId`, session `/model` choices, and other consumers reference a configured registry key. Each `models.<model_id>` entry explicitly contains a concrete `provider`, upstream `model`, capabilities, context facts, and generation defaults.
 
-1. the named `modelPresets` entry referenced by `agents.defaults.modelPreset`;
-2. otherwise the implicit `default` preset built from `agents.defaults.model`, `provider`, `maxTokens`, `contextWindowTokens`, `temperature`, and related fields.
+Provider names, display names, upstream model IDs, and slash prefixes are never selector fallbacks or provider-inference hints. If the selected model ID is missing or its provider route fails, nanobot reports the error; it does not guess another provider or model.
 
-Provider selection follows this practical rule:
+## Models
 
-- Explicit `provider` in the active preset or implicit default config wins.
-- `provider: "auto"` tries model-name keywords, configured keys, local base URLs, and gateway providers.
-- Gateway providers such as OpenRouter and AiHubMix can route many model families, so the model name must be valid for that gateway.
-- Local providers should normally be explicit because generic local model names such as `llama3.2` do not always contain provider keywords.
-
-### Model Name Prefixes
-
-`family/model-name` does not always select provider `family`. Prefix-based provider inference only runs when the active provider is `"auto"`.
-
-- Explicit provider wins: `provider: "openrouter"` with `model: "anthropic/claude-sonnet-4.5"` calls OpenRouter, not Anthropic.
-- With `provider: "auto"`, a prefix matching a configured built-in or named custom provider can select that provider. Named custom prefixes are stripped before request, so `companyProxy/gpt-4o-mini` is sent upstream as `gpt-4o-mini`.
-- With an explicit named custom provider, the model is sent as written; `provider: "companyProxy"` with `model: "openai/gpt-4o-mini"` sends `openai/gpt-4o-mini` to `companyProxy`.
-
-Pin `provider` in presets when using gateway catalog IDs such as `anthropic/claude-sonnet-4.5`.
-
-## Model Presets
-
-Model presets are the recommended model configuration surface. Use them when you want named model choices, runtime `/model` switching, or reusable explicit model choices.
+Use `models.<model_id>` entries for explicit model choices. The model registry key is the selector; provider and upstream model values are facts on that entry.
 
 ```json
 {
-  "modelPresets": {
+  "models": {
     "fast": {
+      "displayName": "Fast",
       "provider": "openrouter",
       "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
+      "capabilities": { "text": true },
+      "generationDefaults": { "maxTokens": 4096 }
     },
-    "deep": {
-      "provider": "anthropic",
-      "model": "claude-opus-4-5",
-      "maxTokens": 8192,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
+    "local": {
+      "displayName": "Local",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "capabilities": { "text": true }
     }
   },
-  "agents": {
-    "defaults": {
-      "modelPreset": "fast"
-    }
-  }
+  "agents": { "defaults": { "modelId": "fast" } }
 }
 ```
 
-The preset name `default` is reserved for the implicit `agents.defaults` settings. Do not define `modelPresets.default`; use `/model default` to return to the direct `agents.defaults.*` fields in older configs.
+Use `/model <model_id>` to select a configured entry for the current session. A request stays on the selected route; provider retries do not switch it to another configured entry.
 
 ## Failure behavior
 
-A request stays on the model/provider route selected before admission. Provider implementations may retry that same route according to their retry policy. If those retries are exhausted, the request fails explicitly instead of switching to another configured preset or provider. Use `/model`, session presets, Subagent role bindings, Dream policy, or Model Fleet when you want an explicit different model choice before a request starts.
+A request stays on the model/provider route selected before admission. Provider implementations may retry that same route according to their retry policy. If retries are exhausted, the request fails explicitly instead of switching to another configured model or provider. Use `/model <model_id>`, session model selection, Subagent role bindings, Dream policy, or Model Fleet when you want an explicit different model choice before a request starts.
 
 ## Quick Checks
 
@@ -689,7 +767,7 @@ If `nanobot agent -m "Hello!"` fails:
 | 401, unauthorized, invalid API key | Key is missing, expired, copied with whitespace, or stored under the wrong provider |
 | model not found | Model ID does not exist for the selected provider or gateway |
 | connection refused | Local provider server is not running or `apiBase` points to the wrong port |
-| provider not found | The active preset uses a misspelled provider; use registry names such as `openrouter`, `anthropic`, `ollama`, `vllm`, `lm_studio` |
+| provider not found | The active model entry uses a misspelled provider; use registry names such as `openrouter`, `anthropic`, `ollama`, `vllm`, `lm_studio` |
 | works in CLI but not chat app | Provider is fine; debug gateway/channel setup in [`chat-apps.md`](./chat-apps.md) or [`troubleshooting.md`](./troubleshooting.md) |
 
 For the complete provider table and advanced provider-specific notes, see [`configuration.md#providers`](./configuration.md#providers).

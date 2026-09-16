@@ -63,15 +63,17 @@ def test_provider_signature_tracks_default_extra_headers() -> None:
                 "apiKey": "sk-kimi-test",
             },
         },
-        "modelPresets": {
-            "primary": {
+        "models": {
+            "main": {
+                "displayName": "kimi_coding",
                 "provider": "kimi_coding",
                 "model": "kimi-for-coding",
-            },
+                "capabilities": {"text": True},
+            }
         },
         "agents": {
             "defaults": {
-                "modelPreset": "primary",
+                "modelId": "main",
             },
         },
     })

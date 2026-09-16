@@ -130,7 +130,6 @@ def agent(
     from nanobot.cli import terminal as cli_terminal
     from nanobot.cli.stream import ThinkingSpinner
     from nanobot.cron.service import CronService
-    from nanobot.providers.factory import make_provider
     from nanobot.providers.image_generation import image_gen_provider_configs
     from nanobot.utils.helpers import sanitize_surrogates as _sanitize_surrogates
     from nanobot.utils.restart import (
@@ -146,13 +145,6 @@ def agent(
 
     session_id = session_id or "cli:direct"
 
-    try:
-        provider = make_provider(runtime_config)
-    except ValueError as exc:
-        _print_agent_start_error(exc)
-        raise typer.Exit(1) from exc
-
-    sync_workspace_templates(runtime_config.workspace_path)
 
     bus = MessageBus()
 
@@ -172,7 +164,6 @@ def agent(
         agent_loop = agent_loop_class.from_config(
             runtime_config,
             bus,
-            provider=provider,
             cron_service=cron,
             image_generation_provider_configs=image_gen_provider_configs(runtime_config),
             hook_factories=[create_file_edit_activity_hook],
@@ -181,6 +172,7 @@ def agent(
     except ValueError as exc:
         _print_agent_start_error(exc)
         raise typer.Exit(1) from exc
+    sync_workspace_templates(runtime_config.workspace_path)
     restart_notice = consume_restart_notice_from_env()
     if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):
         cli_terminal._print_agent_response(
@@ -271,10 +263,10 @@ def agent(
         from nanobot.bus.events import InboundMessage
 
         cli_terminal._init_prompt_session()
-        _model, _preset_tag = _model_display(runtime_config)
+        _model, _model_id_tag = _model_display(runtime_config)
         _icon = runtime_config.agents.defaults.bot_icon or __logo__
         console.print(
-            f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_preset_tag} "
+            f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_model_id_tag} "
             "— type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit\n"
         )
 

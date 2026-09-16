@@ -221,22 +221,3 @@ export function providerDisplayLabel(
     ?? PROVIDER_LABEL_ALIASES[value]
     ?? value;
 }
-
-export function inferProviderFromModelName(modelName: string | null | undefined): string | null {
-  const normalized = (modelName ?? "").trim().toLowerCase();
-  if (!normalized) return null;
-  const prefix = normalized.split(/[/:]/)[0];
-  if (providerBrand(prefix)) return prefix;
-  if (/claude|anthropic/.test(normalized)) return "anthropic";
-  if (/gpt-|^o\d|chatgpt|openai/.test(normalized)) return "openai";
-  if (/deepseek/.test(normalized)) return "deepseek";
-  if (/gemini/.test(normalized)) return "gemini";
-  if (/modelscope/.test(normalized)) return "modelscope";
-  if (/qwen|dashscope/.test(normalized)) return "dashscope";
-  if (/kimi|moonshot/.test(normalized)) return "moonshot";
-  if (/minimax/.test(normalized)) return "minimax";
-  if (/mistral|mixtral/.test(normalized)) return "mistral";
-  if (/skywork|skyclaw/.test(normalized)) return "skywork";
-  if (/ring-/.test(normalized)) return "ant_ling";
-  return null;
-}

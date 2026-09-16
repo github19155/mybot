@@ -34,10 +34,10 @@ export function isModelCommandText(text: string | null | undefined): boolean {
 export function isModelCommandResponseText(text: string | null | undefined): boolean {
   const normalized = text?.trim() ?? "";
   return (
-    /^## Model\s+- Current (?:model|selection error):/.test(normalized)
-    || normalized.startsWith("Switched model preset to ")
-    || normalized.startsWith("Could not switch model preset:")
-    || normalized === "Usage: `/model [preset]`"
+    /^## Model\r?\n- Current (?:model ID|selection error):/.test(normalized)
+    || normalized.startsWith("Switched model to ")
+    || normalized.startsWith("Could not switch model:")
+    || normalized === "Usage: `/model [model_id]`"
   );
 }
 

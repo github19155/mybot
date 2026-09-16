@@ -58,9 +58,9 @@ def test_runtime_snapshot_has_exact_allowlist_and_redacts_secrets(tmp_path: Path
     values = snapshot.as_mapping()
 
     expected_snapshot_keys = frozenset({
+        "model_id",
         "model",
-        "model_preset",
-        "model_presets",
+        "models",
         "max_iterations",
         "context_window_tokens",
         "workspace",
@@ -74,8 +74,7 @@ def test_runtime_snapshot_has_exact_allowlist_and_redacts_secrets(tmp_path: Path
     assert RUNTIME_SNAPSHOT_KEYS == expected_snapshot_keys
     assert frozenset(values) == expected_snapshot_keys
     assert RUNTIME_COMMAND_KEYS == frozenset({
-        "model",
-        "model_preset",
+        "model_id",
         "max_iterations",
         "context_window_tokens",
         "provider_retry_mode",
@@ -160,15 +159,15 @@ async def test_default_allow_set_and_public_parameter_schema_are_unchanged(
                 "description": (
                     "Dot-path for check/set. Examples: 'max_iterations', 'workspace', "
                     "'provider_retry_mode'. Use 'request.channel', 'request.chat_id', or "
-                    "'request.sender_id' for current routing metadata. Use 'model_preset' "
-                    "to switch named model presets. For check without key, shows all "
-                    "config values."
+                    "'request.sender_id' for current routing metadata. Use 'model_id' "
+                    "to switch configured canonical models. For check without key, shows "
+                    "all config values."
                 ),
             },
             "value": {
                 "description": (
                     "New value (for set). Type must match target (int for "
-                    "max_iterations/context_window_tokens, str for model/model_preset)."
+                    "max_iterations/context_window_tokens, str for model_id)."
                 ),
             },
         },

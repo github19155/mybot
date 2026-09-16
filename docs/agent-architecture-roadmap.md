@@ -30,6 +30,10 @@ Read [`design-principles.md`](./design-principles.md) first for the project-leve
   - Main routes document/repository investigation; a Worker performs file/search execution when reading is required.
   - Prefer informed agent decisions over broad hard-coded restrictions.
 
+- **Model selection = canonical catalog**
+  - Consumers store canonical `model_id` references into `Config.models`.
+  - The selected `ModelConfig` names the concrete provider and upstream model; `ModelRuntimeResolver` resolves that selection without provider/model inference.
+
 - **Dream = observation + analysis + proposals**
   - Learn recurring task patterns from durable evidence across Dream cycles.
   - Produce structured recommendations when repetition suggests a Specialist or other durable change may be useful.
@@ -42,7 +46,8 @@ Read [`design-principles.md`](./design-principles.md) first for the project-leve
 Workers have three conceptual kinds:
 
 - `general` — permanent, fully capable fallback for mixed, cross-domain, unknown, or uncategorized work. It cannot be disabled or removed.
-- `work` — ephemeral WorkAgent snapshot for one task. Main may customize tools, prompt, model/preset, thinking, temperature, timeout, or context. It is never written to role state, never accumulates Specialist usage telemetry, and disappears after the task.
+- `work` — ephemeral WorkAgent snapshot for one task. Main may customize tools, prompt, canonical `model_id`, thinking, temperature, timeout, or context. It is never written to role state, never accumulates Specialist usage telemetry, and disappears after the task.
+
 - specialists — persistent Workers with a stable recurring responsibility, prompt, capability set, or runtime profile.
 
 Built-in specialists include `researcher`, `planner`, `coder`, `debugger`, `tester`, `writer`, and `analyst`. Users or the governed Main/Runtime execution path may define additional roles; Dream may only recommend such changes from repeated task patterns.
@@ -79,9 +84,9 @@ no persistent role + any task-specific override
   -> WorkAgent
 ```
 
-Task-specific overrides may include description, system prompt, tools, model/preset, thinking, temperature, timeout, or context. Runtime interfaces may change; Main Prompt must rely on the control-plane schema actually exposed at runtime and must not invent query or dispatch fields.
+Task-specific overrides may include description, system prompt, tools, `model_id`, thinking, temperature, timeout, or context. Runtime interfaces may change; Main Prompt must rely on the control-plane schema actually exposed at runtime and must not invent query or dispatch fields.
 
-WorkAgent does not inherit General's persistent prompt/model/generation tuning. Unspecified WorkAgent runtime settings continue from the current Main runtime. Model-specific Prompt Prefix remains global and is prepended for Main, General, WorkAgent, or Specialist whenever that model is used.
+WorkAgent does not inherit General's persistent prompt, `model_id`, or generation tuning. Unspecified WorkAgent runtime settings continue from the current Main runtime. Model-specific Prompt Prefix remains global and is prepended for Main, General, WorkAgent, or Specialist whenever that canonical `model_id` is used.
 
 Main owns the user conversation and final synthesis. Every operational dispatch is asynchronous. A successful dispatch ends the current Main turn with a concise acknowledgement. Main does not poll to wait for completion; status queries are for user-requested status, coordination, or recovery. Worker completion starts a new Main turn, which may synthesize the result or dispatch follow-up work.
 

@@ -122,7 +122,7 @@ def test_legacy_webui_runtime_metadata_flags_create_runtime_events() -> None:
         metadata={
             "_runtime_model_updated": True,
             "model": "gpt-5.5",
-            "model_preset": "high",
+            "model_id": "high",
         },
     )
     goal_state = OutboundMessage(
@@ -153,7 +153,7 @@ def test_legacy_webui_runtime_metadata_flags_create_runtime_events() -> None:
     runtime_event = outbound_event_from_message(runtime)
     assert isinstance(runtime_event, RuntimeModelUpdatedEvent)
     assert runtime_event.model == "gpt-5.5"
-    assert runtime_event.model_preset == "high"
+    assert runtime_event.model_id == "high"
 
     goal_state_event = outbound_event_from_message(goal_state)
     assert isinstance(goal_state_event, GoalStateSyncEvent)

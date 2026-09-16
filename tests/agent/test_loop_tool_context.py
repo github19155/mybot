@@ -102,6 +102,7 @@ def test_loop_from_config_uses_caller_owned_registry(tmp_path: Path) -> None:
         tool_registry=registry,
         provider_snapshot=ProviderSnapshot(
             provider=provider,
+            model_id="main",
             model="test-model",
             context_window_tokens=200_000,
             signature=("test-model",),

@@ -14,7 +14,7 @@ from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.tools.self import MyTool
 from nanobot.agent.tools.shell import ExecToolConfig
 from nanobot.agent.tools.web import WebSearchConfig, WebToolsConfig
-from nanobot.config.schema import ModelPresetConfig
+from nanobot.model_domain import ModelConfig
 from nanobot.providers.base import LLMUsage
 
 # ---------------------------------------------------------------------------
@@ -34,12 +34,12 @@ def _make_mock_loop(**overrides):
     loop.channels_config = MagicMock()
     loop.provider_retry_mode = "standard"
     loop.max_tool_result_chars = 16000
-    loop.model_preset = None
-    loop.model_presets = {}
+    loop.model_id = "main"
+    loop.models = {}
     loop._concurrency_gate = None
     loop._unified_session = False
     loop._extra_hooks = []
-    loop.set_runtime_model.side_effect = lambda value: setattr(loop, "model", value)
+    loop.set_model_id.side_effect = lambda value, **_kwargs: setattr(loop, "model_id", value)
     loop.set_runtime_context_window.side_effect = lambda value: setattr(
         loop,
         "context_window_tokens",
@@ -1051,30 +1051,30 @@ class TestSecurityAttributeProtection:
         assert "read-only" in result
 
     @pytest.mark.asyncio
-    async def test_modify_model_presets_dotpath_blocked(self):
-        """The config-derived model preset catalog is inspectable but not mutable."""
-        presets = {"fast": ModelPresetConfig(model="fast-model")}
-        tool = _make_tool(loop=_make_mock_loop(model_presets=presets))
+    async def test_modify_models_dotpath_blocked(self):
+        """The configured model catalog (models = config.models) is inspectable but not mutable."""
+        config_models = {"fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model")}
+        tool = _make_tool(loop=_make_mock_loop(models=config_models))
 
         result = await tool.execute(
             action="set",
-            key="model_presets.other",
+            key="models.other",
             value={"model": "other-model"},
         )
 
         assert "read-only" in result
-        assert presets == {"fast": ModelPresetConfig(model="fast-model")}
+        assert config_models == {"fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model")}
 
     @pytest.mark.asyncio
-    async def test_inspect_read_only_model_preset_dotpath(self):
-        presets = MappingProxyType({
-            "fast": ModelPresetConfig(model="fast-model"),
+    async def test_inspect_read_only_model_dotpath(self):
+        config_models = MappingProxyType({
+            "fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model"),
         })
-        tool = _make_tool(loop=_make_mock_loop(model_presets=presets))
+        tool = _make_tool(loop=_make_mock_loop(models=config_models))
 
-        result = await tool.execute(action="check", key="model_presets.fast.model")
+        result = await tool.execute(action="check", key="models.fast.model")
 
-        assert result == "model_presets.fast.model: 'fast-model'"
+        assert result == "models.fast.model: 'fast-model'"
 
 
 # ---------------------------------------------------------------------------

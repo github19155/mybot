@@ -455,7 +455,6 @@ describe("gateway protocol", () => {
         data: JSON.stringify({
           event: "attached",
           chat_id: "terminal",
-          model_preset: "Deep Research",
         }),
       })
       client.send("hello", {
@@ -505,7 +504,6 @@ describe("gateway protocol", () => {
       expect(events[1]).toEqual({
         event: "attached",
         chat_id: "terminal",
-        model_preset: "Deep Research",
       })
     } finally {
       Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: original })
@@ -578,9 +576,9 @@ describe("gateway protocol", () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input)
       if (url.endsWith("/api/settings")) return new Response(JSON.stringify({
-        model_presets: [
-          { name: "Codex", model: "openai-codex/gpt-5.6" },
-          { name: "broken" },
+        models: [
+          { model_id: "codex", display_name: "Codex", model: "openai-codex/gpt-5.6" },
+          { display_name: "broken", model: "" },
         ],
       }))
       return new Response(JSON.stringify({ controls: { can_use_full_access: true } }))
@@ -588,7 +586,7 @@ describe("gateway protocol", () => {
 
     try {
       expect(await fetchRuntimeControls("http://nanobot.test", "secret")).toEqual({
-        modelPresets: [{ name: "Codex", model: "openai-codex/gpt-5.6" }],
+        models: [{ modelId: "codex", displayName: "Codex", model: "openai-codex/gpt-5.6" }],
         canUseFullAccess: true,
       })
     } finally {
@@ -601,13 +599,13 @@ describe("gateway protocol", () => {
     globalThis.fetch = ((input: string | URL | Request) => Promise.resolve(
       String(input).endsWith("/api/settings")
         ? new Response(JSON.stringify({
-          model_presets: [{ name: "fast", model: "openai/gpt-5.6" }],
+          models: [{ model_id: "fast", display_name: "Fast", model: "openai/gpt-5.6" }],
         }))
         : new Response("", { status: 404 }),
     )) as typeof fetch
     try {
       expect(await fetchRuntimeControls("http://nanobot.test", "secret")).toEqual({
-        modelPresets: [{ name: "fast", model: "openai/gpt-5.6" }],
+        models: [{ modelId: "fast", displayName: "Fast", model: "openai/gpt-5.6" }],
         canUseFullAccess: false,
       })
     } finally {
@@ -662,16 +660,16 @@ describe("gateway protocol", () => {
         data: JSON.stringify({ event: "session_updated", chat_id: "one", scope: 42 }),
       })
       socket.emit("message", {
-        data: JSON.stringify({
-          event: "user_message",
-          chat_id: "one",
-          text: "bad media",
-          starts_turn: false,
-          media_urls: [{ kind: "archive", url: "/api/media/sig/file" }],
-        }),
+        data: JSON.stringify({ event: "user_message", chat_id: "one", text: "bad media", starts_turn: false, media_urls: [{ kind: "archive", url: "/api/media/sig/file" }] }),
       })
       socket.emit("message", {
-        data: JSON.stringify({ event: "attached", chat_id: "one", model_preset: 42 }),
+        data: JSON.stringify({ event: "attached", chat_id: "one", usage: 42 }),
+      })
+      socket.emit("message", {
+        data: JSON.stringify({ event: "runtime_model_updated", model_name: "legacy/model" }),
+      })
+      socket.emit("message", {
+        data: JSON.stringify({ event: "turn_model_updated", chat_id: "one", model_name: "legacy/model" }),
       })
       socket.emit("message", {
         data: JSON.stringify({ event: "turn_end", chat_id: "one", goal_state: [] }),
@@ -689,7 +687,7 @@ describe("gateway protocol", () => {
       socket.emit("message", { data: JSON.stringify({ event: "future_gateway_event" }) })
       socket.emit("message", { data: JSON.stringify({ event: "error", detail: "global failure" }) })
       expect(statuses).toContain("error:gateway sent an invalid event")
-      expect(statuses.filter((status) => status.includes("invalid event"))).toHaveLength(9)
+      expect(statuses.filter((status) => status.includes("invalid event"))).toHaveLength(11)
       expect(events).toContainEqual({
         event: "session_updated",
         chat_id: "one",
@@ -1102,7 +1100,7 @@ describe("gateway protocol", () => {
             created_at: "2026-08-12T10:00:00Z",
             updated_at: "2026-08-13T10:00:00Z",
             run_started_at: 123,
-            model_preset: "Deep Research",
+            model_id: "deep-research",
           },
           { key: "cli:direct", title: "Not a WebUI session" },
           { key: 42 },
@@ -1118,7 +1116,7 @@ describe("gateway protocol", () => {
         createdAt: "2026-08-12T10:00:00Z",
         updatedAt: "2026-08-13T10:00:00Z",
         runStartedAt: 123,
-        modelPreset: "Deep Research",
+        modelId: "deep-research",
         pinned: true,
         archived: false,
       }])

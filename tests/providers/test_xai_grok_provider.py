@@ -383,12 +383,15 @@ async def test_factory_builds_xai_provider_and_applies_explicit_body_overrides(m
     monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
     config = Config.model_validate(
         {
-            "agents": {
-                "defaults": {
-                    "model": "xai-grok/grok-4.5",
+            "models": {
+                "main": {
+                    "displayName": "xai_grok",
                     "provider": "xai_grok",
+                    "model": "xai-grok/grok-4.5",
+                    "capabilities": {"text": True},
                 }
             },
+            "agents": {"defaults": {"modelId": "main"}},
             "providers": {
                 "xaiGrok": {
                     "proxy": "http://127.0.0.1:7890",

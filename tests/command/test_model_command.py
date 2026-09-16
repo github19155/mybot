@@ -15,56 +15,58 @@ from nanobot.command.builtin import (
     register_builtin_commands,
 )
 from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.config.schema import ModelPresetConfig
+from nanobot.model_domain import ModelConfig, ModelGenerationDefaults
 from nanobot.permission_types import GOAL_MUTATE
 from nanobot.providers.factory import ProviderSnapshot
-from nanobot.session.model_selection import (
-    SESSION_MODEL_PRESET_METADATA_KEY,
-    model_preset_from_metadata,
-)
+from nanobot.session.model_selection import model_id_from_metadata
 
 
 def _provider(default_model: str, max_tokens: int = 123) -> MagicMock:
     provider = MagicMock()
     provider.get_default_model.return_value = default_model
     provider.generation = SimpleNamespace(
-        max_tokens=max_tokens,
-        temperature=0.1,
-        reasoning_effort=None,
+        max_tokens=max_tokens, temperature=0.1, reasoning_effort=None
     )
     return provider
 
 
-def _make_loop(tmp_path, *, provider_snapshot_loader=None, model_presets=None) -> AgentLoop:
-    presets = model_presets or {
-        "default": ModelPresetConfig(
-            model="base-model", max_tokens=123, context_window_tokens=1000
+def _make_loop(tmp_path, *, provider_snapshot_loader=None, models=None) -> AgentLoop:
+    catalog = models or {
+        "main": ModelConfig(
+            display_name="Main", provider="anthropic", model="base-model",
+            context_window_tokens=1000,
+            generation_defaults=ModelGenerationDefaults(max_tokens=123),
         ),
-        "fast": ModelPresetConfig(
-            model="openai/gpt-4.1", max_tokens=4096, context_window_tokens=32_768
+        "fast": ModelConfig(
+            display_name="Fast", provider="openai", model="gpt-4.1",
+            context_window_tokens=32_768,
+            generation_defaults=ModelGenerationDefaults(max_tokens=4096),
         ),
     }
 
-    def load_snapshot(*, preset_name=None, preset=None, **_kwargs):
-        selected = preset or presets[preset_name]
-        provider = _provider(selected.model, max_tokens=selected.max_tokens or 123)
+    def load_snapshot(*, model_id=None, model_config=None, **_kwargs):
+        if model_config is None:
+            assert model_id is not None
+            selected = catalog[model_id]
+            resolved_id = model_id
+        else:
+            selected = model_config
+            resolved_id = model_id or next(
+                key for key, value in catalog.items() if value is selected
+            )
+        max_tokens = selected.generation_defaults.max_tokens or 123
+        provider = _provider(selected.model, max_tokens=max_tokens)
         return ProviderSnapshot(
-            provider=provider,
-            model=selected.model,
+            model_id=resolved_id, provider=provider, model=selected.model,
             context_window_tokens=selected.context_window_tokens,
-            signature=(preset_name, selected.model),
-            generation=provider.generation,
-            model_preset=preset_name,
+            signature=(resolved_id, selected.model), generation=provider.generation,
         )
 
     return AgentLoop(
-        bus=MessageBus(),
-        provider=_provider("base-model", max_tokens=123),
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=1000,
-        model_presets=presets,
-        provider_snapshot_loader=provider_snapshot_loader or load_snapshot,
+        bus=MessageBus(), provider=_provider("base-model", max_tokens=123),
+        workspace=tmp_path, model="base-model", context_window_tokens=1000,
+        models=catalog, provider_snapshot_loader=provider_snapshot_loader or load_snapshot,
+        model_id="main",
     )
 
 
@@ -81,114 +83,101 @@ def _ctx_session(loop: AgentLoop, raw: str, args: str = "") -> CommandContext:
     )
 
 
-def _saved_model_preset(loop: AgentLoop, session_key: str = "cli:direct") -> str | None:
-    session = loop.sessions.get_or_create(session_key)
-    return model_preset_from_metadata(session.metadata)
+def _saved_model_id(loop: AgentLoop, session_key: str = "cli:direct") -> str | None:
+    return model_id_from_metadata(loop.sessions.get_or_create(session_key).metadata)
 
 
 @pytest.mark.asyncio
-async def test_model_command_lists_current_and_available_presets(tmp_path) -> None:
+async def test_model_command_lists_current_and_available_model_ids(tmp_path) -> None:
     loop = _make_loop(tmp_path)
-
     out = await cmd_model(_ctx(loop, "/model"))
-
-    assert "Current model: `base-model`" in out.content
-    assert "Current preset: `default`" in out.content
-    assert "Available presets: `default`, `fast`" in out.content
-    assert "`fast`" in out.content
+    assert "Current model ID: `main`" in out.content
+    assert "Upstream model: `base-model`" in out.content
+    assert "Available model IDs: `fast`, `main`" in out.content
     assert out.metadata == {"render_as": "text"}
 
 
 @pytest.mark.asyncio
-async def test_model_command_switches_preset(tmp_path) -> None:
+async def test_model_command_switches_model_id(tmp_path) -> None:
     loop = _make_loop(tmp_path)
-
     out = await cmd_model(_ctx(loop, "/model fast", args="fast"))
-
-    assert "Switched model preset to `fast`." in out.content
+    assert "Switched model to `fast`." in out.content
     assert "Scope: current session" in out.content
-    assert "Model: `openai/gpt-4.1`" in out.content
-    assert _saved_model_preset(loop) == "fast"
-    assert loop.model_preset is None
+    assert "Upstream model: `gpt-4.1`" in out.content
+    assert _saved_model_id(loop) == "fast"
+    assert loop.model_id == "main"
     assert loop.model == "base-model"
 
     await loop.process_direct("/new", session_key="cli:direct")
-    assert _saved_model_preset(loop) == "fast"
+    assert _saved_model_id(loop) == "fast"
     status = await loop.process_direct("/status", session_key="cli:direct")
-    assert status is not None and "openai/gpt-4.1" in status.content
+    assert status is not None and "gpt-4.1" in status.content
 
 
 @pytest.mark.asyncio
-async def test_model_command_accepts_canonical_names_with_spaces(tmp_path) -> None:
-    loop = _make_loop(
-        tmp_path,
-        model_presets={
-            "default": ModelPresetConfig(model="base-model"),
-            "Deep Research": ModelPresetConfig(model="deep-model"),
-        },
-    )
-
-    out = await cmd_model(
-        _ctx(loop, "/model deep research", args="deep research"),
-    )
-
-    assert "Switched model preset to `Deep Research`." in out.content
-    assert _saved_model_preset(loop) == "Deep Research"
+async def test_model_command_uses_exact_model_id_not_display_name(tmp_path) -> None:
+    loop = _make_loop(tmp_path, models={
+        "main": ModelConfig(display_name="Main", provider="anthropic", model="base-model"),
+        "deep-research": ModelConfig(
+            display_name="Deep Research", provider="openai", model="deep-model"
+        ),
+    })
+    out = await cmd_model(_ctx(loop, "/model Deep Research", args="Deep Research"))
+    assert "Could not switch model" in out.content
+    assert _saved_model_id(loop) is None
+    switched = await cmd_model(_ctx(loop, "/model deep-research", args="deep-research"))
+    assert "Switched model to `deep-research`." in switched.content
+    assert _saved_model_id(loop) == "deep-research"
 
 
 @pytest.mark.asyncio
-async def test_model_command_switches_back_to_default(tmp_path) -> None:
+async def test_model_command_switches_back_to_main(tmp_path) -> None:
     loop = _make_loop(tmp_path)
     await cmd_model(_ctx(loop, "/model fast", args="fast"))
-
-    out = await cmd_model(_ctx(loop, "/model default", args="default"))
-
-    assert "Switched model preset to `default`." in out.content
-    assert _saved_model_preset(loop) == "default"
-    assert loop.model_preset is None
-    assert loop.model == "base-model"
-    assert loop.context_window_tokens == 1000
+    out = await cmd_model(_ctx(loop, "/model main", args="main"))
+    assert "Switched model to `main`." in out.content
+    assert _saved_model_id(loop) == "main"
+    assert loop.model_id == "main"
 
 
 @pytest.mark.asyncio
-async def test_model_command_unknown_preset_keeps_old_state(tmp_path) -> None:
+async def test_model_command_unknown_model_id_keeps_old_state(tmp_path) -> None:
     loop = _make_loop(tmp_path)
-
     out = await cmd_model(_ctx(loop, "/model missing", args="missing"))
-
-    assert "Could not switch model preset" in out.content
-    assert "\"model_preset" not in out.content
-    assert "Available presets: `default`, `fast`" in out.content
-    assert loop.model_preset is None
-    assert loop.model == "base-model"
+    assert "Could not switch model" in out.content
+    assert "Available model IDs: `fast`, `main`" in out.content
+    assert _saved_model_id(loop) is None
+    assert loop.model_id == "main"
 
 
 @pytest.mark.asyncio
 async def test_model_command_reports_provider_configuration_errors(tmp_path) -> None:
-    def fail_preset(**_kwargs):
-        raise ValueError("No API key configured for provider 'openai'.")
+    main_provider = _provider("base-model", max_tokens=123)
 
-    loop = _make_loop(tmp_path, provider_snapshot_loader=fail_preset)
+    def fail_fast(*, model_id=None, **_kwargs):
+        if model_id == "fast":
+            raise ValueError("No API key configured for provider 'openai'.")
+        return ProviderSnapshot(
+            model_id="main",
+            provider=main_provider,
+            model="base-model",
+            context_window_tokens=1000,
+            signature=("main", "base-model"),
+            generation=main_provider.generation,
+        )
 
+    loop = _make_loop(tmp_path, provider_snapshot_loader=fail_fast)
     switched = await cmd_model(_ctx(loop, "/model fast", args="fast"))
-    session = loop.sessions.get_or_create("cli:direct")
-    session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = "fast"
-    status = await cmd_model(_ctx(loop, "/model"))
-
-    assert "Could not switch model preset" in switched.content
+    assert "Could not switch model" in switched.content
     assert "No API key configured for provider 'openai'." in switched.content
-    assert "Current selection error" in status.content
-    assert "No API key configured for provider 'openai'." in status.content
 
 
 @pytest.mark.asyncio
 async def test_model_command_does_not_depend_on_my_allow_set(tmp_path) -> None:
     loop = _make_loop(tmp_path)
     assert loop.tools_config.my.allow_set is False
-
     await cmd_model(_ctx(loop, "/model fast", args="fast"))
-
-    assert _saved_model_preset(loop) == "fast"
+    assert _saved_model_id(loop) == "fast"
 
 
 @pytest.mark.asyncio
@@ -196,64 +185,52 @@ async def test_model_command_registered_as_exact_and_prefix(tmp_path) -> None:
     router = CommandRouter()
     register_builtin_commands(router)
     loop = _make_loop(tmp_path)
-
     out = await router.dispatch(_ctx(loop, "/model fast"))
-
     assert out is not None
-    assert out.channel == "cli"
-    assert out.chat_id == "direct"
-    assert out.metadata == {"render_as": "text"}
     assert out.content == "\n".join([
-        "Switched model preset to `fast`.",
+        "Switched model to `fast`.",
         "- Scope: current session",
-        "- Model: `openai/gpt-4.1`",
+        "- Upstream model: `gpt-4.1`",
         "- Context window: 32768",
         "- Max output tokens: 4096",
     ])
-    assert _saved_model_preset(loop) == "fast"
+    assert _saved_model_id(loop) == "fast"
 
 
 @pytest.mark.asyncio
 async def test_model_command_does_not_change_another_session(tmp_path) -> None:
     loop = _make_loop(tmp_path)
-
     await cmd_model(_ctx(loop, "/model fast", args="fast"))
     other = InboundMessage(channel="cli", sender_id="user", chat_id="other", content="/model")
-    out = await cmd_model(
-        CommandContext(msg=other, session=None, key=other.session_key, raw="/model", loop=loop)
-    )
-
-    assert "Current preset: `default`" in out.content
-    assert _saved_model_preset(loop) == "fast"
+    out = await cmd_model(CommandContext(
+        msg=other, session=None, key=other.session_key, raw="/model", loop=loop
+    ))
+    assert "Current model ID: `main`" in out.content
+    assert _saved_model_id(loop) == "fast"
 
 
 @pytest.mark.asyncio
-async def test_model_command_reports_and_recovers_removed_session_preset(tmp_path) -> None:
+async def test_model_command_reports_removed_session_model_id(tmp_path) -> None:
     loop = _make_loop(tmp_path)
     session = loop.sessions.get_or_create("cli:direct")
-    session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = "removed"
+    session.metadata["_nanobot_model_id"] = "removed"
     loop.sessions.save(session)
-
     status = await loop.process_direct("/model", session_key="cli:direct")
-    switched = await loop.process_direct("/model default", session_key="cli:direct")
-
+    switched = await loop.process_direct("/model main", session_key="cli:direct")
     assert status is not None
-    assert "model_preset 'removed' not found" in status.content
-    assert "Available presets: `default`, `fast`" in status.content
-    assert "Switch with `/model <preset>`" in status.content
-    assert switched is not None
-    assert "Switched model preset to `default`." in switched.content
-    assert _saved_model_preset(loop) == "default"
+    assert "removed" in status.content
+    assert "Available model IDs: `fast`, `main`" in status.content
+    assert "Switch with `/model <model_id>`" in status.content
+    assert switched is not None and "Switched model to `main`." in switched.content
+    assert _saved_model_id(loop) == "main"
 
 
 def test_model_command_in_help_and_palette() -> None:
-    palette = builtin_command_palette()
-
-    model = next(item for item in palette if item["command"] == "/model")
-    assert model["arg_hint"] == "[preset]"
+    model = next(item for item in builtin_command_palette() if item["command"] == "/model")
+    assert model["arg_hint"] == "[model_id]"
     assert model["lifecycle"] == "side_channel"
     assert model["accepts_args"] is True
-    assert "/model [preset]" in build_help_text()
+    assert "/model [model_id]" in build_help_text()
 
 
 @pytest.mark.asyncio

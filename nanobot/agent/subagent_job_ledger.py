@@ -14,8 +14,11 @@ _ACTIVE_STATES = ("queued", "running")
 _TERMINAL_STATES = ("completed", "failed", "stopped", "interrupted")
 
 
+
+
 class SubagentJobLedger:
     """Persist Subagent lifecycle snapshots without becoming a second scheduler."""
+
 
     def __init__(
         self,
@@ -50,8 +53,7 @@ class SubagentJobLedger:
                     phase TEXT NOT NULL,
                     iteration INTEGER NOT NULL DEFAULT 0,
                     role TEXT NOT NULL,
-                    model TEXT,
-                    model_preset TEXT,
+                    model_id TEXT,
                     thinking TEXT,
                     context_mode TEXT NOT NULL,
                     timeout_seconds REAL,
@@ -74,6 +76,24 @@ class SubagentJobLedger:
                 )
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(jobs)")
+            }
+            legacy_columns = columns & {"model", "model_preset"}
+            if legacy_columns:
+                if "model_id" not in columns:
+                    if legacy_columns == {"model_preset"}:
+                        conn.execute(
+                            "ALTER TABLE jobs RENAME COLUMN model_preset TO model_id"
+                        )
+                        legacy_columns = set()
+                    else:
+                        conn.execute("ALTER TABLE jobs ADD COLUMN model_id TEXT")
+                        if "model_preset" in legacy_columns:
+                            conn.execute("UPDATE jobs SET model_id=model_preset")
+                for name in sorted(legacy_columns):
+                    conn.execute(f"ALTER TABLE jobs DROP COLUMN {name}")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_subagent_jobs_session_started "
                 "ON jobs(session_key, started_at_ms DESC)"
@@ -108,8 +128,7 @@ class SubagentJobLedger:
             str(getattr(status, "phase", "initializing") or "initializing"),
             int(getattr(status, "iteration", 0) or 0),
             str(getattr(status, "role", "general") or "general"),
-            getattr(status, "model", None),
-            getattr(status, "model_preset", None),
+            getattr(status, "model_id", None),
             getattr(status, "thinking", None),
             str(getattr(status, "context", "fresh") or "fresh"),
             getattr(status, "timeout_seconds", None),
@@ -135,14 +154,14 @@ class SubagentJobLedger:
                 """
                 INSERT INTO jobs (
                     task_id, label, task_description, state, phase, iteration,
-                    role, model, model_preset, thinking, context_mode, timeout_seconds,
+                    role, model_id, thinking, context_mode, timeout_seconds,
                     origin_channel, origin_chat_id, session_key, origin_message_id,
                     started_at_ms, updated_at_ms, ended_at_ms, stop_reason, error,
                     completion_delivered, completion_delivery_error, final_output,
                     usage_input_tokens, usage_output_tokens, usage_total_tokens,
                     tool_events_json
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(task_id) DO UPDATE SET
                     label=excluded.label,
@@ -151,8 +170,7 @@ class SubagentJobLedger:
                     phase=excluded.phase,
                     iteration=excluded.iteration,
                     role=excluded.role,
-                    model=excluded.model,
-                    model_preset=excluded.model_preset,
+                    model_id=excluded.model_id,
                     thinking=excluded.thinking,
                     context_mode=excluded.context_mode,
                     timeout_seconds=excluded.timeout_seconds,

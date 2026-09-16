@@ -98,7 +98,7 @@ class MyTool(Tool):
         "tool_names",
         "exec_config",  # inspect allowed (e.g. check sandbox), modify blocked
         "web_config",  # inspect allowed (e.g. check enable), modify blocked
-        "model_presets",  # config-derived catalog; changes require config reload
+        "models",  # config-derived catalog; changes require config reload
         "workspace_sandbox",  # read-only view of workspace enforcement level
         "request",  # current message routing metadata
     })
@@ -122,13 +122,12 @@ class MyTool(Tool):
     RESTRICTED: dict[str, dict[str, Any]] = {
         "max_iterations":        {"type": int, "min": 1,   "max": 100},
         "context_window_tokens": {"type": int, "min": 4096, "max": 1_000_000},
-        "model":                 {"type": str, "min_len": 1},
     }
 
     _MAX_RUNTIME_KEYS = 64
     _MODEL_RUNTIME_FIELDS = frozenset({
         "model",
-        "model_preset",
+        "model_id",
         "context_window_tokens",
     })
 
@@ -160,13 +159,13 @@ class MyTool(Tool):
             "Scratchpad keys persist across turns but not restarts.\n"
             "Current routing metadata is available read-only via request.channel, "
             "request.chat_id, and request.sender_id.\n"
-            "Use model_preset for session-scoped model or context changes; direct "
+            "Use model_id for session-scoped model or context changes; direct "
             "model/context_window_tokens writes are disabled during active sessions.\n"
             "Note: web_config and exec_config are readable but read-only.\n"
             "\n"
             "When to use:\n"
             "- User asks about your model or settings → check that key.\n"
-            "- User asks to switch to a named model preset → set model_preset to that preset name.\n"
+            "- User asks to switch models → set model_id to a configured canonical model ID.\n"
             "- A tool fails or behaves unexpectedly → check the related config to diagnose.\n"
             "- User asks you to remember a preference for this session → set to store it in your scratchpad.\n"
             "- About to start a large task → check context_window_tokens and max_iterations first."
@@ -195,9 +194,9 @@ class MyTool(Tool):
                     "type": "string",
                     "description": "Dot-path for check/set. Examples: 'max_iterations', 'workspace', 'provider_retry_mode'. "
                     "Use 'request.channel', 'request.chat_id', or 'request.sender_id' for current routing metadata. "
-                    "Use 'model_preset' to switch named model presets. For check without key, shows all config values.",
+                    "Use 'model_id' to switch configured canonical models. For check without key, shows all config values.",
                 },
-                "value": {"description": "New value (for set). Type must match target (int for max_iterations/context_window_tokens, str for model/model_preset)."},
+                "value": {"description": "New value (for set). Type must match target (int for max_iterations/context_window_tokens, str for model_id)."},
             },
             "required": ["action"],
         }
@@ -257,7 +256,7 @@ class MyTool(Tool):
             raw_events = st.get("tool_events", [])
             phase = st.get("phase", "unknown")
             role = st.get("role", "coder")
-            model = st.get("model", "")
+            model = st.get("model_id", "")
             iteration = st.get("iteration", 0)
             usage = st.get("usage", {})
             error = st.get("error")
@@ -267,7 +266,7 @@ class MyTool(Tool):
             raw_events = st.tool_events
             phase = st.phase
             role = st.role
-            model = st.model
+            model = st.model_id
             iteration = st.iteration
             usage = st.usage
             error = st.error
@@ -390,7 +389,7 @@ class MyTool(Tool):
             return False, None
         values: dict[str, object] = {
             "model": runtime.model,
-            "model_preset": runtime.model_preset,
+            "model_id": runtime.model_id,
             "context_window_tokens": runtime.context_window_tokens,
         }
         return True, values[key]
@@ -441,10 +440,10 @@ class MyTool(Tool):
         for k in self.RESTRICTED:
             found, value = self._current_runtime_value(k)
             parts.append(self._format_value(value if found else values[k], k))
-        found, value = self._current_runtime_value("model_preset")
+        found, value = self._current_runtime_value("model_id")
         parts.append(self._format_value(
-            value if found else snapshot.model_preset,
-            "model_preset",
+            value if found else snapshot.model_id,
+            "model_id",
         ))
         for k in (
             "workspace",
@@ -486,8 +485,8 @@ class MyTool(Tool):
                 return ToolResult.error(f"Error: {err}")
             self._audit("modify", f"READ_ONLY {key}")
             return ToolResult.error(f"Error: '{key}' is read-only and cannot be modified")
-        if key == "model_preset":
-            return self._modify_model_preset(value)
+        if key == "model_id":
+            return self._modify_model_id(value)
         if key in self.RESTRICTED:
             return self._modify_restricted(key, value)
         if key in RUNTIME_COMMAND_KEYS:
@@ -497,14 +496,14 @@ class MyTool(Tool):
             return ToolResult.error(f"Error: '{key}' is read-only and cannot be modified")
         return self._modify_scratchpad(key, value)
 
-    def _modify_model_preset(self, value: Any) -> str:
+    def _modify_model_id(self, value: Any) -> str:
         if not isinstance(value, str) or not value.strip():
-            return ToolResult.error("Error: 'model_preset' must be a non-empty string")
+            return ToolResult.error("Error: 'model_id' must be a non-empty string")
         name = value.strip()
         session_key = current_request_session_key()
-        old = self._runtime_control.snapshot().model_preset
+        old = self._runtime_control.snapshot().model_id
         try:
-            runtime = self._runtime_control.set_model_preset(
+            runtime = self._runtime_control.set_model_id(
                 name,
                 session_key=session_key,
             )
@@ -513,15 +512,15 @@ class MyTool(Tool):
             punctuation = "" if message.endswith((".", "!", "?")) else "."
             return ToolResult.error(f"Error: {message}{punctuation}")
         if session_key:
-            self._audit("modify", f"model_preset = {name!r}")
+            self._audit("modify", f"model_id = {name!r}")
             return (
-                f"Set model_preset = {name!r} for the next turn; "
+                f"Set model_id = {name!r} for the next turn; "
                 f"model will be {runtime.model!r}; "
                 f"context_window_tokens will be {runtime.context_window_tokens!r}"
             )
-        self._audit("modify", f"model_preset: {old!r} -> {name!r}")
+        self._audit("modify", f"model_id: {old!r} -> {name!r}")
         return (
-            f"Set model_preset = {name!r} (was {old!r}); model is now {runtime.model!r}; "
+            f"Set model_id = {name!r} (was {old!r}); model is now {runtime.model!r}; "
             f"context_window_tokens is now {runtime.context_window_tokens!r}"
         )
 
@@ -542,14 +541,12 @@ class MyTool(Tool):
             return ToolResult.error(f"Error: '{key}' must be <= {spec['max']}")
         if "min_len" in spec and len(str(value)) < spec["min_len"]:
             return ToolResult.error(f"Error: '{key}' must be at least {spec['min_len']} characters")
-        if key in {"model", "context_window_tokens"} and current_request_session_key():
+        if key == "context_window_tokens" and current_request_session_key():
             return ToolResult.error(
                 f"Error: direct '{key}' changes are instance-wide and disabled "
-                "during an active session; use a configured model_preset"
+                "during an active session; switch model_id instead"
             )
-        if key == "model":
-            self._runtime_control.set_model(cast(str, value))
-        elif key == "context_window_tokens":
+        if key == "context_window_tokens":
             self._runtime_control.set_context_window_tokens(cast(int, value))
         else:
             self._runtime_control.set_max_iterations(cast(int, value))

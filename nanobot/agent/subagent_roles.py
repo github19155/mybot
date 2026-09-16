@@ -14,6 +14,7 @@ from nanobot.agent.subagent_role_storage import (
     workspace_from_config,
 )
 from nanobot.config.store import ConfigStore
+from nanobot.model_domain import get_model
 
 if TYPE_CHECKING:
     from nanobot.config.schema import Config, SubagentRoleConfig
@@ -102,8 +103,7 @@ class ResolvedSubagentRole:
     description: str
     system_prompt: str
     tools: tuple[str, ...]
-    model: str | None
-    model_preset: str | None
+    model_id: str | None
     thinking: str | None
     temperature: float | None
     timeout_seconds: float | None
@@ -120,8 +120,7 @@ class ResolvedSubagentRole:
             "description": self.description,
             "system_prompt": self.system_prompt,
             "tools": list(self.tools),
-            "model": self.model,
-            "model_preset": self.model_preset,
+            "model_id": self.model_id,
             "thinking": self.thinking,
             "temperature": self.temperature,
             "timeout_seconds": self.timeout_seconds,
@@ -145,14 +144,11 @@ def _validate_role_tools(role: "SubagentRoleConfig") -> None:
 
 def _validate_role_config(config: "Config", role: "SubagentRoleConfig") -> None:
     _validate_role_tools(role)
-    if role.model is not None and not role.model.strip():
-        raise ValueError("model must be a non-empty string")
-    if (
-        role.model_preset
-        and role.model_preset != "default"
-        and role.model_preset not in config.model_presets
-    ):
-        raise ValueError(f"Unknown model preset '{role.model_preset}'")
+    if role.model_id is not None:
+        try:
+            get_model(config.models, role.model_id)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(str(exc)) from None
 
 
 def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
@@ -189,8 +185,7 @@ def resolve_role(config: "Config | None", name: str) -> ResolvedSubagentRole:
         description=description,
         system_prompt=system_prompt,
         tools=tools,
-        model=override.model,
-        model_preset=override.model_preset,
+        model_id=override.model_id,
         thinking=override.thinking,
         temperature=override.temperature,
         timeout_seconds=override.timeout_seconds,

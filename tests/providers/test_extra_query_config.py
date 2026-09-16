@@ -75,13 +75,19 @@ class TestProviderSignatureIncludesExtraQuery:
 
     def test_provider_signature_tracks_extra_query(self) -> None:
         base = {
-            "agents": {"defaults": {"modelPreset": "fast"}},
-            "modelPresets": {
-                "fast": {"model": "custom/test-model", "provider": "custom"},
+            "models": {
+                "main": {
+                    "displayName": "custom",
+                    "provider": "custom",
+                    "model": "custom/test-model",
+                    "capabilities": {"text": True},
+                }
             },
+            "agents": {"defaults": {"modelId": "main"}},
             "providers": {
                 "custom": {
                     "apiKey": "test-key",
+                    "apiBase": "https://example.com/v1",
                     "extra_query": None,
                 },
             },
@@ -91,6 +97,7 @@ class TestProviderSignatureIncludesExtraQuery:
             "providers": {
                 "custom": {
                     "apiKey": "test-key",
+                    "apiBase": "https://example.com/v1",
                     "extra_query": {"api-version": "v1"},
                 },
             },

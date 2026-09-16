@@ -345,8 +345,8 @@ class DreamTriggerController:
         result = parse_dream_result(content, run=run, permissions=self.permissions)
         result["metadata"] = {
             **cast(dict[str, object], result["metadata"]),
+            "model_id": runtime.model_id,
             "model": runtime.model,
-            "model_preset": runtime.model_preset,
             "provider": runtime.provider.provider_name,
         }
         self.results_path.parent.mkdir(parents=True, exist_ok=True)
@@ -383,7 +383,7 @@ def build_dream_tools(workspace: Path, permissions: PermissionManager) -> ToolRe
         permission_manager=permissions,
         permission_subject=DREAM_SUBJECT,
     )
-    registry.register(ReadFileTool(
+    registry.register(ReadFileTool(  # pyright: ignore[reportAbstractUsage]
         workspace=workspace,
         allowed_dir=workspace,
         restrict_to_workspace=True,

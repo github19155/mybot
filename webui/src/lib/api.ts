@@ -199,7 +199,7 @@ export async function listSessions(
     updated_at: string | null;
     title?: string;
     preview?: string;
-    model_preset?: string | null;
+    model_id?: string | null;
     run_started_at?: number | null;
     recovery_state?: RecoveryState | null;
     workspace_scope?: WorkspaceScopePayload | null;
@@ -220,7 +220,7 @@ export async function listSessions(
       updatedAt: s.updated_at,
       title: s.title ?? "",
       preview: s.preview ?? "",
-      modelPreset: s.model_preset ?? null,
+      modelId: s.model_id ?? null,
       runStartedAt: s.run_started_at ?? null,
       recoveryState: s.recovery_state ?? null,
       workspaceScope: s.workspace_scope ?? null,
@@ -907,16 +907,11 @@ export async function updateSettings(
   update: SettingsUpdate,
 ): Promise<SettingsPayload> {
   const payload: Record<string, unknown> = {};
-  if (update.modelPreset !== undefined) {
-    payload.model_preset = update.modelPreset ?? "default";
+  if (update.modelId !== undefined) {
+    payload.model_id = update.modelId;
   }
-  if (update.model !== undefined) payload.model = update.model;
-  if (update.provider !== undefined) payload.provider = update.provider;
-  if (update.imageAnalysisModelPreset !== undefined) {
-    payload.image_analysis_model_preset = update.imageAnalysisModelPreset ?? "";
-  }
-  if (update.contextWindowTokens !== undefined) {
-    payload.context_window_tokens = update.contextWindowTokens;
+  if (update.imageAnalysisModelId !== undefined) {
+    payload.image_analysis_model_id = update.imageAnalysisModelId ?? "";
   }
   if (update.timezone !== undefined) payload.timezone = update.timezone;
   if (update.toolHintMaxLength !== undefined) {
@@ -936,24 +931,32 @@ function modelGenerationSettingsPayload(
     | "supportsImageGeneration"
   >,
 ): Record<string, unknown> {
-  const payload: Record<string, unknown> = {};
+  const generation: Record<string, unknown> = {};
   if (configuration.maxTokens !== undefined) {
-    payload.max_tokens = configuration.maxTokens;
+    generation.max_tokens = configuration.maxTokens;
   }
+  if (configuration.temperature !== undefined) {
+    generation.temperature = configuration.temperature;
+  }
+  if (configuration.reasoningEffort !== undefined) {
+    generation.reasoning_effort = configuration.reasoningEffort ?? "";
+  }
+  const capabilities: Record<string, unknown> = {};
+  if (configuration.supportsVision !== undefined) {
+    capabilities.vision = configuration.supportsVision;
+  }
+  if (configuration.supportsImageGeneration !== undefined) {
+    capabilities.image_generation = configuration.supportsImageGeneration;
+  }
+  const payload: Record<string, unknown> = {};
   if (configuration.contextWindowTokens !== undefined) {
     payload.context_window_tokens = configuration.contextWindowTokens;
   }
-  if (configuration.temperature !== undefined) {
-    payload.temperature = configuration.temperature;
+  if (Object.keys(generation).length > 0) {
+    payload.generation_defaults = generation;
   }
-  if (configuration.reasoningEffort !== undefined) {
-    payload.reasoning_effort = configuration.reasoningEffort ?? "";
-  }
-  if (configuration.supportsVision !== undefined) {
-    payload.supports_vision = configuration.supportsVision;
-  }
-  if (configuration.supportsImageGeneration !== undefined) {
-    payload.supports_image_generation = configuration.supportsImageGeneration;
+  if (Object.keys(capabilities).length > 0) {
+    payload.capabilities = capabilities;
   }
   return payload;
 }
@@ -966,7 +969,8 @@ export async function createModelConfiguration(
     transport,
     "settings.model_configuration.create",
     {
-      name: configuration.name,
+      model_id: configuration.modelId,
+      display_name: configuration.displayName,
       provider: configuration.provider,
       model: configuration.model,
       ...modelGenerationSettingsPayload(configuration),
@@ -982,8 +986,8 @@ export async function updateModelConfiguration(
     transport,
     "settings.model_configuration.update",
     {
-      name: configuration.name,
-      ...(configuration.newName !== undefined ? { new_name: configuration.newName } : {}),
+      model_id: configuration.modelId,
+      ...(configuration.displayName !== undefined ? { display_name: configuration.displayName } : {}),
       ...(configuration.provider !== undefined ? { provider: configuration.provider } : {}),
       ...(configuration.model !== undefined ? { model: configuration.model } : {}),
       ...modelGenerationSettingsPayload(configuration),
@@ -993,12 +997,12 @@ export async function updateModelConfiguration(
 
 export async function deleteModelConfiguration(
   transport: WebUIMutationTransport,
-  name: string,
+  modelId: string,
 ): Promise<SettingsPayload> {
   return mutation<SettingsPayload>(
     transport,
     "settings.model_configuration.delete",
-    { name },
+    { model_id: modelId },
   );
 }
 
@@ -1112,8 +1116,7 @@ export async function updateImageGenerationSettings(
     "settings.image_generation.update",
     {
       enabled: update.enabled,
-      provider: update.provider,
-      model: update.model,
+      model_id: update.modelId,
       default_aspect_ratio: update.defaultAspectRatio,
       default_image_size: update.defaultImageSize,
       max_images_per_turn: update.maxImagesPerTurn,
@@ -1130,8 +1133,7 @@ export async function updateTranscriptionSettings(
     "settings.transcription.update",
     {
       enabled: update.enabled,
-      provider: update.provider,
-      model: update.model,
+      model_id: update.modelId,
       language: update.language,
       max_duration_sec: update.maxDurationSec,
       max_upload_mb: update.maxUploadMb,

@@ -45,7 +45,7 @@
 | Install this fork on a Linux server with host or container root | [Linux host-admin / container-root](./docs/linux-install.md) |
 | Open the bundled browser UI | [WebUI](#-webui) |
 | Connect Telegram, Discord, WeChat, Slack, Email, Mattermost, or another chat app | [Chat Apps](./docs/chat-apps.md) |
-| Configure providers, model presets, Langfuse, MCP, web tools, or security | [Docs](./docs/README.md) and [Configuration](./docs/configuration.md) |
+| Configure providers, configured models, Langfuse, MCP, web tools, or security | [Docs](./docs/README.md) and [Configuration](./docs/configuration.md) |
 | Understand or extend the internals | [Architecture](./docs/architecture.md) and [Development](./docs/development.md) |
 | Deploy to the cloud or keep nanobot running as a service | [Deployment](./docs/deployment.md) |
 
@@ -65,7 +65,7 @@ nanobot is a self-hosted personal AI agent runtime. It can:
 
 - **Persistent workflows**: goals, memory, tools, and chat context survive long-running work.
 - **Chat-native reach**: WebUI, API, Telegram, Feishu, Slack, Discord, Teams, email, and Mattermost.
-- **Model freedom**: OpenAI-compatible APIs, local LLMs, image generation, search, and explicit model presets.
+- **Model freedom**: OpenAI-compatible APIs, local LLMs, image generation, search, and explicit model IDs.
 - **Small core**: readable internals with MCP, memory, deployment, and automation built in.
 - **Own your stack**: inspect, customize, self-host, and extend without a giant platform.
 
@@ -302,7 +302,7 @@ Browse the [repo docs](./docs/README.md) for the latest features and GitHub deve
 The Agency Release turns nanobot from a durable workbench into an agent runtime that can coordinate helpers, switch models per session, and carry authorized work through to completion.
 
 - Consult inline subagents without leaving the current task
-- Switch model presets per session directly from the composer
+- Switch configured models per session by model ID directly from the composer
 - Start from a guided WebUI setup with clearer execution controls
 - Apply configuration changes live across a more reliable provider, channel, and tool runtime
 

@@ -270,10 +270,18 @@ def _request_query(request: WsRequest) -> dict[str, list[str]]:
 
 
 def _default_model_name_from_config(config_path: Path | None = None) -> str | None:
+    """Upstream model string of the configured default model, for display.
+
+    Resolved exclusively through ``agents.defaults.model_id`` and
+    ``Config.models``; no presets, selectors, or provider inference.
+    """
     try:
         from nanobot.config.loader import load_config
-        model = load_config(config_path).resolve_preset().model.strip()
-        return model or None
+        from nanobot.model_domain import get_model
+
+        config = load_config(config_path)
+        model = get_model(config.models, config.agents.defaults.model_id)
+        return model.model.strip() or None
     except Exception as e:
         logger.debug("bootstrap model_name could not load from config: {}", e)
         return None

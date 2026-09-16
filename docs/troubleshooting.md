@@ -35,8 +35,8 @@ WebUI **Settings → Models** or the CLI setup wizard, then prints the command t
 ## How to Read `nanobot status`
 
 `nanobot status` does not call a model. It checks the selected config and workspace,
-resolves environment references, and validates the local settings required by the active
-provider/model without constructing a provider client.
+resolves environment references, and validates the local settings required by the
+concrete provider named by the active `ModelConfig`, without constructing a provider client.
 
 The output has this shape:
 
@@ -45,7 +45,7 @@ nanobot Status
 
 Config: /path/to/config.json ✓
 Workspace: /path/to/workspace ✓
-Model: provider/model-name (preset: primary)
+Model: claude-opus-4-5 (model_id: main)
 Agent: ✓ provider/model configuration is ready
 Provider A: not set
 Provider B: ✓
@@ -59,9 +59,9 @@ Read it like this:
 |---|---|---|
 | `Config` | It points to the config file you meant to use and shows `✓`. | Run `nanobot onboard`, or pass `--config` to `nanobot agent`, `gateway`, or `serve` when testing a non-default instance. |
 | `Workspace` | It points to the workspace you meant to use and shows `✓`. | Run `nanobot onboard`, create the folder, fix permissions, or pass `--workspace` on commands that support it. |
-| `Model` | It shows the active model or the preset name you expect. | Set `agents.defaults.modelPreset` to the intended preset, or check `/model` if you changed models during a chat session. |
+| `Model` | It shows the active upstream model and its canonical `model_id`. | Set the relevant consumer's `modelId` to a key in `models`, or check `/model` if you changed models during a chat session. |
 | `Agent` | It says `provider/model configuration is ready`. | Follow the printed WebUI or CLI setup route, then run `nanobot status` again. |
-| Provider rows | The provider used by the active preset shows `✓`, an OAuth marker, or a local URL. | Configure only the active provider first. It is normal for unused providers to say `not set`. |
+| Provider rows | The provider configured by the active model's `ModelConfig.provider` shows `✓`, an OAuth marker, or a local URL. | Inspect `models.<model_id>.provider` and configure that exact provider under `providers`. It is normal for unused providers to say `not set`. |
 
 If `nanobot status` looks right but `nanobot agent -m "Hello!"` fails, the install and config paths are probably fine. Continue with [Provider and Model Problems](#provider-and-model-problems).
 
@@ -110,8 +110,8 @@ Common config mistakes:
 | Symptom | Check |
 |---|---|
 | JSON parse error | Validate commas, braces, and quotes. Most docs examples are partial snippets to merge. |
-| Unknown or missing provider | Use provider registry names such as `openrouter`, `anthropic`, `openai`, `ollama`, `vllm`, `lm_studio`, or define a custom OpenAI-compatible provider key under `providers` and reference that exact key from the active preset. |
-| snake_case vs camelCase confusion | Both are accepted, but docs use camelCase because nanobot writes config with aliases such as `apiKey`, `modelPresets`, `intervalS`. |
+| Unknown or missing provider | Check the active `models.<model_id>.provider` value against the provider registry, then configure that exact provider under `providers`. |
+| snake_case vs camelCase confusion | Both are accepted for fields such as `modelId`/`model_id` and `apiKey`/`api_key`; docs use camelCase because nanobot writes config with camelCase aliases. |
 | Environment variable error | `${VAR_NAME}` references are resolved at startup. Set the variable before running nanobot. |
 | Edited config but behavior did not change | Restart `nanobot gateway`; long-running processes read config at startup. |
 
@@ -144,16 +144,16 @@ If you need a known-good snippet instead of diagnosis, use [`provider-cookbook.m
 | Symptom | Likely cause |
 |---|---|
 | 401, unauthorized, invalid API key | Key is missing, expired, pasted with whitespace, or under the wrong provider key. |
-| Model not found | The model ID belongs to a different provider or gateway. |
-| Provider cannot be inferred | Pin `modelPresets.<name>.provider` in the active preset instead of using `"auto"`. For legacy direct configs, pin `agents.defaults.provider`. |
+| Model not found | The upstream model value is not available from the provider named by `models.<model_id>.provider`, or the selected `model_id` is not configured. |
+| Model/provider mismatch | Resolve the selected `model_id` through `models`; its `ModelConfig.provider` must name the provider whose settings are under `providers`. Runtime does not infer a provider from an upstream model name or prefix. |
 | Local model connection refused | Ollama, vLLM, LM Studio, or another local server is not running, or `apiBase` points to the wrong port. |
 | Bedrock validation error | Check AWS region, credentials, model access, model ID, and whether the model supports Converse. |
-| OAuth provider fails | Run the matching login command: `openai-codex`, `xai-grok`, or `github-copilot`, normally with `--set-main`. |
+| OAuth provider fails | Run the matching login command: `openai-codex`, `xai-grok`, or `github-copilot`, normally with `--set-main`; verify the resulting `ModelConfig.provider` and `model_id` entry. |
 | Codex OAuth needs a proxy | Set `providers.openaiCodex.proxy` before running the login command. The proxy applies to login, token refresh, and Codex API requests. |
 | Codex login runs on a remote/headless machine | In the WebUI, open ChatGPT in your local browser; when the localhost callback page cannot load, copy the full `http://localhost:1455/auth/callback?...` URL from the address bar and paste it into the WebUI dialog. From the CLI, open the printed URL locally and paste the same callback URL back into the terminal. |
 | Codex login runs in Docker | Start the container with `docker run -it` so the OAuth flow has an interactive terminal. |
-| Codex says a model is not supported with a ChatGPT account | Use provider `openai_codex` with a Codex model such as `openai-codex/gpt-5.6-sol`. Do not use the direct-API `openai/...` prefix with Codex OAuth. |
-| Config says `providers.openai_codex` conflicts with the built-in provider | Under `providers`, keep only the canonical `openaiCodex` settings key and remove a duplicate `openai_codex` key. A model preset's `provider` value remains `openai_codex`. |
+| Codex says a model is not supported with a ChatGPT account | Configure a model whose `ModelConfig.provider` is `openai_codex` and whose upstream `model` value is supported by Codex. Do not rely on an `openai/...` or other model-name prefix to select the provider. |
+| Config says `providers.openai_codex` conflicts with the built-in provider | Under `providers`, keep only the canonical `openaiCodex` settings key and remove a duplicate `openai_codex` key. The model entry's `provider` remains the concrete provider ID `openai_codex`. |
 | xAI OAuth needs a proxy | Set `providers.xaiGrok.proxy` before login. It applies to OAuth discovery, token exchange/refresh, and Grok subscription requests. |
 | xAI login runs on a remote/headless machine | In the WebUI, finish sign-in in your local browser; if the loopback redirect cannot reach the server, copy the final URL from the address bar into the WebUI dialog. From the CLI, run `nanobot provider login xai-grok` interactively, open the printed URL elsewhere, and paste the final callback URL or authorization code when prompted. |
 | xAI returns 403 or subscription access denied | Confirm the signed-in account has an eligible X Premium / Grok subscription, then run `nanobot provider login xai-grok` again. This provider does not use an xAI API key or X Developer OAuth. |

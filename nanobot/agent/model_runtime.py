@@ -1,4 +1,4 @@
-"""Public resolution boundary for default and overridden LLM runtimes."""
+"""Public resolution boundary for canonical LLM runtimes."""
 
 from __future__ import annotations
 
@@ -7,168 +7,123 @@ from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
-from nanobot.agent import model_presets as preset_helpers
-from nanobot.config.schema import ModelPresetConfig
+from nanobot.model_domain import ModelConfig, get_model
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 
 ProviderSnapshotLoader = Callable[..., ProviderSnapshot]
+ModelCatalogLoader = Callable[[], Mapping[str, ModelConfig]]
 
 
 class ModelRuntimeResolver:
-    """Own selection-to-runtime resolution for Main, Subagent, and Dream."""
+    """Own canonical model_id -> runtime resolution for ordinary LLM runtimes."""
 
     def __init__(
         self,
         initial_runtime: LLMRuntime,
         *,
-        model_presets: Mapping[str, ModelPresetConfig] | None = None,
-        preset_catalog_loader: preset_helpers.PresetCatalogLoader | None = None,
+        models: Mapping[str, ModelConfig] | None = None,
+        model_catalog_loader: ModelCatalogLoader | None = None,
         provider_snapshot_loader: ProviderSnapshotLoader | None = None,
     ) -> None:
         self._runtime = initial_runtime
-        self._model_presets = dict(model_presets or {})
-        self._preset_catalog_loader = preset_catalog_loader
-        self._preset_catalog_refresh_required = False
+        self._models = dict(models or {})
+        self._model_catalog_loader = model_catalog_loader
+        self._catalog_refresh_required = False
         self._provider_snapshot_loader = provider_snapshot_loader
         self._refresh_required = False
-        self._resolved_presets: dict[str, LLMRuntime] = {}
-        self._default_selection_signature = preset_helpers.default_selection_signature(
-            initial_runtime.snapshot_signature,
-            initial_runtime.model_preset,
-        )
+        self._resolved_models: dict[str, LLMRuntime] = {}
 
     @property
     def runtime(self) -> LLMRuntime:
-        """Return the current immutable default without refreshing configuration."""
         return self._runtime
 
     @property
-    def model_presets(self) -> Mapping[str, ModelPresetConfig]:
-        self._refresh_preset_catalog()
+    def models(self) -> Mapping[str, ModelConfig]:
+        self._refresh_model_catalog()
         return MappingProxyType({
-            name: preset.model_copy(deep=True)
-            for name, preset in self._model_presets.items()
+            model_id: model.model_copy(deep=True)
+            for model_id, model in self._models.items()
         })
 
     @property
-    def model_preset(self) -> str | None:
-        return self._runtime.model_preset
+    def model_id(self) -> str | None:
+        return self._runtime.model_id
 
     @property
     def provider_signature(self) -> tuple[object, ...] | None:
         return self._runtime.snapshot_signature
 
     def current(self, *, refresh: bool = False) -> LLMRuntime:
-        """Return the selected runtime, optionally refreshing configured state."""
         if refresh:
             self.refresh()
         return self._runtime
 
     def admit(self) -> LLMRuntime:
-        """Resolve the immutable runtime for the next turn admission."""
         if self._refresh_required:
             self.refresh()
         return self._runtime
 
     def invalidate(self) -> None:
-        """Refresh configured runtime state lazily on the next resolution/admission."""
         self._refresh_required = True
-        self._preset_catalog_refresh_required = True
-        self._resolved_presets.clear()
+        self._catalog_refresh_required = True
+        self._resolved_models.clear()
 
-    def _refresh_preset_catalog(self) -> None:
-        if not self._preset_catalog_refresh_required:
+    def _refresh_model_catalog(self) -> None:
+        if not self._catalog_refresh_required:
             return
-        if self._preset_catalog_loader is not None:
-            self._model_presets = dict(self._preset_catalog_loader())
-        self._preset_catalog_refresh_required = False
+        if self._model_catalog_loader is not None:
+            self._models = dict(self._model_catalog_loader())
+        self._catalog_refresh_required = False
 
     def resolve_snapshot(self, snapshot: ProviderSnapshot) -> LLMRuntime:
-        """Apply the one pure ProviderSnapshot -> LLMRuntime conversion."""
         return runtime_from_provider_snapshot(snapshot)
 
     def adopt_snapshot(self, snapshot: ProviderSnapshot) -> LLMRuntime:
-        """Select a complete provider snapshot as the default for future turns."""
         runtime = self.resolve_snapshot(snapshot)
         self._runtime = runtime
-        self._default_selection_signature = preset_helpers.default_selection_signature(
-            runtime.snapshot_signature,
-            runtime.model_preset,
+        return runtime
+
+    def resolve_model(
+        self,
+        model_id: str,
+        *,
+        parent_runtime: LLMRuntime | None = None,
+    ) -> LLMRuntime:
+        """Resolve a configured canonical model ID without mutating selection."""
+        del parent_runtime
+        if not isinstance(cast(object, model_id), str) or not model_id.strip():
+            raise ValueError("model_id must be a non-empty string")
+        normalized = model_id.strip()
+        self._refresh_model_catalog()
+        get_model(self._models, normalized)
+        if self._provider_snapshot_loader is None:
+            raise RuntimeError("runtime selection requires a provider snapshot loader")
+        cached = self._resolved_models.get(normalized)
+        if cached is not None:
+            return cached
+        runtime = self.resolve_snapshot(
+            self._provider_snapshot_loader(model_id=normalized)
         )
+        self._resolved_models[normalized] = runtime
         return runtime
 
     def resolve_selection(
         self,
         parent_runtime: LLMRuntime,
         *,
-        model: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
     ) -> LLMRuntime:
-        """Resolve one inherited, direct-model, or preset selection without mutation."""
-        if model is not None and model_preset is not None:
-            raise ValueError("model and model_preset are mutually exclusive")
-        if model is None and model_preset is None:
+        if model_id is None:
             return parent_runtime
+        return self.resolve_model(model_id, parent_runtime=parent_runtime)
 
-        if model is not None:
-            if not isinstance(cast(object, model), str) or not model.strip():
-                raise ValueError("model must be a non-empty string")
-            if self._provider_snapshot_loader is None:
-                raise RuntimeError("runtime selection requires a provider snapshot loader")
-            preset = ModelPresetConfig(
-                model=model.strip(),
-                provider="auto",
-                max_tokens=parent_runtime.generation.max_tokens,
-                temperature=parent_runtime.generation.temperature,
-                reasoning_effort=parent_runtime.generation.reasoning_effort,
-                context_window_tokens=parent_runtime.context_window_tokens,
-                supports_vision=False,
-            )
-            snapshot = self._provider_snapshot_loader(
-                preset=preset,
-            )
-            return self.resolve_snapshot(snapshot)
-
-        self._refresh_preset_catalog()
-        normalized = preset_helpers.normalize_preset_name(model_preset, self._model_presets)
-        if self._provider_snapshot_loader is None:
-            raise RuntimeError("runtime selection requires a provider snapshot loader")
-        cache_key = normalized
-        cached = self._resolved_presets.get(cache_key)
-        if cached is not None:
-            return cached
-        snapshot = self._provider_snapshot_loader(
-            preset_name=normalized,
-        )
-        runtime = self.resolve_snapshot(snapshot)
-        self._resolved_presets[cache_key] = runtime
-        return runtime
-
-    def resolve_preset(
-        self,
-        name: str | None,
-        *,
-        parent_runtime: LLMRuntime | None = None,
-    ) -> LLMRuntime:
-        """Delegate named preset resolution to the canonical selection primitive."""
-        return self.resolve_selection(
-            parent_runtime or self._runtime,
-            model_preset=name,
-        )
-
-    def select_preset(self, name: str | None) -> LLMRuntime:
-        """Select a named preset as the default for future turns."""
-        self._runtime = self.resolve_selection(self._runtime, model_preset=name)
-        return self._runtime
-
-    def select_model(self, model: str) -> LLMRuntime:
-        """Select a direct model through canonical provider snapshot construction."""
-        self._runtime = self.resolve_selection(self._runtime, model=model)
+    def select_model(self, model_id: str) -> LLMRuntime:
+        """Select a canonical model ID as the default for future turns."""
+        self._runtime = self.resolve_model(model_id, parent_runtime=self._runtime)
         return self._runtime
 
     def select_context_window(self, context_window_tokens: int) -> LLMRuntime:
-        """Change the default context limit for future admissions."""
         raw_context_window = cast(object, context_window_tokens)
         if not isinstance(raw_context_window, int) or isinstance(raw_context_window, bool):
             raise TypeError("context_window_tokens must be an integer")
@@ -179,49 +134,27 @@ class ModelRuntimeResolver:
         return self._runtime
 
     def refresh(self) -> LLMRuntime | None:
-        """Refresh configured defaults and return the replacement when changed."""
+        """Refresh the selected canonical model from current config."""
         if self._provider_snapshot_loader is None:
             self._refresh_required = False
             return None
-
-        self._resolved_presets.clear()
-        snapshot = self._provider_snapshot_loader()
-        default_selection = preset_helpers.default_selection_signature(
-            snapshot.signature,
-            snapshot.model_preset,
-        )
-        active_preset = self._runtime.model_preset
-        if active_preset and self._default_selection_signature in (None, default_selection):
-            runtime = self.resolve_selection(
-                self._runtime,
-                model_preset=active_preset,
-            )
-        else:
-            runtime = self.resolve_snapshot(snapshot)
-
+        self._resolved_models.clear()
+        selected_id = self._runtime.model_id
+        snapshot = self._provider_snapshot_loader(model_id=selected_id)
+        runtime = self.resolve_snapshot(snapshot)
         unchanged = (
             runtime.snapshot_signature == self._runtime.snapshot_signature
-            and runtime.model_preset == self._runtime.model_preset
+            and runtime.model_id == self._runtime.model_id
             and runtime.supports_vision == self._runtime.supports_vision
         )
         self._refresh_required = False
-        self._default_selection_signature = default_selection
         if unchanged:
             return None
         self._runtime = runtime
         return runtime
 
-    def resolve_override(
-        self,
-        *,
-        model: str | None,
-        model_preset: str | None,
-    ) -> LLMRuntime | None:
-        """Resolve an SDK-style per-run override without mutating the default."""
-        if model is None and model_preset is None:
+    def resolve_override(self, *, model_id: str | None) -> LLMRuntime | None:
+        """Resolve an SDK-style per-run canonical model override."""
+        if model_id is None:
             return None
-        return self.resolve_selection(
-            self._runtime,
-            model=model,
-            model_preset=model_preset,
-        )
+        return self.resolve_model(model_id, parent_runtime=self._runtime)

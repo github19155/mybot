@@ -18,8 +18,7 @@ from nanobot.providers.image_generation import image_gen_provider_configs
 from nanobot.sdk.clients import MemoryClient, RuntimeClient, SessionClient
 from nanobot.sdk.runtime import (
     build_process_direct_kwargs,
-    ensure_single_model_selector,
-)
+    )
 from nanobot.sdk.streaming import RunStream, SDKStreamEmitter, SDKStreamingHook
 from nanobot.sdk.types import (
     STREAM_EVENT_REASONING_COMPLETED,
@@ -95,8 +94,7 @@ class Nanobot:
         config_path: str | Path | None = None,
         *,
         workspace: str | Path | None = None,
-        model: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
     ) -> Nanobot:
         """Create a Nanobot instance from a config file.
 
@@ -104,12 +102,10 @@ class Nanobot:
             config_path: Path to ``config.json``.  Defaults to
                 ``~/.nanobot/config.json``.
             workspace: Override the workspace directory from config.
-            model: Override the instance default model.
-            model_preset: Override the instance default model preset.
+            model_id: Override the instance default canonical model ID.
         """
         from nanobot.config.loader import load_config, resolve_config_env_vars
 
-        ensure_single_model_selector(model=model, model_preset=model_preset)
         resolved: Path | None = None
         if config_path is not None:
             resolved = Path(config_path).expanduser().resolve()
@@ -124,12 +120,10 @@ class Nanobot:
             config.agents.defaults.workspace = str(
                 Path(workspace).expanduser().resolve()
             )
-        if model is not None:
-            config.agents.defaults.model_preset = None
-            config.agents.defaults.model = model
-            config.agents.defaults.provider = "auto"
-        elif model_preset is not None:
-            config.agents.defaults.model_preset = model_preset
+        if model_id is not None:
+            from nanobot.model_domain import get_model
+            get_model(config.models, model_id)
+            config.agents.defaults.model_id = model_id
 
         tools = ToolRegistry()
         mcp_provider = MCPProvider.from_config(config, tools)
@@ -153,8 +147,7 @@ class Nanobot:
         ephemeral: bool = False,
         attributes: Mapping[str, Any] | None = None,
         hooks: list[AgentHook] | None = None,
-        model: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
     ) -> RunResult:
         """Run the agent once and return the result.
 
@@ -171,15 +164,11 @@ class Nanobot:
                 providers and turn-hook factories. Attributes are kept separate
                 from nanobot's trusted internal message metadata.
             hooks: Optional lifecycle hooks for this run.
-            model: Override the model for this run only.
-            model_preset: Override the model preset for this run only.
+            model_id: Override the canonical model ID for this run only.
         """
         capture = SDKCaptureHook()
         per_run_hooks = [capture, *(hooks or [])]
-        runtime = self._loop.runtime_resolver.resolve_override(
-            model=model,
-            model_preset=model_preset,
-        )
+        runtime = self._loop.runtime_resolver.resolve_override(model_id=model_id)
         kwargs = build_process_direct_kwargs(
             session_key=session_key,
             channel=channel,
@@ -213,14 +202,10 @@ class Nanobot:
         ephemeral: bool = False,
         attributes: Mapping[str, Any] | None = None,
         hooks: list[AgentHook] | None = None,
-        model: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
     ) -> RunStream:
         """Start a streamed run and return a handle for events and final result."""
-        override_runtime = self._loop.runtime_resolver.resolve_override(
-            model=model,
-            model_preset=model_preset,
-        )
+        override_runtime = self._loop.runtime_resolver.resolve_override(model_id=model_id)
         queue: asyncio.Queue[StreamEvent | object] = asyncio.Queue(maxsize=256)
         emitter = SDKStreamEmitter(queue)
         stream_hook = SDKStreamingHook(emitter)
@@ -243,7 +228,7 @@ class Nanobot:
             if runtime is not None:
                 metadata.update({
                     "model": runtime.model,
-                    "model_preset": runtime.model_preset,
+                    "model_id": runtime.model_id,
                 })
             await emitter.emit(StreamEvent(
                 type=STREAM_EVENT_RUN_STARTED,
@@ -317,8 +302,7 @@ class Nanobot:
         ephemeral: bool = False,
         attributes: Mapping[str, Any] | None = None,
         hooks: list[AgentHook] | None = None,
-        model: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream events for one agent turn."""
         run = await self.run_streamed(
@@ -331,8 +315,7 @@ class Nanobot:
             ephemeral=ephemeral,
             attributes=attributes,
             hooks=hooks,
-            model=model,
-            model_preset=model_preset,
+            model_id=model_id,
         )
         try:
             async for event in run.stream_events():

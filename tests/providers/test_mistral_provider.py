@@ -36,9 +36,10 @@ def test_mistral_provider_in_registry() -> None:
     assert mistral.default_api_base == "https://api.mistral.ai/v1"
 
 
-def test_mistral_keyword_match_covers_model_families() -> None:
-    """Codestral, Devstral, Ministral, Magistral models route to the Mistral spec."""
+def test_mistral_model_families_resolve_to_mistral_provider() -> None:
+    """Codestral, Devstral, Ministral, Magistral models resolve via the model route."""
     from nanobot.config.schema import Config
+    from nanobot.providers.factory import make_provider
 
     for model in (
         "mistral-large-latest",
@@ -49,9 +50,18 @@ def test_mistral_keyword_match_covers_model_families() -> None:
     ):
         config = Config.model_validate({
             "providers": {"mistral": {"apiKey": "test-key"}},
-            "agents": {"defaults": {"model": model}},
+            "models": {
+                "main": {
+                    "displayName": "mistral",
+                    "provider": "mistral",
+                    "model": model,
+                    "capabilities": {"text": True},
+                }
+            },
+            "agents": {"defaults": {"modelId": "main"}},
         })
-        assert config.get_provider_name(model) == "mistral", model
+        provider = make_provider(config)
+        assert provider.provider_name == "mistral", model
 
 
 def test_reasoning_effort_low_remaps_to_none_omitted() -> None:

@@ -17,6 +17,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.queue import MessageBus
 from nanobot.config.loader import load_config, save_config
 from nanobot.config.schema import ToolsConfig
+from nanobot.model_domain import ModelCapabilities, ModelConfig
 
 
 def _runtime_state(tmp_path):
@@ -24,11 +25,21 @@ def _runtime_state(tmp_path):
         workspace=tmp_path,
         tools_config=ToolsConfig(),
         _image_generation_provider_configs={},
+        _models={},
+    )
+
+
+def _image_model(upstream: str) -> ModelConfig:
+    return ModelConfig(
+        display_name="Image",
+        provider="openrouter",
+        model=upstream,
+        capabilities=ModelCapabilities(image_generation=True),
     )
 
 
 @pytest.mark.asyncio
-async def test_image_generation_reload_replaces_and_removes_live_tool(
+async def test_image_generation_reload_re_resolves_canonical_model_and_credentials(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -36,9 +47,9 @@ async def test_image_generation_reload_replaces_and_removes_live_tool(
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
     config = load_config()
     config.providers.openrouter.api_key = "first-key"
+    config.models["image-gen"] = _image_model("openai/first-image-model")
     config.tools.image_generation.enabled = True
-    config.tools.image_generation.provider = "openrouter"
-    config.tools.image_generation.model = "openai/first-image-model"
+    config.tools.image_generation.model_id = "image-gen"
     save_config(config)
 
     state = _runtime_state(tmp_path)
@@ -47,13 +58,15 @@ async def test_image_generation_reload_replaces_and_removes_live_tool(
 
     first_tool = registry.get("generate_image")
     assert result["requires_restart"] is False
+    assert result["model_id"] == "image-gen"
     assert isinstance(first_tool, ImageGenerationTool)
-    assert first_tool.config.model == "openai/first-image-model"
+    assert first_tool.config.model_id == "image-gen"
+    assert first_tool.models["image-gen"].model == "openai/first-image-model"
     assert first_tool.provider_configs["openrouter"].api_key == "first-key"
 
     config = load_config()
     config.providers.openrouter.api_key = "second-key"
-    config.tools.image_generation.model = "openai/second-image-model"
+    config.models["image-gen"] = _image_model("openai/second-image-model")
     save_config(config)
 
     result = await reload_image_generation_tool(state, registry)
@@ -61,9 +74,11 @@ async def test_image_generation_reload_replaces_and_removes_live_tool(
     assert result["requires_restart"] is False
     assert isinstance(second_tool, ImageGenerationTool)
     assert second_tool is not first_tool
-    assert second_tool.config.model == "openai/second-image-model"
+    assert second_tool.config.model_id == "image-gen"
+    assert second_tool.models["image-gen"].model == "openai/second-image-model"
     assert second_tool.provider_configs["openrouter"].api_key == "second-key"
-    assert state.tools_config.image_generation.model == "openai/second-image-model"
+    assert state.tools_config.image_generation.model_id == "image-gen"
+    assert state._models["image-gen"].model == "openai/second-image-model"
 
     config = load_config()
     config.tools.image_generation.enabled = False
@@ -83,7 +98,9 @@ async def test_image_generation_reload_reaches_agent_runtime_control(
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
     config = load_config()
     config.providers.openrouter.api_key = "image-key"
+    config.models["image-gen"] = _image_model("openai/gpt-image")
     config.tools.image_generation.enabled = True
+    config.tools.image_generation.model_id = "image-gen"
     save_config(config)
 
     bus = MessageBus()
@@ -100,4 +117,5 @@ async def test_image_generation_reload_reaches_agent_runtime_control(
 
     assert result["ok"] is True
     assert result["requires_restart"] is False
+    assert result["model_id"] == "image-gen"
     assert registry.has("generate_image")

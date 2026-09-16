@@ -1,4 +1,4 @@
-"""Instance-scoped model/provider administration and Dream selection orchestration."""
+"""Instance-scoped canonical model/provider administration."""
 
 from __future__ import annotations
 
@@ -6,42 +6,36 @@ import asyncio
 import json
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
-from nanobot.config.schema import Config, ModelPresetConfig, ProviderConfig
+from nanobot.config.schema import Config, ProviderConfig
 from nanobot.config.store import ConfigStore
 from nanobot.model_fleet import get_model_fleet, offering_from_config
 from nanobot.model_settings import (
+    ModelInUseError,
     ModelSettingsError,
-    create_model_configuration,
+    create_model,
     create_provider_settings,
-    delete_model_configuration,
+    delete_model,
     management_catalog,
-    update_model_configuration,
+    model_catalog_entry,
+    update_model,
     update_provider_settings,
     update_subagent_roles,
 )
 
-if TYPE_CHECKING:
-    from nanobot.agent.model_runtime import ModelRuntimeResolver
-    from nanobot.utils.llm_runtime import LLMRuntime
-
-_DREAM_MIN_CONTEXT_TOKENS = 16_000
-
 
 class ModelManagement:
-    """Model/provider administration plus Main-facing fleet discovery."""
+    """Canonical model/provider control plane shared by Main and WebUI."""
 
     def __init__(
         self,
         config: Config,
         *,
-        runtime_resolver: "ModelRuntimeResolver | None" = None,
         invalidate: Callable[[], None] | None = None,
     ) -> None:
         self.config = config
         self._store = ConfigStore(config.source_path) if config.source_path is not None else None
-        self._runtime_resolver = runtime_resolver
         self._invalidate = invalidate
         self._lock = threading.RLock()
 
@@ -49,86 +43,26 @@ class ModelManagement:
         return self._store.load() if self._store is not None else self.config
 
     def config_snapshot(self) -> Config:
-        """Return the current validated configuration without exposing mutable storage."""
+        """Return current validated configuration without exposing mutable storage."""
         with self._lock:
             return self._load().model_copy(deep=True)
 
-    async def resolve_dream_runtime(self, workload: str) -> "LLMRuntime":
-        """Choose a Dream route, then delegate selection-to-runtime resolution."""
-        with self._lock:
-            config = self._load()
-            dream = config.agents.defaults.dream
-            selected = dream.model_override
-            pool = dream.pool_for(workload)
-
-        if selected is None:
-            recommendation = await self.fleet_recommend(
-                pool=pool,
-                task_type="background",
-                min_context_tokens=_DREAM_MIN_CONTEXT_TOKENS,
-            )
-            if recommendation.get("status") == "ok":
-                recommended = recommendation.get("recommended")
-                if isinstance(recommended, dict):
-                    value = cast(dict[str, object], recommended).get("preset")
-                    if isinstance(value, str) and value:
-                        selected = value
-
-        if selected is None:
-            with self._lock:
-                selected = self._load().agents.defaults.dream.fallback_preset
-        if selected is None:
-            raise RuntimeError(
-                "Dream has no eligible model route; configure a Dream pool, "
-                "model_override, or fallback_preset"
-            )
-        if self._runtime_resolver is None:
-            raise RuntimeError("Dream runtime selection requires ModelRuntimeResolver")
-        return self._runtime_resolver.resolve_selection(
-            self._runtime_resolver.runtime,
-            model_preset=selected,
-        )
-
     @staticmethod
     def _catalog(config: Config) -> dict[str, Any]:
-        payload = management_catalog(config)
-        fleet_presets = {
-            name: {
-                "offering_id": preset.offering_id,
-                "pools": list(preset.fleet_pools),
-                "input_cost_per_million": preset.input_cost_per_million,
-                "output_cost_per_million": preset.output_cost_per_million,
-                "cached_input_cost_per_million": preset.cached_input_cost_per_million,
-                "max_concurrent_requests": preset.max_concurrent_requests,
-            }
-            for name, preset in config.model_presets.items()
-        }
-        return {
-            **payload,
-            "fleet_profiles": fleet_presets,
-            "dream": config.agents.defaults.dream.model_dump(),
-        }
+        return management_catalog(config)
 
     @staticmethod
-    def _sync_fleet_catalog(config: Config):
-        """Bind every configured selectable route without making network calls."""
+    def _canonical_offering(config: Config, model_id: str):
+        """Delegate canonical ModelConfig -> Fleet offering construction."""
+        return offering_from_config(config, model_id=model_id)
+
+    @classmethod
+    def _sync_fleet_catalog(cls, config: Config):
         fleet = get_model_fleet(config)
-        entries: list[tuple[str | None, ModelPresetConfig]] = [
-            ("default", config.resolve_default_preset()),
-            *config.model_presets.items(),
-        ]
-        for name, preset in entries:
-            provider_name = config.get_provider_name(preset.model, preset=preset)
-            if not provider_name:
-                continue
-            fleet.bind_offering(
-                offering_from_config(
-                    config,
-                    preset=preset,
-                    preset_name=name,
-                    provider_name=provider_name,
-                )
-            )
+        fleet.sync_offerings([
+            cls._canonical_offering(config, model_id)
+            for model_id in config.models
+        ])
         return fleet
 
     async def fleet_status(self) -> dict[str, object]:
@@ -155,7 +89,7 @@ class ModelManagement:
         self,
         *,
         offering_id: str | None = None,
-        model_preset: str | None = None,
+        model_id: str | None = None,
         dimension: str = "general",
         outcome: float,
         weight: float = 1.0,
@@ -166,20 +100,13 @@ class ModelManagement:
         fleet = self._sync_fleet_catalog(config)
         resolved_id = (offering_id or "").strip()
         if not resolved_id:
-            if not model_preset:
-                return {"status": "error", "message": "offering_id or model_preset is required"}
-            if model_preset != "default" and model_preset not in config.model_presets:
-                return {"status": "error", "message": "Unknown model preset"}
-            preset = config.resolve_preset(model_preset)
-            provider_name = config.get_provider_name(preset.model, preset=preset)
-            if not provider_name:
-                return {"status": "error", "message": "Preset provider cannot be resolved"}
-            resolved_id = offering_from_config(
-                config,
-                preset=preset,
-                preset_name=model_preset,
-                provider_name=provider_name,
-            ).offering_id
+            selected = (model_id or "").strip()
+            if not selected:
+                return {"status": "error", "message": "offering_id or model_id is required"}
+            model = config.models.get(selected)
+            if model is None:
+                return {"status": "error", "message": "unknown model"}
+            resolved_id = model.offering_id or self._canonical_offering(config, selected).offering_id
         try:
             fleet.record_quality(
                 resolved_id,
@@ -206,31 +133,12 @@ class ModelManagement:
                 return value
         return None
 
-    @staticmethod
-    def _update_fleet_profile(config: Config, params: dict[str, Any]) -> None:
-        name = str(params.get("name") or "").strip()
-        if not name or name == "default" or name not in config.model_presets:
-            raise ModelSettingsError("Unknown named model preset")
-        current = config.model_presets[name]
-        fields = {
-            "offering_id",
-            "fleet_pools",
-            "input_cost_per_million",
-            "output_cost_per_million",
-            "cached_input_cost_per_million",
-            "max_concurrent_requests",
-        }
-        updates = {key: params[key] for key in fields if key in params}
-        config.model_presets[name] = ModelPresetConfig.model_validate(
-            {**current.model_dump(), **updates}
-        )
-
     @classmethod
     def _update_fleet_provider(cls, config: Config, params: dict[str, Any]) -> None:
         name = str(params.get("provider") or "").strip()
         current = cls._provider_config(config, name)
         if current is None:
-            raise ModelSettingsError("Unknown provider")
+            raise ModelSettingsError("unknown provider")
         updates = {
             key: params[key]
             for key in ("max_concurrent_requests", "rate_limit_scope")
@@ -250,122 +158,143 @@ class ModelManagement:
                 None,
             )
             if matched is None:
-                raise ModelSettingsError("Unknown provider")
+                raise ModelSettingsError("unknown provider")
             config.providers.model_extra[matched] = validated
 
     @staticmethod
-    def _update_dream(config: Config, params: dict[str, Any]) -> None:
-        """Update only Main-adjustable Dream policy fields."""
-        fields = {
-            "enabled",
-            "cooldown_minutes",
-            "idle_minutes",
-            "pressure_entries",
-            "max_defer_minutes",
-            "max_entries_per_run",
-            "max_runs_per_day",
-            "retention_days",
-            "poll_interval_seconds",
-            "model_override",
-            "fallback_preset",
-            "pools",
-        }
-        unknown = set(params) - fields
+    def _model_values(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        model_id = str(params.get("model_id") or "").strip()
+        values = {key: value for key, value in params.items() if key != "model_id"}
+        return model_id, values
+
+    @staticmethod
+    def _fleet_model_values(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        model_id = str(params.get("model_id") or "").strip()
+        allowed = {"offering_id", "pools", "pricing", "max_concurrent_requests"}
+        unknown = set(params) - allowed - {"model_id"}
         if unknown:
-            raise ModelSettingsError(f"Unknown Dream setting: {sorted(unknown)[0]}")
-        payload = {**config.agents.defaults.dream.model_dump(), **params}
-        config.agents.defaults.dream = type(config.agents.defaults.dream).model_validate(payload)
+            raise ModelSettingsError(f"unknown Fleet model field: {sorted(unknown)[0]}")
+        values = {key: params[key] for key in allowed if key in params}
+        return model_id, values
+
+    @staticmethod
+    def _query(params: dict[str, Any]) -> dict[str, list[str]]:
+        return {
+            key: [value if isinstance(value, str) else json.dumps(value)]
+            for key, value in params.items()
+        }
+
+    def _commit_mutation(self, mutation: Callable[[Config], dict[str, Any]]) -> dict[str, Any]:
+        result_holder: dict[str, Any] = {}
+
+        def apply(config: Config) -> Config:
+            result_holder.update(mutation(config))
+            return config
+
+        updated = (
+            self._store.update(apply)
+            if self._store is not None
+            else apply(self.config.model_copy(deep=True))
+        )
+        self.config.models = updated.models
+        self.config.providers = updated.providers
+        self.config.subagent_roles = updated.subagent_roles
+        self.config.model_fleet = updated.model_fleet
+        return result_holder
 
     def _execute(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            config = self._load()
             if action == "list":
-                return self._catalog(self._load())
-            operations = {
-                "roles_update": update_subagent_roles,
-                "model_create": create_model_configuration,
-                "model_update": update_model_configuration,
-                "model_delete": delete_model_configuration,
-                "provider_create": create_provider_settings,
-                "provider_update": update_provider_settings,
-            }
-            operation = operations.get(action)
-            internal_actions = {"fleet_profile_update", "fleet_provider_update", "dream_update"}
-            if operation is None and action not in internal_actions:
-                return {"status": "error", "message": "Unknown model management action"}
-            query = {
-                key: [value if isinstance(value, str) else json.dumps(value)]
-                for key, value in params.items()
-            }
+                return self._catalog(config)
+            if action == "model_get":
+                model_id = str(params.get("model_id") or "").strip()
+                return {"status": "ok", "model": model_catalog_entry(config, model_id)}
 
-            def mutate(config: Config) -> Config:
-                if action == "fleet_profile_update":
-                    self._update_fleet_profile(config, params)
-                elif action == "fleet_provider_update":
-                    self._update_fleet_provider(config, params)
-                elif action == "dream_update":
-                    self._update_dream(config, params)
-                elif action in {"model_create", "model_update"}:
-                    selected = config.agents.defaults.model_preset
-                    cast(Any, operation)(config, query)
-                    if action == "model_create":
-                        config.agents.defaults.model_preset = selected
-                else:
-                    cast(Any, operation)(config, query)
-                return config
+            def mutate(target: Config) -> dict[str, Any]:
+                if action == "model_create":
+                    model_id, values = self._model_values(params)
+                    create_model(target, model_id=model_id, values=values)
+                    return {"status": "ok", "model": model_catalog_entry(target, model_id)}
+                if action == "model_update":
+                    model_id, changes = self._model_values(params)
+                    update_model(target, model_id=model_id, changes=changes)
+                    return {"status": "ok", "model": model_catalog_entry(target, model_id)}
+                if action == "model_delete":
+                    model_id = str(params.get("model_id") or "").strip()
+                    delete_model(target, model_id=model_id)
+                    return {"status": "ok", "model_id": model_id}
+                if action == "provider_create":
+                    provider = create_provider_settings(target, self._query(params))
+                    return {"status": "ok", "provider": provider}
+                if action == "provider_update":
+                    changed, restart_required = update_provider_settings(target, self._query(params))
+                    return {
+                        "status": "ok",
+                        "provider": str(params.get("provider") or ""),
+                        "changed": changed,
+                        "restart_required": restart_required,
+                    }
+                if action == "roles_update":
+                    update_subagent_roles(target, self._query(params))
+                    return {"status": "ok", "subagent_roles": self._catalog(target)["subagent_roles"]}
+                if action == "fleet_model_update":
+                    model_id, changes = self._fleet_model_values(params)
+                    update_model(target, model_id=model_id, changes=changes)
+                    return {"status": "ok", "model": model_catalog_entry(target, model_id)}
+                if action == "fleet_provider_update":
+                    self._update_fleet_provider(target, params)
+                    return {"status": "ok", "provider": str(params.get("provider") or "")}
+                raise ModelSettingsError("unknown model management action")
 
-            updated = (
-                self._store.update(mutate)
-                if self._store is not None
-                else mutate(self.config.model_copy(deep=True))
-            )
-            self.config.model_presets = updated.model_presets
-            self.config.providers = updated.providers
-            self.config.subagent_roles = updated.subagent_roles
-            self.config.model_fleet = updated.model_fleet
-            self.config.agents.defaults.model_preset = updated.agents.defaults.model_preset
-            self.config.agents.defaults.dream = updated.agents.defaults.dream
-            return self._catalog(updated)
+            return self._commit_mutation(mutate)
 
     async def execute(self, action: str, **params: Any) -> dict[str, Any]:
         if action == "fleet_status":
-            return await self.fleet_status()
+            try:
+                return cast(dict[str, Any], await self.fleet_status())
+            except ModelSettingsError as exc:
+                return {"status": "error", "message": exc.message}
         if action == "fleet_recommend":
-            return await self.fleet_recommend(
-                pool=params.get("pool"),
-                task_type=str(params.get("task_type") or "general"),
-                requires_vision=bool(params.get("requires_vision", False)),
-                min_context_tokens=params.get("min_context_tokens"),
-            )
+            try:
+                return cast(dict[str, Any], await self.fleet_recommend(
+                    pool=params.get("pool"),
+                    task_type=str(params.get("task_type") or "general"),
+                    requires_vision=bool(params.get("requires_vision", False)),
+                    min_context_tokens=params.get("min_context_tokens"),
+                ))
+            except ModelSettingsError as exc:
+                return {"status": "error", "message": exc.message}
         if action == "fleet_feedback":
             try:
                 outcome = float(params.get("outcome"))
                 weight = float(params.get("weight", 1.0))
             except (TypeError, ValueError):
                 return {"status": "error", "message": "outcome and weight must be numeric"}
-            return await self.fleet_feedback(
-                offering_id=params.get("offering_id"),
-                model_preset=params.get("model_preset"),
-                dimension=str(params.get("dimension") or "general"),
-                outcome=outcome,
-                weight=weight,
-                evidence=params.get("evidence"),
-            )
+            try:
+                return cast(dict[str, Any], await self.fleet_feedback(
+                    offering_id=params.get("offering_id"),
+                    model_id=params.get("model_id"),
+                    dimension=str(params.get("dimension") or "general"),
+                    outcome=outcome,
+                    weight=weight,
+                    evidence=params.get("evidence"),
+                ))
+            except ModelSettingsError as exc:
+                return {"status": "error", "message": exc.message}
         try:
             result = await asyncio.to_thread(self._execute, action, params)
+        except ModelInUseError as exc:
+            return {"status": "error", "message": exc.message, "usages": list(exc.usages)}
         except ModelSettingsError as exc:
-            message = exc.message if action in {
-                "roles_update",
-                "model_delete",
-                "fleet_profile_update",
-                "fleet_provider_update",
-                "dream_update",
-            } else "Invalid model/provider settings; check the action fields and provider configuration"
-            return {"status": "error", "message": message}
+            return {"status": "error", "message": exc.message}
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
         except Exception:
             return {
                 "status": "error",
-                "message": "Could not update model settings; check configuration and instance file access",
+                "message": "could not update model settings; check configuration and instance file access",
             }
-        if action != "list" and result["status"] == "ok" and self._invalidate is not None:
+        if action not in {"list", "model_get"} and result.get("status") == "ok" and self._invalidate is not None:
             self._invalidate()
         return result

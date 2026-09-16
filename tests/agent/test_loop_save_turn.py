@@ -132,7 +132,7 @@ def _make_full_loop(tmp_path: Path) -> AgentLoop:
     return loop
 
 
-def test_agent_loop_llm_runtime_reflects_current_provider_and_model(tmp_path: Path) -> None:
+def test_agent_loop_llm_runtime_reflects_current_provider_model_and_model_id(tmp_path: Path) -> None:
     loop = _make_full_loop(tmp_path)
     runtime = loop.llm_runtime()
 
@@ -147,6 +147,7 @@ def test_agent_loop_llm_runtime_reflects_current_provider_and_model(tmp_path: Pa
     )
     loop.runtime_resolver.adopt_snapshot(ProviderSnapshot(
         provider=next_provider,
+        model_id="next",
         model="next-model",
         context_window_tokens=runtime.context_window_tokens,
         signature=("next-model",),
@@ -155,6 +156,7 @@ def test_agent_loop_llm_runtime_reflects_current_provider_and_model(tmp_path: Pa
 
     assert runtime.provider is next_provider
     assert runtime.model == "next-model"
+    assert runtime.model_id == "next"
 
 
 def test_persist_cron_turn_uses_distinct_history_marker(tmp_path: Path) -> None:
@@ -390,7 +392,7 @@ async def test_generate_webui_title_ignores_command_only_sessions(tmp_path: Path
     session.add_message("user", "/model deep", _command=True)
     session.add_message(
         "assistant",
-        "Switched model preset to `deep`.\n- Model: `deepseek-v4-pro`",
+        "Switched model to `deep`.\n- Upstream model: `deepseek-v4-pro`",
         _command=True,
     )
     loop.sessions.save(session)

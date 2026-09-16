@@ -61,12 +61,22 @@ def test_bedrock_provider_is_registered_and_matches_without_api_key() -> None:
     assert hasattr(ProvidersConfig(), "bedrock")
 
     cfg = Config.model_validate({
-        "agents": {"defaults": {"model": "bedrock/global.anthropic.claude-opus-4-7"}},
+        "models": {
+            "main": {
+                "displayName": "bedrock",
+                "provider": "bedrock",
+                "model": "bedrock/global.anthropic.claude-opus-4-7",
+                "capabilities": {"text": True},
+            }
+        },
+        "agents": {"defaults": {"modelId": "main"}},
         "providers": {"bedrock": {"region": "us-east-1"}},
     })
 
-    assert cfg.get_provider_name() == "bedrock"
-    assert cfg.get_provider().region == "us-east-1"
+    from nanobot.providers.factory import make_provider
+
+    assert cfg.models["main"].provider == "bedrock"
+    assert make_provider(cfg).region == "us-east-1"
 
 
 def test_opus_47_uses_adaptive_thinking_and_omits_temperature() -> None:

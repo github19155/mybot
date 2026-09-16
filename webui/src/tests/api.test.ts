@@ -51,6 +51,7 @@ import {
   updateAutomation,
   updateSidebarState,
   updateImageGenerationSettings,
+  updateTranscriptionSettings,
   updateModelConfiguration,
   updateMcpServerTools,
   updateNetworkSafetySettings,
@@ -402,10 +403,7 @@ describe("webui API helpers", () => {
 
   it("serializes settings updates as a narrow mutation payload", async () => {
     await updateSettings(mutationTransport, {
-      modelPreset: "default",
-      model: "openrouter/test",
-      provider: "openrouter",
-      contextWindowTokens: 262144,
+      modelId: "fast",
       timezone: "Asia/Shanghai",
       toolHintMaxLength: 120,
     });
@@ -413,10 +411,7 @@ describe("webui API helpers", () => {
     expect(requestMutation).toHaveBeenCalledWith(
       "settings.agent.update",
       {
-        model_preset: "default",
-        model: "openrouter/test",
-        provider: "openrouter",
-        context_window_tokens: 262144,
+        model_id: "fast",
         timezone: "Asia/Shanghai",
         tool_hint_max_length: 120,
       },
@@ -437,37 +432,45 @@ describe("webui API helpers", () => {
 
   it("serializes image analysis model selection", async () => {
     await updateSettings(mutationTransport, {
-      imageAnalysisModelPreset: "vision",
+      imageAnalysisModelId: "vision",
     });
 
     expect(requestMutation).toHaveBeenCalledWith(
       "settings.agent.update",
-      { image_analysis_model_preset: "vision" },
+      { image_analysis_model_id: "vision" },
       20_000,
     );
   });
 
   it("serializes model configuration creation", async () => {
     await createModelConfiguration(mutationTransport, {
-      name: "Fast writing",
+      modelId: "fast",
+      displayName: "Fast writing",
       provider: "openai",
       model: "openai/gpt-4.1-mini",
       maxTokens: 4096,
       contextWindowTokens: 128000,
       temperature: 0.4,
       reasoningEffort: "high",
+      supportsVision: true,
     });
 
     expect(requestMutation).toHaveBeenCalledWith(
       "settings.model_configuration.create",
       {
-        name: "Fast writing",
+        model_id: "fast",
+        display_name: "Fast writing",
         provider: "openai",
         model: "openai/gpt-4.1-mini",
-        max_tokens: 4096,
         context_window_tokens: 128000,
-        temperature: 0.4,
-        reasoning_effort: "high",
+        generation_defaults: {
+          max_tokens: 4096,
+          temperature: 0.4,
+          reasoning_effort: "high",
+        },
+        capabilities: {
+          vision: true,
+        },
       },
       20_000,
     );
@@ -475,11 +478,10 @@ describe("webui API helpers", () => {
 
   it("serializes model configuration updates", async () => {
     await updateModelConfiguration(mutationTransport, {
-      name: "codex",
-      newName: "Codex",
+      modelId: "codex",
+      displayName: "Codex",
       provider: "openai_codex",
       model: "openai-codex/gpt-5.5",
-      maxTokens: 8192,
       contextWindowTokens: 65536,
       temperature: 0,
       reasoningEffort: null,
@@ -488,24 +490,25 @@ describe("webui API helpers", () => {
     expect(requestMutation).toHaveBeenCalledWith(
       "settings.model_configuration.update",
       {
-        name: "codex",
-        new_name: "Codex",
+        model_id: "codex",
+        display_name: "Codex",
         provider: "openai_codex",
         model: "openai-codex/gpt-5.5",
-        max_tokens: 8192,
         context_window_tokens: 65536,
-        temperature: 0,
-        reasoning_effort: "",
+        generation_defaults: {
+          temperature: 0,
+          reasoning_effort: "",
+        },
       },
       20_000,
     );
   });
 
-  it("serializes model preset deletion", async () => {
+  it("serializes model deletion by model_id", async () => {
     await deleteModelConfiguration(mutationTransport, "spare");
     expect(requestMutation).toHaveBeenCalledWith(
       "settings.model_configuration.delete",
-      { name: "spare" },
+      { model_id: "spare" },
       20_000,
     );
   });
@@ -736,8 +739,7 @@ describe("webui API helpers", () => {
   it("serializes image generation settings updates", async () => {
     await updateImageGenerationSettings(mutationTransport, {
       enabled: true,
-      provider: "openrouter",
-      model: "openai/gpt-5.4-image-2",
+      modelId: "image-model",
       defaultAspectRatio: "16:9",
       defaultImageSize: "2K",
       maxImagesPerTurn: 3,
@@ -747,11 +749,32 @@ describe("webui API helpers", () => {
       "settings.image_generation.update",
       {
         enabled: true,
-        provider: "openrouter",
-        model: "openai/gpt-5.4-image-2",
+        model_id: "image-model",
         default_aspect_ratio: "16:9",
         default_image_size: "2K",
         max_images_per_turn: 3,
+      },
+      20_000,
+    );
+  });
+
+  it("serializes transcription settings updates", async () => {
+    await updateTranscriptionSettings(mutationTransport, {
+      enabled: true,
+      modelId: "transcription-model",
+      language: "en",
+      maxDurationSec: 180,
+      maxUploadMb: 25,
+    });
+
+    expect(requestMutation).toHaveBeenCalledWith(
+      "settings.transcription.update",
+      {
+        enabled: true,
+        model_id: "transcription-model",
+        language: "en",
+        max_duration_sec: 180,
+        max_upload_mb: 25,
       },
       20_000,
     );
@@ -1050,7 +1073,7 @@ describe("webui API helpers", () => {
             created_at: "2026-05-01T10:00:00",
             updated_at: "2026-05-01T10:01:00",
             title: "优化 WebUI 标题",
-            model_preset: "fast",
+            model_id: "fast",
             run_started_at: 1_700_000_000,
             handle: {
               id: "handle_0123456789abcdef0123456789abcdef",
@@ -1066,7 +1089,7 @@ describe("webui API helpers", () => {
         key: "websocket:chat-1",
         title: "优化 WebUI 标题",
         preview: "",
-        modelPreset: "fast",
+        modelId: "fast",
         runStartedAt: 1_700_000_000,
         handle: {
           id: "handle_0123456789abcdef0123456789abcdef",

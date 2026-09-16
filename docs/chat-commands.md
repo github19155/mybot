@@ -8,8 +8,8 @@ These commands work inside chat channels and interactive agent sessions:
 | `/stop` | Stop the current task |
 | `/restart` | Restart the bot |
 | `/status` | Show bot status |
-| `/model` | Show the current model and available model presets |
-| `/model <preset>` | Switch and persist the model preset for the current session |
+| `/model` | Show the current model ID and available configured model IDs |
+| `/model <model_id>` | Switch and persist the canonical model ID for the current session |
 | `/dream` | Run Dream memory consolidation now |
 | `/dream-log` | Show the latest Dream memory change |
 | `/dream-log <sha>` | Show a specific Dream memory change |
@@ -39,25 +39,24 @@ To see who's waiting, use `/pairing`. To remove someone later, use `/pairing rev
 
 See [Configuration: Pairing](./configuration.md#pairing) for the full setup guide.
 
-## Model Presets
+## Model Selection
 
-Use `/model` to inspect the current runtime model:
+Use `/model` to inspect the current runtime model ID and configured choices:
 
 ```text
 /model
 ```
 
-The response shows the current session's model and preset, plus the available preset names. Each key under the top-level `modelPresets` config is the preset's canonical name everywhere nanobot displays or references it. `default` is always available and represents the model settings from direct `agents.defaults.*` fields.
+The response shows the current session's canonical `model_id` and the available model IDs from `Config.models` (the root `models` mapping). Each key under `models` is a canonical ID; the entry supplies its display name, concrete provider, and upstream model.
 
-To switch presets for future turns:
+To switch the model for future turns, pass a configured canonical ID:
 
 ```text
-/model fast
-/model deep
-/model default
+/model main
+/model coder_v2
 ```
 
-Preset names come from the top-level `modelPresets` config. Switching affects only the current session and persists the selection in that session, so later turns keep using it across process restarts. It does not rewrite `config.json`, does not change other sessions, and does not alter an in-progress turn's captured model. Sessions without a saved selection follow `agents.defaults.modelPreset` (or the implicit `default` preset when it is omitted). See [Configuration: Model presets](./configuration.md#model-presets) for setup details.
+Switching affects only the current session and persists the selection in that session, so later turns keep using it across process restarts. It does not rewrite `config.json`, does not change other sessions, and does not alter an in-progress turn's captured model. Sessions without a saved selection follow `agents.defaults.model_id`. Provider and upstream model values come from the selected `models` entry; they are not selectors. See [Model Domain](./model-domain.md) for the registry shape.
 
 ## Local triggers
 

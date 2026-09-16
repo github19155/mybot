@@ -18,7 +18,7 @@ function makeClient() {
   const statusHandlers = new Set<(status: ConnectionStatus) => void>();
   const chatHandlers = new Map<string, Set<(ev: import("@/lib/types").InboundEvent) => void>>();
   const runtimeModelHandlers = new Set<
-    (modelName: string | null, modelPreset?: string | null) => void
+    (modelName: string | null, modelId?: string | null) => void
   >();
   const sessionUpdateHandlers = new Set<(chatId: string, scope?: string) => void>();
   const runStatusHandlers = new Set<(chatId: string, startedAt: number | null) => void>();
@@ -107,7 +107,7 @@ function makeClient() {
       };
     },
     onRuntimeModelUpdate: (
-      handler: (modelName: string | null, modelPreset?: string | null) => void,
+      handler: (modelName: string | null, modelId?: string | null) => void,
     ) => {
       runtimeModelHandlers.add(handler);
       return () => {
@@ -178,8 +178,8 @@ function makeClient() {
       }
       for (const h of chatHandlers.get(chatId) ?? []) h(ev);
     },
-    _emitRuntimeModelUpdate(modelName: string | null, modelPreset?: string | null) {
-      for (const h of runtimeModelHandlers) h(modelName, modelPreset);
+    _emitRuntimeModelUpdate(modelName: string | null, modelId?: string | null) {
+      for (const h of runtimeModelHandlers) h(modelName, modelId);
     },
     _emitSessionUpdate(chatId: string, scope?: string) {
       for (const h of sessionUpdateHandlers) h(chatId, scope);
@@ -198,14 +198,12 @@ function makeClient() {
 function wrap(
   client: ReturnType<typeof makeClient>,
   children: ReactNode,
-  modelName?: string | null,
   token = "tok",
 ) {
   return (
     <ClientProvider
       client={client as unknown as import("@/lib/nanobot-client").NanobotClient}
       token={token}
-      modelName={modelName ?? null}
     >
       {children}
     </ClientProvider>
@@ -226,7 +224,7 @@ function expectSendMessageWithTurn(
   );
 }
 
-function session(chatId: string, modelPreset?: string | null) {
+function session(chatId: string, modelId?: string | null) {
   return {
     key: `websocket:${chatId}`,
     channel: "websocket" as const,
@@ -234,7 +232,7 @@ function session(chatId: string, modelPreset?: string | null) {
     createdAt: null,
     updatedAt: null,
     preview: "",
-    modelPreset,
+    modelId,
   };
 }
 
@@ -314,30 +312,31 @@ function stubThreadResizeObserver() {
 function modelSettings(model: string, provider: string): SettingsPayload {
   return {
     agent: {
-      model,
+      model_id: "primary",
+      display_name: "Primary",
       provider,
-      resolved_provider: provider,
-      has_api_key: true,
-      model_preset: "default",
-      max_tokens: 4096,
+      model,
+      capabilities: { text: true, vision: false, image_generation: false, transcription: false },
       context_window_tokens: 65536,
-      temperature: 0.7,
-      reasoning_effort: null,
+      generation_defaults: { temperature: 0.7, max_tokens: 4096, reasoning_effort: null },
+      has_api_key: true,
+      image_analysis_model_id: null,
       timezone: "UTC",
       tool_hint_max_length: 40,
     },
-    model_presets: [{
-      name: "default",
-      label: "Default",
-      active: true,
-      is_default: true,
-      model,
+    models: [{
+      model_id: "primary",
+      display_name: "Primary",
       provider,
-      max_tokens: 4096,
+      model,
+      capabilities: { text: true, vision: false, image_generation: false, transcription: false },
       context_window_tokens: 65536,
-      temperature: 0.7,
-      reasoning_effort: null,
+      pricing: {},
+      generation_defaults: { temperature: 0.7, max_tokens: 4096, reasoning_effort: null },
+      is_default: true,
+      usages: [],
     }],
+    system_prompt_overrides: [],
     providers: [
       { name: "deepseek", label: "DeepSeek", configured: true },
       { name: "openai_codex", label: "OpenAI Codex", configured: true },
@@ -398,13 +397,12 @@ function modelSettings(model: string, provider: string): SettingsPayload {
   };
 }
 
-function settingsWithFastPreset(): SettingsPayload {
+function settingsWithFastModel(): SettingsPayload {
   const settings = modelSettings("deepseek-v4-pro", "deepseek");
-  settings.model_presets.push({
-    ...settings.model_presets[0]!,
-    name: "fast",
-    label: "Fast",
-    active: false,
+  settings.models.push({
+    ...settings.models[0]!,
+    model_id: "fast",
+    display_name: "Fast",
     is_default: false,
     model: "openai-codex/gpt-5.5",
     provider: "openai_codex",
@@ -715,11 +713,11 @@ describe("ThreadShell", () => {
     );
 
     expect(await screen.findByTestId("composer-model-logo-openai_codex")).toBeInTheDocument();
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText("Primary")).toBeInTheDocument();
     expect(screen.queryByText("ling-3.0-flash")).not.toBeInTheDocument();
   });
 
-  it("resolves the composer model from the active session preset", async () => {
+  it("resolves the composer model from the session model id", async () => {
     const client = makeClient();
     render(
       wrap(
@@ -728,30 +726,26 @@ describe("ThreadShell", () => {
           session={session("chat-fast", "fast")}
           title="Fast session"
           onToggleSidebar={() => {}}
-          settingsSnapshot={settingsWithFastPreset()}
+          settingsSnapshot={settingsWithFastModel()}
         />,
         "deepseek-v4-pro",
       ),
     );
 
-    expect(await screen.findByTitle("fast · gpt-5.5 · OpenAI Codex")).toBeInTheDocument();
-    expect(screen.queryByTitle("Default · deepseek-v4-pro · DeepSeek")).not.toBeInTheDocument();
+    expect(await screen.findByTitle("Fast · gpt-5.5 · OpenAI Codex")).toBeInTheDocument();
+    expect(screen.queryByTitle("Primary · deepseek-v4-pro · DeepSeek")).not.toBeInTheDocument();
   });
 
-  it("falls back to the current preset while a renamed session reference is stale", async () => {
+  it("falls back to the current model while a renamed session reference is stale", async () => {
     const client = makeClient();
-    const settings = settingsWithFastPreset();
-    settings.agent.model_preset = "fast";
-    settings.model_presets = settings.model_presets.map((preset) => ({
-      ...preset,
-      active: preset.name === "fast",
-    }));
+    const settings = settingsWithFastModel();
+    settings.agent.model_id = "fast";
     render(
       wrap(
         client,
         <ThreadShell
-          session={session("renamed-preset", "old-fast")}
-          title="Renamed preset"
+          session={session("renamed-model", "old-fast")}
+          title="Renamed model"
           onToggleSidebar={() => {}}
           settingsSnapshot={settings}
         />,
@@ -759,56 +753,55 @@ describe("ThreadShell", () => {
       ),
     );
 
-    expect(await screen.findByTitle("fast · gpt-5.5 · OpenAI Codex")).toBeInTheDocument();
+    expect(await screen.findByTitle("Fast · gpt-5.5 · OpenAI Codex")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Choose your AI" })).not.toBeInTheDocument();
   });
 
-  it("switches through every named preset while keeping the active preset first", async () => {
+  it("switches through every configured model while keeping the active model first", async () => {
     const client = makeClient();
-    const settings = settingsWithFastPreset();
-    settings.model_presets.push({
-      ...settings.model_presets.at(-1)!,
-      name: "extra",
-      label: "Extra",
+    const settings = settingsWithFastModel();
+    settings.models.push({
+      ...settings.models.at(-1)!,
+      model_id: "extra",
+      display_name: "Extra",
       model: "deepseek/extra",
       provider: "deepseek",
-      active: false,
       is_default: false,
     });
 
-    const view = (preset: string) => wrap(client, (
+    const view = (modelId: string) => wrap(client, (
       <ThreadShell
-        session={session("preset-order", preset)}
-        title="Preset order"
+        session={session("model-order", modelId)}
+        title="Model order"
         onToggleSidebar={() => {}}
         settingsSnapshot={settings}
       />
     ));
-    const { rerender } = render(view("default"));
+    const { rerender } = render(view("primary"));
 
-    const badge = await screen.findByRole("button", { name: "Default" });
-    expect(badge).toHaveTextContent("Default");
+    const badge = await screen.findByRole("button", { name: "Primary" });
+    expect(badge).toHaveTextContent("Primary");
     fireEvent.click(badge);
-    fireEvent.click(await screen.findByRole("option", { name: /^fast\b/i }));
+    fireEvent.click(await screen.findByRole("option", { name: /^Fast\b/i }));
 
     expect(client.sendSystemCommand).toHaveBeenCalledWith(
-      "preset-order",
+      "model-order",
       "/model fast",
     );
-    expect(await screen.findByText("fast")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "fast" }));
-    fireEvent.click(await screen.findByRole("option", { name: /^extra\b/i }));
+    expect(await screen.findByText("Fast")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Fast" }));
+    fireEvent.click(await screen.findByRole("option", { name: /^Extra\b/i }));
     expect(client.sendSystemCommand).toHaveBeenLastCalledWith(
-      "preset-order",
+      "model-order",
       "/model extra",
     );
-    expect(await screen.findByText("extra")).toBeInTheDocument();
+    expect(await screen.findByText("Extra")).toBeInTheDocument();
 
     rerender(view("fast"));
-    expect(await screen.findByText("fast")).toBeInTheDocument();
+    expect(await screen.findByText("Fast")).toBeInTheDocument();
   });
 
-  it("uses the backend-resolved provider for an auto session preset", async () => {
+  it("uses the backend-resolved provider carried on the model row", async () => {
     const client = makeClient();
     const settings = modelSettings("deepseek-v4-pro", "deepseek");
     settings.providers.push({
@@ -816,15 +809,13 @@ describe("ThreadShell", () => {
       label: "Company Proxy",
       configured: true,
     });
-    settings.model_presets.push({
-      ...settings.model_presets[0]!,
-      name: "fast",
-      label: "Fast",
-      active: false,
+    settings.models.push({
+      ...settings.models[0]!,
+      model_id: "fast",
+      display_name: "Fast",
       is_default: false,
       model: "companyproxy/gpt-4",
-      provider: "auto",
-      resolved_provider: "companyproxy",
+      provider: "companyproxy",
     });
 
     render(
@@ -832,7 +823,7 @@ describe("ThreadShell", () => {
         client,
         <ThreadShell
           session={session("chat-auto", "fast")}
-          title="Auto provider session"
+          title="Proxied model session"
           onToggleSidebar={() => {}}
           settingsSnapshot={settings}
         />,
@@ -840,7 +831,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    expect(await screen.findByTitle("fast · gpt-4 · Company Proxy")).toBeInTheDocument();
+    expect(await screen.findByTitle("Fast · gpt-4 · Company Proxy")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Choose your AI" })).not.toBeInTheDocument();
   });
 
@@ -1162,19 +1153,13 @@ describe("ThreadShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => expect(onCreateChat).toHaveBeenCalledTimes(1));
-    expect(onCreateChat).toHaveBeenCalledWith(null, "start for real", null);
+    expect(onCreateChat).toHaveBeenCalledWith(null, "start for real");
     expect(onNewChat).not.toHaveBeenCalled();
   });
 
-  it("applies the selected landing preset before sending the first prompt", async () => {
+  it("keeps the landing-selected model until the first chat takes over", async () => {
     const client = makeClient();
-    const settings = settingsWithFastPreset();
-    let resolveModelCommand!: () => void;
-    client.sendSystemCommand.mockImplementation(
-      () => new Promise<void>((resolve) => {
-        resolveModelCommand = resolve;
-      }),
-    );
+    const settings = settingsWithFastModel();
     const onCreateChat = vi.fn().mockResolvedValue("chat-new");
 
     const view = (currentSession: ReturnType<typeof session> | null) => wrap(client, (
@@ -1188,9 +1173,9 @@ describe("ThreadShell", () => {
     ));
     const { rerender } = render(view(null));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Default" }));
-    fireEvent.click(await screen.findByRole("option", { name: /^fast\b/i }));
-    expect(await screen.findByText("fast")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Primary" }));
+    fireEvent.click(await screen.findByRole("option", { name: /^Fast\b/i }));
+    expect(await screen.findByText("Fast")).toBeInTheDocument();
     expect(client.sendSystemCommand).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText("Message input"), {
@@ -1198,22 +1183,16 @@ describe("ThreadShell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(client.sendSystemCommand).toHaveBeenCalledWith(
-      "chat-new",
-      "/model fast",
-    ));
-    expect(onCreateChat).toHaveBeenCalledWith(null, "use the selected model", "fast");
+    await waitFor(() => expect(onCreateChat).toHaveBeenCalledWith(null, "use the selected model"));
+    expect(client.sendSystemCommand).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
 
     await act(async () => {
       rerender(view(session("chat-new", "fast")));
     });
-    expect(screen.getByTitle("fast · gpt-5.5 · OpenAI Codex")).toBeInTheDocument();
-    expect(screen.queryByText("Default")).not.toBeInTheDocument();
-    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByTitle("Fast · gpt-5.5 · OpenAI Codex")).toBeInTheDocument();
+    expect(screen.queryByText("Primary")).not.toBeInTheDocument();
 
-    await act(async () => {
-      resolveModelCommand();
-    });
     await waitFor(() => {
       expectSendMessageWithTurn(client, "chat-new", "use the selected model");
     });
@@ -1402,7 +1381,7 @@ describe("ThreadShell", () => {
       client._emitChat("chat-new", {
         event: "message",
         chat_id: "chat-new",
-        text: "## Model\n- Current model: `Ring-2.6-1T`",
+        text: "## Model\n- Current model ID: `main`\n- Upstream model: `Ring-2.6-1T`",
       });
       client._emitChat("chat-new", {
         event: "message",

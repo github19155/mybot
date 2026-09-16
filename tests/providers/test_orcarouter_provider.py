@@ -43,17 +43,23 @@ def test_orcarouter_forced_provider_uses_default_api_base() -> None:
                 "apiKey": "sk-orca-test-key",
             },
         },
-        "agents": {
-            "defaults": {
-                "model": "deepseek/deepseek-chat",
+        "models": {
+            "main": {
+                "displayName": "orcarouter",
                 "provider": "orcarouter",
-            },
+                "model": "deepseek/deepseek-chat",
+                "capabilities": {"text": True},
+            }
         },
+        "agents": {"defaults": {"modelId": "main"}},
     })
 
-    assert config.get_provider_name("deepseek/deepseek-chat") == "orcarouter"
-    assert config.get_api_key("deepseek/deepseek-chat") == "sk-orca-test-key"
-    assert config.get_api_base("deepseek/deepseek-chat") == "https://api.orcarouter.ai/v1"
+    provider = make_provider(config)
+
+    assert provider.provider_name == "orcarouter"
+    assert provider.api_key == "sk-orca-test-key"
+    assert provider.api_base == "https://api.orcarouter.ai/v1"
+    assert provider.get_default_model() == "deepseek/deepseek-chat"
 
 
 def test_orcarouter_gateway_routes_auto_model_when_configured() -> None:
@@ -63,19 +69,25 @@ def test_orcarouter_gateway_routes_auto_model_when_configured() -> None:
                 "apiKey": "sk-orca-test-key",
             },
         },
-        "agents": {
-            "defaults": {
+        "models": {
+            "main": {
+                "displayName": "orcarouter",
+                "provider": "orcarouter",
                 "model": "orcarouter/auto",
-            },
+                "capabilities": {"text": True},
+            }
         },
+        "agents": {"defaults": {"modelId": "main"}},
     })
 
-    assert config.get_provider_name("orcarouter/auto") == "orcarouter"
-    assert config.get_api_key("orcarouter/auto") == "sk-orca-test-key"
-    assert config.get_api_base("orcarouter/auto") == "https://api.orcarouter.ai/v1"
+    provider = make_provider(config)
+
+    assert provider.provider_name == "orcarouter"
+    assert provider.api_key == "sk-orca-test-key"
+    assert provider.api_base == "https://api.orcarouter.ai/v1"
 
 
-def test_legacy_custom_provider_named_orcarouter_keeps_prefix_stripping() -> None:
+def test_custom_orcarouter_gateway_keeps_prefix_stripping() -> None:
     config = Config.model_validate({
         "providers": {
             "orcarouter": {
@@ -83,12 +95,15 @@ def test_legacy_custom_provider_named_orcarouter_keeps_prefix_stripping() -> Non
                 "apiBase": "https://legacy-gateway.example/v1",
             },
         },
-        "agents": {
-            "defaults": {
-                "model": "orcarouter/custom-model",
+        "models": {
+            "main": {
+                "displayName": "orcarouter",
                 "provider": "orcarouter",
-            },
+                "model": "orcarouter/custom-model",
+                "capabilities": {"text": True},
+            }
         },
+        "agents": {"defaults": {"modelId": "main"}},
     })
 
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):

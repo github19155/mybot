@@ -91,8 +91,7 @@ async def test_subagent_tool_dispatches_non_persistent_work_agent(tmp_path, monk
 @pytest.mark.parametrize(
     "override",
     [
-        {"model": "provider/temporary"},
-        {"model_preset": "temporary-preset"},
+        {"model_id": "temporary-model"},
         {"thinking": "high"},
         {"temperature": 0.7},
         {"timeout_seconds": 45.0},
@@ -116,6 +115,8 @@ async def test_any_runtime_override_without_role_dispatches_work_agent(
     assert "workagent" in result.lower()
     launch.assert_awaited_once()
     assert launch.await_args.kwargs["role_definition"].category == "work"
+    for key, value in override.items():
+        assert launch.await_args.kwargs[key] == value
 
 
 @pytest.mark.asyncio
@@ -202,7 +203,7 @@ def test_work_agent_snapshot_does_not_inherit_general_runtime_tuning() -> None:
         "description": "General tuned prompt",
         "system_prompt": "General tuned system prompt",
         "tools": ["read_file", "exec"],
-        "model": "provider/general-only",
+        "model_id": "general-model",
         "thinking": "high",
         "temperature": 1.2,
         "timeout_seconds": 999,
@@ -210,8 +211,7 @@ def test_work_agent_snapshot_does_not_inherit_general_runtime_tuning() -> None:
     })
 
     assert role.system_prompt != "General tuned system prompt"
-    assert role.model is None
-    assert role.model_preset is None
+    assert role.model_id is None
     assert role.thinking is None
     assert role.temperature is None
     assert role.timeout_seconds is None
@@ -251,7 +251,7 @@ async def test_run_work_agent_always_uses_manager_spawn_lifecycle(tmp_path, monk
     child_runtime = run.await_args.args[5]
     assert status.role == "work"
     assert status.role_snapshot is role_definition
-    assert status.model == "test/model"
+    assert status.model_id is None
     assert child_runtime is runtime
     assert child_runtime.system_prompt_prefix == "MODEL PREFIX"
     assert run.await_args.kwargs["role_definition"] is role_definition

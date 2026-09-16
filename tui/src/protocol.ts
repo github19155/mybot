@@ -72,7 +72,7 @@ export interface WorkspaceScopePayload {
 }
 
 export interface RuntimeControls {
-  modelPresets: Array<{ name: string; model: string }>
+  models: Array<{ modelId: string; displayName: string; model: string }>
   canUseFullAccess: boolean
 }
 
@@ -91,7 +91,6 @@ export type InboundEvent =
   | {
       event: "attached"
       chat_id: string
-      model_preset?: string | null
       usage?: TokenUsage
       recovery_state?: RecoveryState
     }
@@ -158,12 +157,12 @@ export type InboundEvent =
       scope?: string
       workspace_scope?: WorkspaceScopePayload
     }
-  | { event: "runtime_model_updated"; model_name: string; model_preset?: string | null }
+  | { event: "runtime_model_updated"; model: string; model_id?: string }
   | {
       event: "turn_model_updated"
       chat_id: string
-      model_name: string
-      model_preset?: string | null
+      model: string
+      model_id?: string
       context_window_tokens?: number
     }
   | { event: "error"; chat_id?: string; detail?: string; reason?: string; turn_id?: string }
@@ -325,7 +324,7 @@ export interface SessionSummary {
   createdAt: string | null
   updatedAt: string | null
   runStartedAt: number | null
-  modelPreset: string | null
+  modelId: string | null
   recoveryState?: RecoveryState | null
   workspaceScope?: WorkspaceScopePayload | null
   pinned: boolean
@@ -478,10 +477,8 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
       : null
   }
   if (name === "runtime_model_updated") {
-    return typeof record.model_name === "string"
-      && (record.model_preset === undefined
-        || record.model_preset === null
-        || typeof record.model_preset === "string")
+    return typeof record.model === "string"
+      && (record.model_id === undefined || typeof record.model_id === "string")
       ? value as InboundEvent
       : null
   }
@@ -494,10 +491,7 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
   if (typeof record.chat_id !== "string") return null
   if (
     name === "attached"
-    && ((record.model_preset !== undefined
-      && record.model_preset !== null
-      && typeof record.model_preset !== "string")
-      || (record.usage !== undefined && !isTokenUsage(record.usage))
+    && ((record.usage !== undefined && !isTokenUsage(record.usage))
       || (record.recovery_state !== undefined && !isRecoveryState(record.recovery_state)))
   ) return null
   if (
@@ -551,10 +545,8 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
   ) return null
   if (
     name === "turn_model_updated"
-    && (typeof record.model_name !== "string"
-      || (record.model_preset !== undefined
-        && record.model_preset !== null
-        && typeof record.model_preset !== "string")
+    && (typeof record.model !== "string"
+      || (record.model_id !== undefined && typeof record.model_id !== "string")
       || !optional(record.context_window_tokens, "number"))
   ) return null
   return value as InboundEvent
@@ -750,7 +742,7 @@ export async function fetchRuntimeControls(
   apiToken: string,
   reauthenticate?: ApiReauthenticator,
 ): Promise<RuntimeControls> {
-  if (!apiUrl || !apiToken) return { modelPresets: [], canUseFullAccess: false }
+  if (!apiUrl || !apiToken) return { models: [], canUseFullAccess: false }
   const [settingsResponse, workspacesResponse] = await Promise.all([
     fetchApi(apiUrl, apiToken, "/api/settings", reauthenticate),
     fetchApi(apiUrl, apiToken, "/api/workspaces", reauthenticate).catch(() => null),
@@ -758,20 +750,30 @@ export async function fetchRuntimeControls(
   if (!settingsResponse.ok) {
     throw new Error(`settings request failed: HTTP ${settingsResponse.status}`)
   }
-  const settings = await settingsResponse.json() as { model_presets?: unknown[] }
+  const settings = await settingsResponse.json() as { models?: unknown[] }
   const workspaces = workspacesResponse?.ok
     ? await workspacesResponse.json() as { controls?: unknown }
     : {}
-  const modelPresets = (settings.model_presets || []).flatMap((value) => {
-    if (!isRecord(value) || typeof value.name !== "string" || typeof value.model !== "string") {
-      return []
-    }
-    const name = value.name.trim()
-    return name ? [{ name, model: value.model.trim() }] : []
+  const models = (settings.models || []).flatMap((value) => {
+    if (
+      !isRecord(value)
+      || typeof value.model_id !== "string"
+      || typeof value.model !== "string"
+    ) return []
+    const modelId = value.model_id.trim()
+    const model = value.model.trim()
+    if (!modelId || !model) return []
+    return [{
+      modelId,
+      displayName: typeof value.display_name === "string" && value.display_name.trim()
+        ? value.display_name.trim()
+        : modelId,
+      model,
+    }]
   })
   const controls = isRecord(workspaces.controls) ? workspaces.controls : {}
   return {
-    modelPresets,
+    models,
     canUseFullAccess: controls.can_use_full_access === true,
   }
 }
@@ -816,8 +818,8 @@ export async function fetchSessions(
       createdAt: typeof value.created_at === "string" ? value.created_at : null,
       updatedAt: typeof value.updated_at === "string" ? value.updated_at : null,
       runStartedAt: typeof value.run_started_at === "number" ? value.run_started_at : null,
-      modelPreset: typeof value.model_preset === "string" && value.model_preset.trim()
-        ? value.model_preset.trim()
+      modelId: typeof value.model_id === "string" && value.model_id.trim()
+        ? value.model_id.trim()
         : null,
       ...(isRecoveryState(value.recovery_state)
         ? { recoveryState: value.recovery_state }

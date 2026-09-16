@@ -17,7 +17,7 @@ from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
 from nanobot.session.automation_turns import AUTOMATION_HISTORY_META
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META
 from nanobot.session.manager import SessionManager
-from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from nanobot.session.model_selection import SESSION_MODEL_ID_METADATA_KEY
 from nanobot.session.recovery import RECOVERY_METADATA_KEY
 
 
@@ -34,12 +34,12 @@ def test_webui_session_list_reuses_valid_index_without_scanning_files(
 ) -> None:
     manager = SessionManager(tmp_path)
     session = manager.get_or_create("websocket:indexed")
-    session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = "fast"
+    session.metadata[SESSION_MODEL_ID_METADATA_KEY] = "fast"
     session.add_message("user", "indexed preview")
     manager.save(session)
 
     assert list_webui_sessions(manager)[0]["preview"] == "indexed preview"
-    assert list_webui_sessions(manager)[0]["model_preset"] == "fast"
+    assert list_webui_sessions(manager)[0]["model_id"] == "fast"
 
     def fail_scan(session_manager: SessionManager, path: Path, webui_dir: Path) -> None:
         raise AssertionError(f"unexpected session file scan: {path}")
@@ -50,21 +50,7 @@ def test_webui_session_list_reuses_valid_index_without_scanning_files(
 
     assert rows[0]["key"] == "websocket:indexed"
     assert rows[0]["preview"] == "indexed preview"
-    assert rows[0]["model_preset"] == "fast"
-
-
-def test_webui_session_list_refreshes_after_model_preset_rename(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.get_or_create("websocket:renamed-preset")
-    session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = "openai"
-    session.add_message("user", "hello")
-    manager.save(session)
-
-    assert list_webui_sessions(manager)[0]["model_preset"] == "openai"
-
-    assert manager.rename_model_preset("openai", "Codex") == 1
-
-    assert list_webui_sessions(manager)[0]["model_preset"] == "Codex"
+    assert rows[0]["model_id"] == "fast"
 
 
 def test_webui_session_list_surfaces_pending_recovery_state(tmp_path: Path) -> None:
@@ -270,20 +256,17 @@ def test_webui_session_scan_does_not_overlap_session_save(
     assert list_webui_sessions(manager)[0]["preview"] == "after"
 
 
-def test_webui_session_list_rejects_invalid_internal_model_preset_metadata(
+def test_webui_session_list_rejects_invalid_internal_model_id_metadata(
     tmp_path: Path,
 ) -> None:
     manager = SessionManager(tmp_path)
     session = manager.get_or_create("websocket:custom-metadata")
-    session.metadata["model_preset"] = 7
-    session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = {"invalid": True}
+    session.metadata[SESSION_MODEL_ID_METADATA_KEY] = {"invalid": True}
     session.add_message("user", "custom metadata")
     manager.save(session)
 
-    with pytest.raises(ValueError, match="session model preset must be a non-empty string"):
+    with pytest.raises(ValueError, match="session model_id must be a non-empty string"):
         list_webui_sessions(manager)
-
-    assert manager.get_or_create(session.key).metadata["model_preset"] == 7
 
 
 def test_webui_session_list_rescans_only_changed_file(tmp_path: Path, monkeypatch) -> None:

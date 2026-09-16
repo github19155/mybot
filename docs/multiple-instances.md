@@ -96,7 +96,7 @@ Example config fragment:
 }
 ```
 
-The copied base config can keep using the same `modelPresets` and `agents.defaults.modelPreset`. If this instance needs a different model, add another preset and set `agents.defaults.modelPreset` to that preset name.
+The copied base config can keep using the same `models` registry and `agents.defaults.modelId`. If this instance needs a different model, add a concrete entry under `models` and set `agents.defaults.modelId` to that canonical key.
 
 Start separate instances:
 

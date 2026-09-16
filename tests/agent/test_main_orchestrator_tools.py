@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.agent.permissions import MAIN_SUBJECT
+from nanobot.agent.permissions import MAIN_SUBJECT, PermissionManager
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import RequestContext, ToolContext, request_context
 from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import ToolsConfig
+from nanobot.config.schema import Config, ToolsConfig
 
 
 class _NamedTool(Tool):
@@ -33,6 +33,10 @@ class _SubagentTool(_NamedTool):
     NAME = "subagent"
 
 
+class _ModelConfigTool(_NamedTool):
+    NAME = "model_config"
+
+
 class _ExecTool(_NamedTool):
     NAME = "exec"
 
@@ -43,6 +47,10 @@ class _WebTool(_NamedTool):
 
 class _ReadTool(_NamedTool):
     NAME = "read_file"
+
+
+class _WriteTool(_NamedTool):
+    NAME = "write_file"
 
 
 class _ImageAnalyzeTool(_NamedTool):
@@ -68,21 +76,52 @@ def test_main_registry_keeps_system_catalog_but_model_sees_control_plane_only(tm
     registry = ToolRegistry(permission_subject=MAIN_SUBJECT)
     loader = ToolLoader(test_classes=[
         _SubagentTool,
+        _ModelConfigTool,
         _ExecTool,
         _WebTool,
         _ReadTool,
+        _WriteTool,
         _ImageAnalyzeTool,
         _ImageGenerateTool,
     ])
-    ctx = ToolContext(config=ToolsConfig(), workspace=str(tmp_path))
+    ctx = ToolContext(config=ToolsConfig(), workspace=str(tmp_path), model_management=object())
 
     registered = loader.load(ctx, registry, scope="core")
 
     assert set(registered) == {
-        "subagent", "exec", "web_search", "read_file", "image_analyze", "generate_image"
+        "subagent", "model_config", "exec", "web_search", "read_file", "write_file",
+        "image_analyze", "generate_image",
     }
     assert set(registry.tool_names) == set(registered)
-    assert _definition_names(registry) == ["subagent"]
+    assert _definition_names(registry) == ["model_config", "subagent"]
+
+
+def test_main_model_can_use_model_config_without_execution_or_filesystem_permissions() -> None:
+    config = Config()
+    registry = ToolRegistry(
+        permission_manager=PermissionManager(config),
+        permission_subject=MAIN_SUBJECT,
+    )
+    for tool in (
+        _ModelConfigTool(),
+        _ExecTool(),
+        _WebTool(),
+        _ReadTool(),
+        _WriteTool(),
+        _ImageAnalyzeTool(),
+        _ImageGenerateTool(),
+    ):
+        registry.register(tool)
+
+    tool, _, error = registry.prepare_call("model_config", {})
+    assert tool is not None
+    assert error is None
+
+    for name in ("exec", "web_search", "read_file", "write_file", "image_analyze", "generate_image"):
+        tool, _, error = registry.prepare_call(name, {})
+        assert tool is None
+        assert error is not None
+        assert "not available to the Main orchestrator" in error
 
 
 def test_main_model_cannot_call_worker_execution_tools() -> None:

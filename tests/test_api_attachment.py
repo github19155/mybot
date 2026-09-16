@@ -43,7 +43,7 @@ def mock_agent():
 
 @pytest.fixture
 def app(mock_agent):
-    return create_app(mock_agent, model_name="test-model", request_timeout=10.0, api_key=API_KEY)
+    return create_app(mock_agent, model_id="test-model", request_timeout=10.0, api_key=API_KEY)
 
 
 @pytest_asyncio.fixture
@@ -214,7 +214,7 @@ async def test_multipart_upload_saves_file(aiohttp_client, mock_agent, tmp_path)
     os.chdir(tmp_path)
 
     try:
-        app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+        app = create_app(mock_agent, model_id="m", api_key=API_KEY)
         client = await aiohttp_client(app)
 
         file_data = b"test file content"
@@ -242,7 +242,7 @@ async def test_multipart_multiple_files(aiohttp_client, mock_agent, tmp_path) ->
     os.chdir(tmp_path)
 
     try:
-        app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+        app = create_app(mock_agent, model_id="m", api_key=API_KEY)
         client = await aiohttp_client(app)
 
         # Note: aiohttp test client has limited multipart support
@@ -269,7 +269,7 @@ async def test_multipart_file_size_limit(aiohttp_client, mock_agent, tmp_path) -
     os.chdir(tmp_path)
 
     try:
-        app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+        app = create_app(mock_agent, model_id="m", api_key=API_KEY)
         client = await aiohttp_client(app)
 
         # Create a file larger than 10MB
@@ -295,7 +295,7 @@ async def test_multipart_defaults_text_when_missing(aiohttp_client, mock_agent, 
     os.chdir(tmp_path)
 
     try:
-        app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+        app = create_app(mock_agent, model_id="m", api_key=API_KEY)
         client = await aiohttp_client(app)
 
         file_data = b"content"
@@ -322,7 +322,7 @@ async def test_multipart_with_session_id(aiohttp_client, mock_agent, tmp_path) -
     os.chdir(tmp_path)
 
     try:
-        app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+        app = create_app(mock_agent, model_id="m", api_key=API_KEY)
         client = await aiohttp_client(app)
 
         file_data = b"content"
@@ -348,7 +348,7 @@ async def test_multipart_with_session_id(aiohttp_client, mock_agent, tmp_path) -
 @pytest.mark.asyncio
 async def test_plain_text_backward_compat(aiohttp_client, mock_agent) -> None:
     """Plain text JSON request (no media) works as before."""
-    app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+    app = create_app(mock_agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
     resp = await client.post(
         "/v1/chat/completions",
@@ -372,7 +372,7 @@ async def test_json_base64_image_upload(aiohttp_client, mock_agent, tmp_path) ->
     os.chdir(tmp_path)
 
     try:
-        app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+        app = create_app(mock_agent, model_id="m", api_key=API_KEY)
         client = await aiohttp_client(app)
 
         # Use valid base64 for a tiny PNG (1x1 transparent pixel)
@@ -415,7 +415,7 @@ async def test_docx_upload_passes_media_path(aiohttp_client, tmp_path) -> None:
     os.chdir(tmp_path)
 
     try:
-        app = create_app(agent, model_name="m", api_key=API_KEY)
+        app = create_app(agent, model_id="m", api_key=API_KEY)
         client = await aiohttp_client(app)
 
         from docx import Document

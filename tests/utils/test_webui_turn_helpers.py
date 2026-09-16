@@ -151,7 +151,7 @@ async def test_publish_turn_run_status_non_websocket_noop_registry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admitted_runtime_publishes_chat_scoped_model_and_preset(tmp_path) -> None:
+async def test_admitted_runtime_publishes_chat_scoped_model_and_id(tmp_path) -> None:
     bus = MagicMock()
     bus.publish_outbound = AsyncMock()
     runtime_events = RuntimeEventBus()
@@ -166,7 +166,7 @@ async def test_admitted_runtime_publishes_chat_scoped_model_and_preset(tmp_path)
         model="openai-codex/gpt-5.6",
         generation=GenerationSettings(),
         context_window_tokens=262_144,
-        model_preset="Codex",
+        model_id="codex",
     )
 
     await runtime_events.publish(
@@ -186,7 +186,7 @@ async def test_admitted_runtime_publishes_chat_scoped_model_and_preset(tmp_path)
     assert outbound.chat_id == "chat-model"
     assert isinstance(outbound.event, TurnModelUpdatedEvent)
     assert outbound.event.model == "openai-codex/gpt-5.6"
-    assert outbound.event.model_preset == "Codex"
+    assert outbound.event.model_id == "codex"
 
 
 @pytest.mark.asyncio

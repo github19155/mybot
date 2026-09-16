@@ -65,7 +65,7 @@ gateway health endpoint, `18790` by default, is not the browser UI.
 
 Use the WebUI as the primary setup surface:
 
-1. Open **Settings → Models** and configure a provider, credential, and active model preset.
+1. Open **Settings → Models** and configure a provider, credential, and model with a canonical model ID.
 2. Send `Hello!` in a new topic to prove the selected model works.
 3. Start a separate topic before project work, then choose the intended workspace and access mode.
 4. Add only one capability next: a chat channel in **Settings → Channels**, a web/voice/image provider in **Settings**, or an App/MCP integration in **Apps**.
@@ -184,7 +184,7 @@ Typing the same text without selecting it remains plain text.
 The agent can inspect an attached topic with `read_session`. It can discover other
 persisted topics with `list_sessions` and send asynchronous messages with
 `send_session_message`; topic messaging is not limited by workspace scope.
-The model badge shows the current model or preset and links to model settings when
+The model badge shows the current configured model and links to model settings when
 setup is incomplete.
 
 For image generation, configure an image provider first and then use the WebUI
@@ -312,7 +312,7 @@ with the content that should be delivered.
 ## Settings
 
 Settings is the control surface for browser-local and gateway-backed
-runtime configuration. Use it to review or adjust model presets, providers,
+runtime configuration. Use it to review or adjust configured models, providers,
 image generation, voice transcription, web tools, chat channels, Apps,
 Automations, Skills, runtime identity, and advanced safety controls.
 

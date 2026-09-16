@@ -96,9 +96,9 @@ Keep this split in mind when debugging. If a problem is about channel routing, s
 
 ## Runtime Resolution and Capability Authority
 
-`ModelRuntimeResolver` is the single selection-to-`LLMRuntime` authority for Main, Subagent, and Dream execution. Those callers may decide which model or preset should be selected, but they delegate construction of the resulting runtime to the resolver. The resolver also owns the shared `ProviderSnapshot` → `LLMRuntime` conversion path.
+`ModelRuntimeResolver` is the single selection-to-`LLMRuntime` authority for Main, Subagent, and Dream execution. Each caller selects a canonical `model_id`; the resolver resolves it through `Config.models` and builds the resulting runtime. The resolver also owns the shared `ProviderSnapshot` → `LLMRuntime` conversion path.
 
-`ModelManagement` owns model/provider administration and Dream selection policy. `ModelFleet` may rank or recommend configured offerings and enforce physical-request admission, but it does not construct `LLMRuntime` objects. `SubagentManager` receives an explicit parent `LLMRuntime` for every launch. It may request a child runtime for a role or per-run model override through `ModelRuntimeResolver.resolve_selection()`, but it does not store provider/model as a fallback runtime source or reconstruct an `LLMRuntime` when one is missing.
+`ModelManagement` owns model/provider administration and Dream selection policy. `ModelFleet` may rank or recommend configured offerings and enforce physical-request admission, but it does not construct `LLMRuntime` objects. Fleet recommendations remain canonical `model_id` selections. `SubagentManager` receives an explicit parent `LLMRuntime` for every launch. It may request a child runtime for a role or per-run `model_id` override through `ModelRuntimeResolver.resolve_selection()`, but it does not store provider/model as a fallback runtime source or reconstruct an `LLMRuntime` when one is missing.
 
 `PermissionManager` is the canonical runtime authority for capabilities. Role names, prompts, requested tools, and old permission tiers are not independent authorization sources; tool visibility and execution are constrained by the current capability policy. The Main-orchestrator model-facing filter is an additional responsibility boundary, not a replacement for permission authority.
 
@@ -106,13 +106,13 @@ Keep this split in mind when debugging. If a problem is about channel routing, s
 
 Provider metadata is centralized in `nanobot/providers/registry.py`. Configuration fields live in `nanobot/config/schema.py`.
 
-Provider selection uses:
+Runtime provider selection is explicit and starts with a canonical model ID:
 
-- explicit `agents.defaults.provider` or preset provider;
-- provider registry keywords;
-- API key prefixes and API base URL hints;
-- local provider resolution when `apiBase` is configured;
-- gateway resolution for providers that can route many model families.
+1. A consumer supplies a `model_id` (for example, `agents.defaults.modelId`).
+2. `ModelRuntimeResolver` resolves that ID through `Config.models` to one `ModelConfig`.
+3. `ModelConfig.provider` names the concrete provider ID. The provider factory uses that ID to load `providers.<provider>` settings and choose the adapter; `ModelConfig.model` is the upstream model value sent to that provider.
+
+Runtime does not infer a provider from model names, credentials, API base URLs, or gateway metadata. Provider registry metadata describes adapters and transport behavior; it is not a fallback selector.
 
 Provider implementations live in `nanobot/providers/`. Most hosted providers use the OpenAI-compatible implementation, while Anthropic, Azure OpenAI, AWS Bedrock, OpenAI Codex, and GitHub Copilot have specialized paths.
 

@@ -106,7 +106,7 @@ class TestResolveConfig:
         saved = json.loads(config_path.read_text(encoding="utf-8"))
         assert saved["channels"]["telegram"]["token"] == "${MY_TOKEN}"
 
-    def test_save_drops_legacy_dream_cron(self, tmp_path):
+    def test_load_rejects_legacy_dream_cron(self, tmp_path):
         config_path = tmp_path / "config.json"
         config_path.write_text(
             json.dumps(
@@ -115,14 +115,12 @@ class TestResolveConfig:
             encoding="utf-8",
         )
 
-        config = load_config(config_path)
-        config.agents.defaults.max_tokens = 1234
-        save_config(config, config_path)
+        with pytest.raises(ConfigLoadError) as exc_info:
+            load_config(config_path)
 
-        saved = json.loads(config_path.read_text(encoding="utf-8"))
-        dream = saved["agents"]["defaults"]["dream"]
-        assert "cron" not in dream
-        assert dream["pollIntervalSeconds"] == 30
+        error = exc_info.value
+        assert error.kind == "invalid_schema"
+        assert "agents.defaults.dream.cron" in str(error)
 
     def test_save_keeps_oauth_provider_configs_excluded(self, tmp_path):
         config_path = tmp_path / "config.json"

@@ -194,6 +194,7 @@ class TestIdleScanThrottling:
             tool_registry=ToolRegistry(),
             provider_snapshot=ProviderSnapshot(
                 provider=provider,
+                model_id="main",
                 model="test-model",
                 context_window_tokens=128_000,
                 signature=("test-model",),

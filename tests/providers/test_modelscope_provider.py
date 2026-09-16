@@ -34,7 +34,7 @@ def test_find_by_name_modelscope() -> None:
     assert spec.name == "modelscope"
 
 
-def test_modelscope_forced_provider_uses_default_api_base() -> None:
+def test_modelscope_explicit_model_entry_uses_default_api_base() -> None:
     config = Config.model_validate(
         {
             "providers": {
@@ -42,38 +42,26 @@ def test_modelscope_forced_provider_uses_default_api_base() -> None:
                     "apiKey": "ms-token",
                 },
             },
-            "agents": {
-                "defaults": {
-                    "model": "Qwen/Qwen3.5-35B-A3B",
+            "models": {
+                "main": {
+                    "displayName": "modelscope",
                     "provider": "modelscope",
-                },
+                    "model": "Qwen/Qwen3.5-35B-A3B",
+                    "capabilities": {"text": True},
+                }
             },
+            "agents": {"defaults": {"modelId": "main"}},
         }
     )
 
-    assert config.get_provider_name("Qwen/Qwen3.5-35B-A3B") == "modelscope"
-    assert config.get_api_key("Qwen/Qwen3.5-35B-A3B") == "ms-token"
-    assert config.get_api_base("Qwen/Qwen3.5-35B-A3B") == "https://api-inference.modelscope.cn/v1"
+    from nanobot.providers.factory import make_provider
 
+    provider = make_provider(config)
 
-def test_modelscope_keyword_matches_prefixed_model() -> None:
-    config = Config.model_validate(
-        {
-            "providers": {
-                "modelscope": {
-                    "apiKey": "ms-token",
-                },
-            },
-            "agents": {
-                "defaults": {
-                    "model": "modelscope/Qwen/Qwen3.5-35B-A3B",
-                },
-            },
-        }
-    )
-
-    assert config.get_provider_name("modelscope/Qwen/Qwen3.5-35B-A3B") == "modelscope"
-    assert config.get_api_key("modelscope/Qwen/Qwen3.5-35B-A3B") == "ms-token"
+    assert provider.provider_name == "modelscope"
+    assert provider.api_key == "ms-token"
+    assert provider.api_base == "https://api-inference.modelscope.cn/v1"
+    assert provider.get_default_model() == "Qwen/Qwen3.5-35B-A3B"
 
 
 def test_modelscope_strips_prefix_in_request_model() -> None:
@@ -110,13 +98,21 @@ def test_modelscope_routes_unprefixed_models_when_configured() -> None:
                     "apiBase": "https://api-inference.modelscope.cn/v1",
                 },
             },
-            "agents": {
-                "defaults": {
+            "models": {
+                "main": {
+                    "displayName": "modelscope",
+                    "provider": "modelscope",
                     "model": "Qwen/Qwen3.5-35B-A3B",
-                },
+                    "capabilities": {"text": True},
+                }
             },
+            "agents": {"defaults": {"modelId": "main"}},
         }
     )
 
-    name = config.get_provider_name("Qwen/Qwen3.5-35B-A3B")
-    assert name == "modelscope"
+    from nanobot.providers.factory import make_provider
+
+    provider = make_provider(config)
+
+    assert provider.provider_name == "modelscope"
+    assert provider.api_base == "https://api-inference.modelscope.cn/v1"

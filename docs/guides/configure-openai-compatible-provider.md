@@ -1,12 +1,13 @@
 # How to Configure an OpenAI-Compatible Provider in nanobot
 
 nanobot can call OpenAI-compatible model providers by configuring an `apiBase`,
-optional `apiKey`, and a model preset that references that provider name.
+optional `apiKey`, and a root `models` entry with an explicit provider and
+upstream model. Select that entry with `agents.defaults.model_id`.
 
 ## What you will build
 
-- a custom provider entry
-- a model preset pointing at that provider
+- a root `models` entry with an explicit provider and upstream model
+- a canonical `agents.defaults.model_id` selection
 - one successful `nanobot agent` run
 
 ## When to use this
@@ -40,22 +41,32 @@ Merge this into `~/.nanobot/config.json`:
       "apiBase": "https://api.example.com/v1"
     }
   },
-  "modelPresets": {
-    "Custom": {
+  "models": {
+    "custom_provider_model": {
+      "displayName": "Custom provider model",
       "provider": "custom",
       "model": "provider-model-name",
-      "maxTokens": 4096,
+      "capabilities": {
+        "text": true
+      },
       "contextWindowTokens": 65536,
-      "temperature": 0.1
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   },
   "agents": {
     "defaults": {
-      "modelPreset": "Custom"
+      "model_id": "custom_provider_model"
     }
   }
 }
 ```
+
+`custom_provider_model` is nanobot's canonical selector. The provider's upstream
+model string belongs in `models.custom_provider_model.model`; do not use that
+upstream string as `agents.defaults.model_id`.
 
 Then run:
 
@@ -80,8 +91,10 @@ nanobot agent -m "Hello!"
 ## Troubleshooting
 
 - If `curl /models` fails, fix the provider endpoint before changing nanobot.
-- If nanobot says the model is unknown, check the model ID expected by the
-  provider.
+- If nanobot says the model is unknown, check that
+  `models.custom_provider_model.model` matches the upstream model name expected by
+  the provider and that `agents.defaults.model_id` is
+  `custom_provider_model`.
 - If auth fails, confirm whether the provider wants Bearer auth and whether the
   key is present in the environment that starts nanobot.
 

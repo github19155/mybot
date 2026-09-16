@@ -270,7 +270,7 @@ class TestCheckExpired:
         )
 
     @pytest.mark.parametrize("resolution_error", [KeyError, ValueError])
-    def test_invalid_preset_is_isolated_to_one_session(self, resolution_error):
+    def test_invalid_model_id_is_isolated_to_one_session(self, resolution_error):
         ac = _make_autocompact(ttl=15)
         old_dt = datetime.now() - timedelta(minutes=20)
         sessions = {
@@ -288,7 +288,7 @@ class TestCheckExpired:
 
         def resolve_runtime(session: Session):
             if session.key == "cli:removed":
-                raise resolution_error("model preset cannot be resolved")
+                raise resolution_error(f"model_id {session.key!r} not found")
             return healthy_runtime
 
         scheduled = []

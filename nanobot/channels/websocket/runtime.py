@@ -1492,19 +1492,19 @@ class WebSocketChannel(BaseChannel):
     async def send_runtime_model_updated(
         self,
         *,
-        model_name: Any,
-        model_preset: Any = None,
+        model: Any,
+        model_id: Any = None,
     ) -> None:
         """Broadcast runtime model changes to every open websocket connection."""
         conns = list(self._conn_chats)
-        if not conns or not isinstance(model_name, str) or not model_name.strip():
+        if not conns or not isinstance(model, str) or not model.strip():
             return
         body: dict[str, Any] = {
             "event": "runtime_model_updated",
-            "model_name": model_name.strip(),
+            "model": model.strip(),
         }
-        if isinstance(model_preset, str) and model_preset.strip():
-            body["model_preset"] = model_preset.strip()
+        if isinstance(model_id, str) and model_id.strip():
+            body["model_id"] = model_id.strip()
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" runtime_model_updated ")
@@ -1513,25 +1513,25 @@ class WebSocketChannel(BaseChannel):
         self,
         chat_id: str,
         *,
-        model_name: Any,
-        model_preset: Any = None,
+        model: Any,
+        model_id: Any = None,
         context_window_tokens: Any = None,
     ) -> None:
         """Notify one chat's subscribers which model is handling its current request."""
         conns = list(self._subs.get(chat_id, ()))
         if (
             not conns
-            or not isinstance(model_name, str)
-            or not model_name.strip()
+            or not isinstance(model, str)
+            or not model.strip()
         ):
             return
         body: dict[str, Any] = {
             "event": "turn_model_updated",
             "chat_id": chat_id,
-            "model_name": model_name.strip(),
+            "model": model.strip(),
         }
-        if isinstance(model_preset, str) and model_preset.strip():
-            body["model_preset"] = model_preset.strip()
+        if isinstance(model_id, str) and model_id.strip():
+            body["model_id"] = model_id.strip()
         if isinstance(context_window_tokens, int) and context_window_tokens > 0:
             body["context_window_tokens"] = context_window_tokens
         raw = json.dumps(body, ensure_ascii=False)

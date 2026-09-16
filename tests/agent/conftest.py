@@ -47,7 +47,6 @@ def make_loop(
     session_ttl_minutes: int = 0,
     unified_session: bool = False,
     tools_config=None,
-    model_presets: dict | None = None,
     hooks: list | None = None,
     provider: MagicMock | None = None,
     patch_deps: bool = False,
@@ -73,8 +72,6 @@ def make_loop(
     )
     if tools_config is not None:
         kwargs["tools_config"] = tools_config
-    if model_presets is not None:
-        kwargs["model_presets"] = model_presets
     if hooks is not None:
         kwargs["hooks"] = hooks
 

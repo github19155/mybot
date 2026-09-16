@@ -105,7 +105,7 @@ interface AppOptions {
   apiToken: string
   chatId?: string
   model: string
-  modelPreset: string
+  modelId: string | null
   workspace: string
   version: string
   access: string
@@ -477,11 +477,11 @@ export class NanobotTui {
   private readonly promptHistory: string[] = []
   private historyCursor = 0
   private historyDraft = ""
-  private defaultModelName: string
-  private defaultModelPreset: string
-  private modelName: string
-  private modelPreset: string
-  private sessionModelPreset: string | null | undefined
+  private defaultModel: string
+  private defaultModelId: string | null
+  private model: string
+  private modelId: string | null
+  private sessionModelId: string | null | undefined
   private sessionTitle = ""
   private sessionMetadataId = 0
   private contextTokens: number | null = null
@@ -528,14 +528,14 @@ export class NanobotTui {
   ) {
     this.renderer = renderer
     this.clipboardImageReader = clipboardImageReader
-    this.defaultModelName = options.model
-    this.defaultModelPreset = options.modelPreset
-    this.modelName = options.model
-    this.modelPreset = options.modelPreset
+    this.defaultModel = options.model
+    this.defaultModelId = options.modelId
+    this.model = options.model
+    this.modelId = options.modelId
     this.apiReauthenticator = options.bootstrapUrl
       ? (rejectedApiToken) => this.refreshApiConnection(rejectedApiToken)
       : undefined
-    this.sessionModelPreset = options.chatId ? undefined : null
+    this.sessionModelId = options.chatId ? undefined : null
     this.backgroundKnown = options.theme !== "auto" || renderer.themeMode !== null
     this.activeThemeMode = this.resolveThemeMode(renderer.themeMode)
     this.palette = this.activeThemeMode === "light" ? LIGHT : DARK
@@ -654,8 +654,7 @@ export class NanobotTui {
       {
         apiUrl: options.apiUrl,
         apiToken: options.apiToken,
-        model: this.modelName,
-        modelPreset: this.modelPreset,
+        modelId: this.modelId,
         workspace: options.workspace,
         access: options.access,
         reauthenticateApi: this.apiReauthenticator,
@@ -664,7 +663,7 @@ export class NanobotTui {
         available: () => this.ready,
         beforeOpen: () => this.closeTransientMenus(),
         refreshScope: () => this.refreshSessionMetadata(this.client.activeChatId),
-        onModel: (preset) => this.sendGatewayCommand(`/model ${preset}`, "side_channel", true),
+        onModel: (modelId) => this.sendGatewayCommand(`/model ${modelId}`, "side_channel", true),
         onAccess: (scope) => {
           try {
             this.client.setWorkspaceScope(scope)
@@ -1024,10 +1023,6 @@ export class NanobotTui {
       const switchedSession = Boolean(this.currentChatId && this.currentChatId !== event.chat_id)
       this.currentChatId = event.chat_id
       if (event.usage) this.lastUsage = event.usage
-      if (event.model_preset !== undefined) {
-        this.applyModelPreset(event.model_preset)
-        this.updateTitle()
-      }
       this.commandTurns.clear()
       this.modelCommandTurns.clear()
       const restoring = this.attachedOnce
@@ -1176,10 +1171,10 @@ export class NanobotTui {
         if (typeof event.context_window_tokens === "number") {
           this.contextWindowTokens = event.context_window_tokens
         }
-        this.setTurnModel(event.model_name, event.model_preset)
+        this.setTurnModel(event.model, event.model_id)
         return
       case "runtime_model_updated":
-        this.setDefaultModel(event.model_name, event.model_preset)
+        this.setDefaultModel(event.model, event.model_id)
         return
       case "session_updated":
         if (event.workspace_scope) this.applyWorkspaceScope(event.workspace_scope)
@@ -1229,7 +1224,7 @@ export class NanobotTui {
         this.historyHasMore = false
         this.historyLoadingOlder = false
         this.transcript.reset({
-          model: this.modelName || this.modelPreset,
+          model: this.model,
           workspace: this.options.workspace,
           version: this.options.version,
           access: this.options.access,
@@ -1912,38 +1907,31 @@ export class NanobotTui {
     )
   }
 
-  private setTurnModel(model: string, preset?: string | null): void {
-    this.modelName = model
-    this.modelPreset = preset?.trim() || "default"
+  private setTurnModel(model: string, modelId?: string): void {
+    this.model = model
+    this.modelId = modelId || null
+    this.sessionModelId = modelId || null
     this.updateTitle()
   }
 
-  private setDefaultModel(model: string, preset?: string | null): void {
-    this.defaultModelName = model
-    this.defaultModelPreset = preset?.trim() || "default"
-    if (this.sessionModelPreset === null) {
-      this.modelName = this.defaultModelName
-      this.modelPreset = this.defaultModelPreset
+  private setDefaultModel(model: string, modelId?: string): void {
+    this.defaultModel = model
+    this.defaultModelId = modelId || null
+    if (this.sessionModelId === null) {
+      this.model = this.defaultModel
+      this.modelId = this.defaultModelId
       this.updateTitle()
     }
   }
 
   private applySessionModel(session: SessionSummary): void {
-    this.applyModelPreset(session.modelPreset)
+    this.sessionModelId = session.modelId
+    this.modelId = session.modelId
+    if (!session.modelId) this.model = this.defaultModel
   }
 
   private applySessionScope(session: SessionSummary): void {
     if (session.workspaceScope) this.applyWorkspaceScope(session.workspaceScope)
-  }
-
-  private applyModelPreset(preset: string | null): void {
-    const currentModel = this.modelName
-    const currentPreset = this.modelPreset
-    this.sessionModelPreset = preset
-    this.modelPreset = preset || this.defaultModelPreset
-    this.modelName = this.modelPreset === this.defaultModelPreset
-      ? this.defaultModelName
-      : this.modelPreset === currentPreset ? currentModel : ""
   }
 
   private updateTitle(): void {
@@ -1952,10 +1940,9 @@ export class NanobotTui {
       : `     ~${formatTokenCount(this.contextTokens)}${this.contextWindowTokens
         ? `/${formatTokenCount(this.contextWindowTokens)}`
         : ""} ctx`
-    this.runtimeControls.updateModel(this.modelName, this.modelPreset)
+    this.runtimeControls.updateModel(this.modelId || undefined)
     this.runtimeControls.updateContext(context)
   }
-
   private resizeComposer(): void {
     const verticalPadding = this.renderer.height >= 12 ? 1 : 0
     const maxContentHeight = Math.max(1, Math.min(12, Math.floor(this.renderer.height / 3)))
@@ -2389,7 +2376,7 @@ export class NanobotTui {
         sessions,
         this.client.activeChatId,
         limit,
-        this.defaultModelPreset,
+        this.defaultModelId,
       )
       this.startSessionRefresh()
       this.sessionMenu.update(this.composer.plainText, limit)
@@ -2464,9 +2451,9 @@ export class NanobotTui {
       this.sessionMetadataId += 1
       this.host.reportTitle("")
       this.sessionTitle = "New chat"
-      this.sessionModelPreset = null
-      this.modelName = this.defaultModelName
-      this.modelPreset = this.defaultModelPreset
+      this.sessionModelId = null
+      this.model = this.defaultModel
+      this.modelId = this.defaultModelId
       this.contextTokens = null
       this.lastUsage = null
       this.readyDetail = ""
@@ -2601,7 +2588,7 @@ export class NanobotTui {
       this.sessionMenu.replace(
         sessions,
         this.client.activeChatId,
-        this.defaultModelPreset,
+        this.defaultModelId,
       )
       this.status.content = sessions.length ? `${sessions.length} sessions` : "No saved sessions"
     } catch {

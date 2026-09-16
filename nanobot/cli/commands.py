@@ -382,10 +382,10 @@ def serve(
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1) from exc
 
-    model_name, preset_tag = _model_display(runtime_config)
+    model_name, model_id_tag = _model_display(runtime_config)
     console.print(f"{__logo__} Starting OpenAI-compatible API server")
     console.print(f"  [cyan]Endpoint[/cyan] : http://{host}:{port}/v1/chat/completions")
-    console.print(f"  [cyan]Model[/cyan]    : {model_name}{preset_tag}")
+    console.print(f"  [cyan]Model[/cyan]    : {model_name}{model_id_tag}")
     console.print("  [cyan]Session[/cyan]  : api:default")
     console.print(f"  [cyan]Timeout[/cyan]  : {timeout}s")
     if not is_loopback_host(host):
@@ -396,7 +396,9 @@ def serve(
     console.print()
 
     api_app = create_app(
-        agent_loop, model_name=model_name, request_timeout=timeout,
+        agent_loop,
+        model_id=runtime_config.agents.defaults.model_id,
+        request_timeout=timeout,
         api_key=api_key,
         prepare_agent=mcp_provider.connect,
     )
@@ -668,8 +670,8 @@ def status(
         from nanobot.config.loader import resolve_config_env_vars, resolve_env_refs
         from nanobot.providers.registry import PROVIDERS
 
-        _model, _preset_tag = _model_display(loaded)
-        console.print(f"Model: {_model}{_preset_tag}")
+        _model, _model_id_tag = _model_display(loaded)
+        console.print(f"Model: {_model}{_model_id_tag}")
 
         provider_ready = False
         try:

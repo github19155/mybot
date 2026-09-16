@@ -34,14 +34,13 @@ def _make_loop():
         mock_sub_mgr.return_value.close = AsyncMock()
         from nanobot.providers.factory import ProviderSnapshot
 
-        def load_snapshot(*, preset=None, **_kwargs):
-            selected_model = preset.model if preset is not None else "test-model"
+        def load_snapshot(*, model_id=None, **_kwargs):
+            selected_model = model_id if model_id is not None else "test-model"
             return ProviderSnapshot(
                 provider=provider,
+                model_id=selected_model,
                 model=selected_model,
-                context_window_tokens=(
-                    preset.context_window_tokens if preset is not None else 200_000
-                ),
+                context_window_tokens=200_000,
                 signature=(selected_model,),
                 generation=provider.generation,
             )

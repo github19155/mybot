@@ -14,7 +14,7 @@ Match the recipe to the credential or endpoint you already have:
 
 | What you have | Recipe | Must match |
 |---|---|---|
-| A gateway key and model IDs that include a model family path, such as `provider/model-name` | [OpenRouter Gateway](#recipe-openrouter-gateway) | API key, provider config key, preset provider, and gateway model ID |
+| A gateway key and model IDs that include a model family path, such as `provider/model-name` | [OpenRouter Gateway](#recipe-openrouter-gateway) | API key, provider config key, `models.<model_id>` entry with its `ModelConfig.provider`, and gateway model ID |
 | An OpenCode Zen or Go key | [OpenCode Zen or Go](#recipe-opencode-zen-or-go) | `OPENCODE_API_KEY`, the Zen/Go provider key, and a model ID from the matching OpenCode endpoint |
 | An OpenAI platform API key and OpenAI model ID | [OpenAI Direct](#recipe-openai-direct) | `OPENAI_API_KEY`, `provider: "openai"`, and an OpenAI model available to that account |
 | An Anthropic API key and Anthropic model ID | [Anthropic Direct](#recipe-anthropic-direct) | `ANTHROPIC_API_KEY`, `provider: "anthropic"`, and a non-gateway model ID |
@@ -33,7 +33,7 @@ Match the recipe to the credential or endpoint you already have:
 5. Run `nanobot agent -m "Hello!"`.
 6. If the CLI works, then connect WebUI, gateway, or chat apps.
 
-The active model should normally come from `agents.defaults.modelPreset`, and that name should point to an entry in `modelPresets`. Direct `agents.defaults.provider` and `agents.defaults.model` still work for older configs, but presets are easier to switch and reuse across sessions, Subagent roles, Dream, and Model Fleet.
+The active model should normally come from `agents.defaults.modelId`, which selects an entry in top-level `models`. That `models.<id>` entry explicitly supplies the `provider` and upstream `model`.
 
 ## Secret Setup
 
@@ -68,18 +68,24 @@ This recipe applies when one API key routes many hosted model families.
       "apiKey": "${OPENROUTER_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "openrouter",
+      "model": "anthropic/claude-sonnet-4.5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -109,18 +115,24 @@ OpenCode Zen:
       "apiKey": "${OPENCODE_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "opencode_zen",
-      "model": "opencode/deepseek-v4-pro",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "opencode_zen",
+      "model": "opencode/deepseek-v4-pro",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -135,18 +147,24 @@ OpenCode Go:
       "apiKey": "${OPENCODE_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "opencode_go",
-      "model": "opencode-go/deepseek-v4-flash",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "opencode_go",
+      "model": "opencode-go/deepseek-v4-flash",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -176,18 +194,24 @@ This recipe applies when you have an OpenAI API key and want to call OpenAI dire
       "apiKey": "${OPENAI_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "openai",
-      "model": "gpt-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 128000,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "openai",
+      "model": "gpt-5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 128000,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -212,18 +236,24 @@ This recipe applies when your key comes from Anthropic and your model name is an
       "apiKey": "${ANTHROPIC_API_KEY}"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 200000,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -237,7 +267,7 @@ ANTHROPIC_API_KEY="sk-ant-..." nanobot agent -m "Hello!"
 
 If you copied a model name such as `anthropic/claude-sonnet-4.5`, that is a gateway-style model path and belongs under `provider: "openrouter"`, not `provider: "anthropic"`.
 
-If you use an Anthropic-compatible proxy, keep the preset provider as `anthropic` and set `providers.anthropic.apiBase`:
+If you use an Anthropic-compatible proxy, keep the `models.<model_id>` entry's `ModelConfig.provider` as `anthropic` and set `providers.anthropic.apiBase`:
 
 ```json
 {
@@ -247,18 +277,24 @@ If you use an Anthropic-compatible proxy, keep the preset provider as `anthropic
       "apiBase": "https://anthropic-proxy.example.com"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 200000,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -277,17 +313,23 @@ This recipe applies when your key comes from Kimi's Coding Plan endpoint. Nanobo
       "apiKey": "${KIMI_CODING_API_KEY}"
     }
   },
-  "modelPresets": {
-    "kimiCoding": {
-      "provider": "kimi_coding",
-      "model": "kimi-for-coding",
-      "maxTokens": 4096,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "kimiCoding"
+      "modelId": "kimicoding"
+    }
+  },
+  "models": {
+    "kimicoding": {
+      "displayName": "Kimicoding",
+      "provider": "kimi_coding",
+      "model": "kimi-for-coding",
+      "capabilities": {
+        "text": true
+      },
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -314,18 +356,24 @@ This recipe applies to an OpenAI-compatible service that is not a named nanobot 
       "apiBase": "https://api.example.com/v1"
     }
   },
-  "modelPresets": {
-    "primary": {
-      "provider": "custom",
-      "model": "provider-model-name",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "primary"
+    }
+  },
+  "models": {
+    "primary": {
+      "displayName": "Primary",
+      "provider": "custom",
+      "model": "provider-model-name",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -340,7 +388,7 @@ nanobot agent -m "Hello!"
 
 `apiBase` is the HTTP base URL, not the model name. Include the version path when the service expects it, such as `/v1`. If the service requires a non-empty key but does not validate it, use a placeholder such as `"apiKey": "EMPTY"`.
 
-For multiple custom endpoints, do not overload the single `custom` block. Name each endpoint under `providers` and reference that same name from the preset:
+For multiple custom endpoints, do not overload the single `custom` block. Name each endpoint under `providers` and set the corresponding `ModelConfig.provider` in each `models.<model_id>` entry to that same name:
 
 ```json
 {
@@ -353,25 +401,37 @@ For multiple custom endpoints, do not overload the single `custom` block. Name e
       "apiBase": "http://127.0.0.1:8000/v1"
     }
   },
-  "modelPresets": {
-    "work": {
-      "provider": "workProxy",
-      "model": "gpt-4o-mini",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    },
-    "lab": {
-      "provider": "lab-local",
-      "model": "served-model-name",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "work"
+      "modelId": "work"
+    }
+  },
+  "models": {
+    "work": {
+      "displayName": "Work",
+      "provider": "workProxy",
+      "model": "gpt-4o-mini",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
+    },
+    "lab": {
+      "displayName": "Lab",
+      "provider": "lab-local",
+      "model": "served-model-name",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.1
+      }
     }
   }
 }
@@ -395,18 +455,24 @@ ollama pull llama3.2
       "apiBase": "http://localhost:11434/v1"
     }
   },
-  "modelPresets": {
-    "local": {
-      "provider": "ollama",
-      "model": "llama3.2",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768,
-      "temperature": 0.2
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "local"
+      "modelId": "local"
+    }
+  },
+  "models": {
+    "local": {
+      "displayName": "Local",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 32768,
+      "generationDefaults": {
+        "maxTokens": 2048,
+        "temperature": 0.2
+      }
     }
   }
 }
@@ -439,18 +505,24 @@ This recipe applies when a local server exposes an OpenAI-compatible `/v1` API.
       "apiKey": "EMPTY"
     }
   },
-  "modelPresets": {
-    "local": {
-      "provider": "vllm",
-      "model": "served-model-name",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.2
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "local"
+      "modelId": "local"
+    }
+  },
+  "models": {
+    "local": {
+      "displayName": "Local",
+      "provider": "vllm",
+      "model": "served-model-name",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.2
+      }
     }
   }
 }
@@ -465,23 +537,29 @@ For LM Studio, use its local base URL and provider name:
       "apiBase": "http://localhost:1234/v1"
     }
   },
-  "modelPresets": {
-    "local": {
-      "provider": "lm_studio",
-      "model": "local-model",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "local"
+      "modelId": "local"
+    }
+  },
+  "models": {
+    "local": {
+      "displayName": "Local",
+      "provider": "lm_studio",
+      "model": "local-model",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 32768,
+      "generationDefaults": {
+        "maxTokens": 2048
+      }
     }
   }
 }
 ```
 
-The config key can be `lmStudio` or `lm_studio`, but the preset provider should use the registry name `lm_studio`.
+The config key can be `lmStudio` or `lm_studio`, but the `models.<model_id>` entry's `ModelConfig.provider` should use the registry name `lm_studio`.
 
 ## Recipe: Langfuse Tracing
 
@@ -515,27 +593,39 @@ Langfuse is not a model provider in `config.json`. It is configured through envi
 
 ## Recipe: Switch Models at Runtime
 
-Use this after you have more than one preset and are chatting through a supported channel.
+Use this after you have more than one configured model entry and are chatting through a supported channel.
 
 ```json
 {
-  "modelPresets": {
-    "fast": {
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536
-    },
-    "local": {
-      "provider": "ollama",
-      "model": "llama3.2",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "fast"
+      "modelId": "fast"
+    }
+  },
+  "models": {
+    "fast": {
+      "displayName": "Fast",
+      "provider": "openrouter",
+      "model": "anthropic/claude-sonnet-4.5",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 65536,
+      "generationDefaults": {
+        "maxTokens": 4096
+      }
+    },
+    "local": {
+      "displayName": "Local",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 32768,
+      "generationDefaults": {
+        "maxTokens": 2048
+      }
     }
   }
 }
@@ -558,7 +648,7 @@ turn keeps using the model it started with.
 | Symptom | Usually means | First check |
 |---|---|---|
 | `401`, `unauthorized`, or `invalid API key` | The key is missing, wrong, expired, or under the wrong provider | Print or re-set the environment variable in the same terminal or service |
-| `model not found` | The model ID does not belong to the selected provider or gateway | Compare `modelPresets.<name>.provider` and `modelPresets.<name>.model` |
+| `model not found` | The model ID does not belong to the selected provider or gateway | Compare `agents.defaults.modelId` with `models.<id>.provider` and `models.<id>.model` |
 | `connection refused` | Local server is not running or `apiBase` has the wrong port/path | Run `curl <apiBase>/models` |
 | `provider not found` | Provider name is misspelled or uses the config key instead of registry name | Use names such as `openrouter`, `openai`, `anthropic`, `ollama`, `vllm`, `lm_studio` |
 | Langfuse shows no traces | Env vars are missing, `langfuse` is not installed in the active Python environment, or the provider path is native | Run `python -m pip show langfuse` and restart nanobot from the same environment |

@@ -47,7 +47,7 @@ def mock_agent():
 
 @pytest.fixture
 def app(mock_agent):
-    return create_app(mock_agent, model_name="test-model", request_timeout=10.0, api_key=API_KEY)
+    return create_app(mock_agent, model_id="test-model", request_timeout=10.0, api_key=API_KEY)
 
 
 @pytest_asyncio.fixture
@@ -114,7 +114,7 @@ async def test_missing_messages_returns_400(aiohttp_client, app) -> None:
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
 async def test_api_key_protects_api_routes_but_not_health(aiohttp_client, mock_agent) -> None:
-    app = create_app(mock_agent, model_name="test-model", api_key=API_KEY)
+    app = create_app(mock_agent, model_id="test-model", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     health = await client.get("/health")
@@ -133,7 +133,7 @@ async def test_api_key_protects_api_routes_but_not_health(aiohttp_client, mock_a
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
 async def test_api_routes_allow_requests_without_configured_api_key(aiohttp_client, mock_agent) -> None:
-    app = create_app(mock_agent, model_name="test-model")
+    app = create_app(mock_agent, model_id="test-model")
     client = await aiohttp_client(app)
 
     health = await client.get("/health")
@@ -163,7 +163,7 @@ async def test_api_prepares_application_resources_before_each_turn(aiohttp_clien
         return "ready"
 
     agent.process_direct = process_direct
-    app = create_app(agent, prepare_agent=prepare_agent)
+    app = create_app(agent, model_id="main", prepare_agent=prepare_agent)
     client = await aiohttp_client(app)
 
     response = await client.post(
@@ -187,6 +187,7 @@ async def test_api_preparation_is_bounded_by_request_timeout(aiohttp_client) -> 
 
     app = create_app(
         agent,
+        model_id="main",
         request_timeout=0.01,
         prepare_agent=prepare_agent,
     )
@@ -232,21 +233,43 @@ async def test_model_mismatch_returns_400() -> None:
     request = MagicMock()
     request.json = AsyncMock(
         return_value={
-            "model": "other-model",
+            "model": "anthropic/claude-opus-4-5",
             "messages": [{"role": "user", "content": "hello"}],
         }
     )
     request.app = {
         "agent_loop": _make_mock_agent(),
-        "model_name": "test-model",
+        "model_id": "main",
         "request_timeout": 10.0,
-        "session_lock": asyncio.Lock(),
+        "session_locks": {},
     }
 
     resp = await handle_chat_completions(request)
     assert resp.status == 400
     body = json.loads(resp.body)
-    assert "test-model" in body["error"]["message"]
+    assert "main" in body["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_model_id_is_accepted() -> None:
+    request = MagicMock()
+    request.json = AsyncMock(
+        return_value={
+            "model": "main",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+    request.app = {
+        "agent_loop": _make_mock_agent(),
+        "model_id": "main",
+        "request_timeout": 10.0,
+        "session_locks": {},
+    }
+
+    resp = await handle_chat_completions(request)
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["model"] == "main"
 
 
 @pytest.mark.asyncio
@@ -262,9 +285,9 @@ async def test_single_user_message_required() -> None:
     )
     request.app = {
         "agent_loop": _make_mock_agent(),
-        "model_name": "test-model",
+        "model_id": "test-model",
         "request_timeout": 10.0,
-        "session_lock": asyncio.Lock(),
+        "session_locks": {},
     }
 
     resp = await handle_chat_completions(request)
@@ -283,9 +306,9 @@ async def test_single_user_message_must_have_user_role() -> None:
     )
     request.app = {
         "agent_loop": _make_mock_agent(),
-        "model_name": "test-model",
+        "model_id": "test-model",
         "request_timeout": 10.0,
-        "session_lock": asyncio.Lock(),
+        "session_locks": {},
     }
 
     resp = await handle_chat_completions(request)
@@ -308,12 +331,15 @@ async def test_successful_request_uses_fixed_api_session_and_run_usage(
         return "mock response"
 
     mock_agent.process_direct = AsyncMock(side_effect=process_direct)
-    app = create_app(mock_agent, model_name="test-model", api_key=API_KEY)
+    app = create_app(mock_agent, model_id="test-model", api_key=API_KEY)
     client = await aiohttp_client(app)
     resp = await client.post(
         "/v1/chat/completions",
         headers=AUTH_HEADERS,
-        json={"messages": [{"role": "user", "content": "hello"}]},
+        json={
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
     )
     assert resp.status == 200
     body = await resp.json()
@@ -346,7 +372,7 @@ async def test_followup_requests_share_same_session_key(aiohttp_client) -> None:
     agent.process_direct = fake_process
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     r1 = await client.post(
@@ -384,7 +410,7 @@ async def test_fixed_session_requests_are_serialized(aiohttp_client) -> None:
     agent.process_direct = slow_process
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
 
     async def send(msg: str):
@@ -431,7 +457,7 @@ async def test_health_endpoint(aiohttp_client, app) -> None:
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
 async def test_multimodal_content_extracts_text(aiohttp_client, mock_agent) -> None:
-    app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+    app = create_app(mock_agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
     resp = await client.post(
         "/v1/chat/completions",
@@ -460,7 +486,7 @@ async def test_multimodal_content_extracts_text(aiohttp_client, mock_agent) -> N
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
 async def test_multimodal_remote_image_url_returns_400(aiohttp_client, mock_agent) -> None:
-    app = create_app(mock_agent, model_name="m", api_key=API_KEY)
+    app = create_app(mock_agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
     resp = await client.post(
         "/v1/chat/completions",
@@ -500,7 +526,7 @@ async def test_empty_response_falls_back_without_retry(aiohttp_client) -> None:
     agent.process_direct = always_empty
     agent.aclose = AsyncMock()
 
-    app = create_app(agent, model_name="m", api_key=API_KEY)
+    app = create_app(agent, model_id="m", api_key=API_KEY)
     client = await aiohttp_client(app)
     resp = await client.post(
         "/v1/chat/completions",

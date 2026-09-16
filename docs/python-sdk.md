@@ -34,9 +34,9 @@ python -m pip install nanobot-ai
 ```
 
 `Nanobot.from_config()` reuses your normal `~/.nanobot/config.json` and
-`~/.nanobot/workspace/`. Provider, model, tools, memory, and session behavior
-match the CLI unless you override them. For the difference between config and
-workspace, see [Concepts: Config vs Workspace](concepts.md#config-vs-workspace).
+`~/.nanobot/workspace/`. Provider, model selection, tools, memory, and session
+behavior match the CLI unless you override them. For the difference between
+config and workspace, see [Concepts: Config vs Workspace](concepts.md#config-vs-workspace).
 
 Before writing SDK code, run the same first-run checks from the main
 [Install and Quick Start](quick-start.md):
@@ -45,8 +45,8 @@ Before writing SDK code, run the same first-run checks from the main
 nanobot status
 ```
 
-`nanobot status` should show the config path, workspace path, active model or
-preset, and provider summary. Then send one real message:
+`nanobot status` should show the config path, workspace path, active model ID,
+and provider summary. Then send one real message:
 
 ```bash
 nanobot agent -m "Hello!"
@@ -212,7 +212,7 @@ stable `session_key`, stream events, keep the final `RunResult`, and let
 | Tools | Capabilities the agent may call, such as file access, shell, web, or custom tools from your config. |
 | Memory | Long-term memory files managed by nanobot. |
 | Stream event | A typed event such as `text.delta`, `tool.started`, or `run.completed`. |
-| Model override | A temporary model or model preset used for one SDK instance or one run. |
+| Model override | A temporary canonical `model_id` used for one SDK instance or one run. |
 
 For most users, the mental model is:
 
@@ -266,34 +266,35 @@ The config controls what nanobot may use. The workspace is where nanobot keeps
 state for that instance. See [multiple-instances.md](multiple-instances.md) for
 multi-instance CLI and gateway examples.
 
-### Choose a default or per-run model
+### Choose a default or per-run model ID
 
-Set the SDK instance default model when you create the bot:
+Set the SDK instance default by passing a canonical `model_id` from the
+configured `models` registry when you create the bot:
 
 ```python
-bot = Nanobot.from_config(model="openai/gpt-4.1")
+bot = Nanobot.from_config(model_id="main")
 ```
 
 Override the model for one run without changing the instance default:
 
 ```python
-result = await bot.run("Summarize this file", model="openai/gpt-4.1-mini")
+result = await bot.run("Summarize this file", model_id="fast")
 ```
 
-Model presets from `config.json` work the same way:
+`model_id` is Nanobot's canonical model identity and must resolve to an entry
+in `Config.models`. It is distinct from the upstream `model` value exposed by
+`bot.runtime.model`; do not pass an upstream provider/model string as a
+selector. The same `model_id` keyword is available on `run_streamed()` and
+`stream()`.
 
-```python
-bot = Nanobot.from_config(model_preset="fast")
+An invalid model ID raises `ValueError`, and a valid but unconfigured model ID
+raises `KeyError`. The SDK does not accept `model` or `model_preset` selector
+arguments; Python raises `TypeError` for those unsupported keyword arguments.
 
-result = await bot.run("Think deeply about this bug", model_preset="reasoning")
-```
-
-`model` and `model_preset` are mutually exclusive.
-
-For first setup, prefer named presets in `config.json`. Mixing an API key from
-one provider with a model ID from another is the most common first-run failure.
-For the exact difference between `provider`, `model`, `apiKey`, and `apiBase`,
-see [Providers: Provider, Model, API Key, and Base URL](providers.md#provider-model-api-key-and-base-url).
+For first setup, configure the provider credentials and model entry together.
+`model_id` selects the configured entry, whose provider and upstream model route
+must match. For the exact difference between `provider`, `model`, `apiKey`, and
+`apiBase`, see [Providers: Provider, Model, API Key, and Base URL](providers.md#provider-model-api-key-and-base-url).
 If a run fails before the SDK does anything interesting, confirm the same
 provider and model work with `nanobot agent -m "Hello!"` first.
 
@@ -463,7 +464,7 @@ configuration docs remain the source of truth for the runtime around it:
 
 ## API Reference
 
-### `Nanobot.from_config(config_path=None, *, workspace=None, model=None, model_preset=None)`
+### `Nanobot.from_config(config_path=None, *, workspace=None, model_id=None)`
 
 Create a `Nanobot` instance from a config file.
 
@@ -471,11 +472,12 @@ Create a `Nanobot` instance from a config file.
 |-------|------|---------|-------------|
 | `config_path` | `str \| Path \| None` | `None` | Path to `config.json`. Defaults to `~/.nanobot/config.json`. |
 | `workspace` | `str \| Path \| None` | `None` | Override the workspace directory from config. |
-| `model` | `str \| None` | `None` | Override the instance default model. |
-| `model_preset` | `str \| None` | `None` | Override the instance default model preset from `config.json`. |
+| `model_id` | `str \| None` | `None` | Override the instance default with a canonical model ID resolved from `Config.models`. |
 
 Raises `FileNotFoundError` if an explicit config path does not exist.
-Raises `ValueError` if both `model` and `model_preset` are provided.
+Raises `ValueError` for an invalid `model_id` and `KeyError` if the model ID is
+not configured. Unsupported `model` and `model_preset` keyword arguments raise
+`TypeError`; raw upstream model strings are not accepted.
 
 ### `await bot.run(...)`
 
@@ -492,18 +494,20 @@ Run the agent once and return a `RunResult`.
 | `ephemeral` | `bool` | `False` | Run without persisting the turn or compacting session history. |
 | `attributes` | `Mapping[str, Any] \| None` | `None` | Caller-owned request data for host integrations. It is available to context providers and turn-hook factories, but is not added to trusted message metadata or persisted in session messages. |
 | `hooks` | `list[AgentHook] \| None` | `None` | Lifecycle hooks for this run only. |
-| `model` | `str \| None` | `None` | Override the model for this run only. |
-| `model_preset` | `str \| None` | `None` | Override the model preset for this run only. |
+| `model_id` | `str \| None` | `None` | Override the canonical model ID for this run only. It must resolve to `Config.models`. |
 
-Without an override, a run uses the preset saved in its session, or the configured
-default when that session has no saved selection. `model` and `model_preset` are
-mutually exclusive per-run overrides; they do not change the saved session selection
-or `bot.runtime.model` after the run completes.
+Without an override, a run uses the `model_id` saved in its session, or the
+configured default when that session has no saved selection. A `model_id`
+override does not change the saved session selection or `bot.runtime.model`
+after the run completes. Invalid or unknown IDs raise `ValueError` or
+`KeyError`, respectively. Unsupported `model` and `model_preset` keyword
+arguments raise `TypeError`.
 
 ### `await bot.run_streamed(...)`
 
 Start a streamed agent turn and return a `RunStream`. It accepts the same
-parameters as `bot.run(...)`.
+parameters as `bot.run(...)`, including the per-run canonical `model_id`
+override.
 
 ```python
 run = await bot.run_streamed("Generate a long answer")
@@ -517,7 +521,8 @@ result = await run.wait()
 ### `bot.stream(...)`
 
 Convenience wrapper around `run_streamed()` for direct event iteration. It
-accepts the same parameters as `bot.run(...)`.
+accepts the same parameters as `bot.run(...)`, including the per-run canonical
+`model_id` override.
 
 ```python
 async for event in bot.stream("Generate a long answer"):
@@ -535,8 +540,8 @@ async for event in bot.stream("Generate a long answer"):
 | `await aclose()` | Close the stream; equivalent cleanup primitive for `async with` / manual lifecycle code. |
 
 SDK runs with different session keys may overlap, including runs with per-run
-`model` or `model_preset` overrides. Each run receives an immutable runtime without
-mutating the instance default. Runs sharing one session key remain serialized.
+`model_id` overrides. Each run receives an immutable runtime without mutating
+the instance default. Runs sharing one session key remain serialized.
 
 ### `StreamEvent`
 

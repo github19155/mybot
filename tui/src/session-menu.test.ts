@@ -12,7 +12,7 @@ const sessions: SessionSummary[] = [
     createdAt: "2026-08-12T10:00:00Z",
     updatedAt: "2026-08-13T10:00:00Z",
     runStartedAt: null,
-    modelPreset: "Codex",
+    modelId: "codex",
     pinned: true,
     archived: false,
   },
@@ -23,7 +23,7 @@ const sessions: SessionSummary[] = [
     createdAt: "2026-08-11T10:00:00Z",
     updatedAt: "2026-08-12T10:00:00Z",
     runStartedAt: null,
-    modelPreset: null,
+    modelId: null,
     recoveryState: {
       status: "awaiting_user",
       recovery_id: "recovery-two",
@@ -52,7 +52,7 @@ describe("SessionMenu", () => {
       warning: "#F5C451",
     })
     setup.renderer.root.add(menu.root)
-    menu.open(sessions, "one", 6, "Codex")
+    menu.open(sessions, "one", 6, "codex")
     await setup.renderOnce()
 
     expect(setup.captureCharFrame()).toContain("› ● API migration")
@@ -204,7 +204,7 @@ describe("SessionMenu", () => {
     ], "one", 6)
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).toContain("nanobot · Codex")
+    expect(frame).toContain("nanobot · codex")
     expect(frame).toContain("desktop")
 
     menu.update("desktop", 6)
@@ -245,19 +245,19 @@ describe("SessionMenu", () => {
     })
     setup.renderer.root.add(menu.root)
 
-    menu.open(sessions, "one", 6, "Codex")
+    menu.open(sessions, "one", 6, "codex")
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).not.toContain("Codex")
+    expect(frame).not.toContain("codex")
     expect(frame).not.toContain("Prepare the stable release")
 
     menu.update("prepare stable", 6)
     await setup.renderOnce()
     expect(menu.choose()?.chatId).toBe("two")
 
-    menu.replace([{ ...sessions[1]!, modelPreset: "Deep Research" }], "one", "Codex")
+    menu.replace([{ ...sessions[1]!, modelId: "deep-research" }], "one", "codex")
     await setup.renderOnce()
-    expect(setup.captureCharFrame()).toContain("Deep Research")
+    expect(setup.captureCharFrame()).toContain("deep-research")
     menu.hide()
   })
 })

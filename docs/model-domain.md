@@ -1,8 +1,7 @@
 # Model Domain
 
-Nanobot's model configuration is converging on one canonical model registry.
-This document defines the frozen contract that the staged consumer migrations
-will target.
+Nanobot uses one canonical model registry. This document defines the V2
+model identity, configuration, capability, and lookup contract.
 
 ## Identity
 
@@ -86,10 +85,9 @@ ModelConfig
 └── max_concurrent_requests
 ```
 
-`provider` is mandatory canonical state and must name a concrete Provider ID.
-`provider="auto"` is invalid. Auto-detection may exist later as a model-creation
-input convenience, but successful creation must resolve it before producing a
-`ModelConfig`.
+`provider` is mandatory canonical state and must name the concrete Provider ID
+for the route. `provider="auto"` is invalid. Runtime never infers or guesses a
+provider from the upstream model string, display name, credentials, or endpoint.
 
 `generation_defaults` means only default inference parameters when calling the
 model. It is not capability and it is not Dream/Fleet/Worker policy.
@@ -129,40 +127,29 @@ model = get_model(models, model_id)
 vision_model = require_model_capability(models, model_id, "vision")
 ```
 
-Both functions work on `Mapping[str, ModelConfig]`. They do not depend on root
-`Config`, so Runtime/Fleet, Image, Transcription, and Subagent/Dream can migrate
-independently while sharing identical model-ID and capability semantics.
+Both functions work on `Mapping[str, ModelConfig]`. The root `Config.models`
+mapping is the source passed to them, so Runtime/Fleet, Image, Transcription,
+and Subagent/Dream share identical model-ID and capability semantics.
 
 `get_model()` validates the canonical ID and resolves `model_id -> ModelConfig`.
 `require_model_capability()` performs the same lookup and rejects a model that
 does not declare the requested canonical capability.
 
-## Staged migration
+## Runtime resolution
 
-The remaining migration remains split by actual consumer boundaries:
+Model selection is explicit and uses only canonical model IDs:
 
-```text
-A  Core Model Domain
-       ↓
-B  Runtime + Fleet
-C  Image
-D  Transcription
-E  Subagent + Dream
-       ↓
-Final legacy deletion
-```
+1. A consumer stores or supplies a `model_id` such as `main`.
+2. `get_model(Config.models, model_id)` resolves that key to one `ModelConfig`.
+3. Runtime uses `ModelConfig.provider` as the concrete provider ID, loads the
+   matching `providers.<provider>` settings, and selects that provider adapter.
+4. Runtime sends `ModelConfig.model` as the upstream model value for that
+   provider.
 
-A defines only the canonical model contract and lookup API. It does not migrate
-Runtime, Image, Transcription, Subagent, Dream, WebUI, or the root `Config`.
-
-B-E must actively migrate their consumers to this API. `ModelConfig` does not
-carry flat legacy fields, `supports_*` aliases, preset aliases, or other staged
-compatibility surfaces.
-
-After all consumers have moved, final integration switches the root schema to
-`models` plus consumer `model_id` references and deletes `ModelPresetConfig`,
-`model_presets`, synthetic `default`, direct AgentDefaults model facts, and the
-remaining old migration paths.
+`display_name`, upstream `model`, provider-name prefixes, credentials, API base
+URLs, and gateway metadata are not model selectors. An unknown or invalid
+`model_id` fails validation; callers must provide a canonical `model_id` rather
+than a raw upstream-model string.
 
 ## Invariants
 

@@ -106,7 +106,7 @@ def test_select_model_accepts_only_canonical_model_id() -> None:
     selected = resolver.select_model("worker")
     assert selected.model_id == "worker"
     assert selected.model == "openai/gpt-5.6"
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="model_id must match"):
         resolver.select_model("openai/gpt-5.6")
 
 

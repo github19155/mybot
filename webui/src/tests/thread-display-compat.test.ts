@@ -42,7 +42,7 @@ describe("normalizeLegacyLongTaskMessages", () => {
       message("user", { id: "model", content: "/model fast", turnId: "model-turn" }),
       message("assistant", {
         id: "model-reply",
-        content: "Switched model preset to fast.",
+        content: "Switched model to `fast`.",
         turnId: "model-turn",
       }),
       message("user", { id: "silent", content: "/restart", turnId: "webui-system:restart" }),
@@ -60,8 +60,8 @@ describe("normalizeLegacyLongTaskMessages", () => {
       isModelCommandText("/MODEL@nanobot fast"),
       isModelCommandText("/modelish"),
     ]).toEqual([true, false]);
-    expect(visibleSessionPreview("Switched model preset to `fast`.")).toBe("");
-    expect(deriveTitle("## Model\n- Current model: `gpt-5.5`", "New chat")).toBe("New chat");
+    expect(visibleSessionPreview("Switched model to `fast`.")).toBe("");
+    expect(deriveTitle("## Model\n- Current model ID: `gpt-5.5`", "New chat")).toBe("New chat");
   });
 });
 

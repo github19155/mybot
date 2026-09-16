@@ -97,7 +97,7 @@ class GoalStateChanged:
 
 @dataclass(frozen=True)
 class RuntimeModelChanged:
-    """The active runtime model/preset changed."""
+    """The active runtime model changed; ``model`` is upstream display data."""
 
     model: str
     model_id: str | None

@@ -658,7 +658,7 @@ class WebuiTurnCoordinator:
                 chat_id=event.context.chat_id,
                 event=TurnModelUpdatedEvent(
                     model=event.runtime.model,
-                    model_preset=event.runtime.model_preset,
+                    model_id=event.runtime.model_id,
                     context_window_tokens=event.runtime.context_window_tokens,
                 ),
                 metadata=event.context.metadata,
@@ -707,7 +707,7 @@ class WebuiTurnCoordinator:
                 chat_id="*",
                 event=RuntimeModelUpdatedEvent(
                     model=event.model,
-                    model_preset=event.model_preset,
+                    model_id=event.model_id,
                 ),
             )
         )

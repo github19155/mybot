@@ -6,21 +6,21 @@ import {
   type AgentSettingsDraft,
 } from "@/components/settings/models/ModelsSettings";
 import type { ProviderForm } from "@/components/settings/models/ProviderSettings";
-import type { ProviderOAuthAuthorizationRequired, SettingsPayload } from "@/lib/types";
+import type { ModelSettingsRow, ProviderOAuthAuthorizationRequired, SettingsPayload } from "@/lib/types";
 
 export function useModelSettingsState(initialSettings: SettingsPayload | null) {
   const initialForm = initialSettings
     ? agentDraftFromPayload(initialSettings)
     : DEFAULT_AGENT_SETTINGS_DRAFT;
   const [saving, setSaving] = useState(false);
-  const [modelPresetCreating, setModelPresetCreating] = useState(false);
-  const [modelPresetNameError, setModelPresetNameError] = useState<string | null>(null);
+  const [modelCreating, setModelCreating] = useState(false);
+  const [modelIdError, setModelIdError] = useState<string | null>(null);
   const [modelConfigurationSaving, setModelConfigurationSaving] = useState(false);
-  const [modelPresetSelecting, setModelPresetSelecting] = useState(false);
+  const [modelSelecting, setModelSelecting] = useState(false);
   const [imageAnalysisSaving, setImageAnalysisSaving] = useState(false);
-  const [modelPresetPendingDelete, setModelPresetPendingDelete] =
-    useState<SettingsPayload["model_presets"][number] | null>(null);
-  const modelPresetBeforeCreateRef = useRef<string | null>(null);
+  const [modelPendingDelete, setModelPendingDelete] =
+    useState<ModelSettingsRow | null>(null);
+  const modelBeforeCreateRef = useRef<string | null>(null);
   const [providerSaving, setProviderSaving] = useState<string | null>(null);
   const [providerOAuthFlow, setProviderOAuthFlow] =
     useState<ProviderOAuthAuthorizationRequired | null>(null);
@@ -33,8 +33,8 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
   const [visibleProviderKeys, setVisibleProviderKeys] = useState<Record<string, boolean>>({});
   const [editingProviderKeys, setEditingProviderKeys] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState<AgentSettingsDraft>(initialForm);
-  const [modelPresetEditingName, setModelPresetEditingName] = useState(
-    initialForm.modelPreset,
+  const [editingModelId, setEditingModelId] = useState(
+    initialForm.modelId,
   );
   const [promptOverrides, setPromptOverrides] = useState<
     SettingsPayload["system_prompt_overrides"]
@@ -53,12 +53,12 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     promptOverridesSaving,
     roleBindingsDraft,
     roleBindingsSaving,
-    modelPresetBeforeCreateRef,
-    modelPresetCreating,
-    modelPresetEditingName,
-    modelPresetNameError,
-    modelPresetPendingDelete,
-    modelPresetSelecting,
+    modelBeforeCreateRef,
+    modelCreating,
+    editingModelId,
+    modelIdError,
+    modelPendingDelete,
+    modelSelecting,
     providerForms,
     providerOAuthCompleting,
     providerOAuthDialogError,
@@ -76,11 +76,11 @@ export function useModelSettingsState(initialSettings: SettingsPayload | null) {
     setPromptOverridesSaving,
     setRoleBindingsDraft,
     setRoleBindingsSaving,
-    setModelPresetCreating,
-    setModelPresetEditingName,
-    setModelPresetNameError,
-    setModelPresetPendingDelete,
-    setModelPresetSelecting,
+    setModelCreating,
+    setEditingModelId,
+    setModelIdError,
+    setModelPendingDelete,
+    setModelSelecting,
     setProviderForms,
     setProviderOAuthCompleting,
     setProviderOAuthDialogError,

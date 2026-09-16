@@ -59,8 +59,10 @@ class ModelManagement:
     @classmethod
     def _sync_fleet_catalog(cls, config: Config):
         fleet = get_model_fleet(config)
-        for model_id in config.models:
-            fleet.bind_offering(cls._canonical_offering(config, model_id))
+        fleet.sync_offerings([
+            cls._canonical_offering(config, model_id)
+            for model_id in config.models
+        ])
         return fleet
 
     async def fleet_status(self) -> dict[str, object]:

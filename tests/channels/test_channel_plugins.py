@@ -36,7 +36,8 @@ from nanobot.channels.contracts import (
 from nanobot.channels.manager import ORIGIN_REPLY_FINGERPRINTS_MAX_SIZE, ChannelManager
 from nanobot.channels.plugin import ChannelPlugin, load_channel_package
 from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import ChannelsConfig, Config
+from nanobot.config.schema import ChannelsConfig, Config, TranscriptionConfig
+from nanobot.model_domain import ModelCapabilities, ModelConfig
 from nanobot.providers.transcription import GroqTranscriptionProvider as _GroqProvider
 from nanobot.providers.transcription import OpenAITranscriptionProvider as _OpenAIProvider
 from nanobot.utils.restart import RestartNotice
@@ -1034,8 +1035,13 @@ async def test_base_channel_reads_current_transcription_config_each_call(
 
     config_path = tmp_path / "config.json"
     config = Config()
-    config.transcription.provider = "openai"
-    config.transcription.model = "whisper-custom"
+    config.models["speech-openai"] = ModelConfig(
+        display_name="Speech OpenAI",
+        provider="openai",
+        model="whisper-custom",
+        capabilities=ModelCapabilities(transcription=True),
+    )
+    config.transcription.model_id = "speech-openai"
     config.transcription.language = "en"
     config.providers.openai.api_key = "openai-key"
     config.providers.openai.api_base = "http://openai.local/v1/audio/transcriptions"
@@ -1078,8 +1084,13 @@ async def test_base_channel_reads_current_transcription_config_each_call(
     ):
         assert await channel.transcribe_audio("/tmp/does-not-matter.wav") == "openai-ok"
 
-        config.transcription.provider = "groq"
-        config.transcription.model = "whisper-large-v3-turbo"
+        config.models["speech-groq"] = ModelConfig(
+            display_name="Speech Groq",
+            provider="groq",
+            model="whisper-large-v3-turbo",
+            capabilities=ModelCapabilities(transcription=True),
+        )
+        config.transcription.model_id = "speech-groq"
         config.transcription.language = "ko"
         config.providers.groq.api_key = "groq-key"
         config.providers.groq.api_base = "http://groq.local/v1/audio/transcriptions"
@@ -2909,21 +2920,21 @@ def test_channels_config_send_max_retries_upper_bound():
 
 
 def test_channels_config_transcription_language_pattern():
-    """transcription_language must match ISO-639 format (2-3 lowercase letters) or be None."""
+    """Transcription language must match ISO-639 format (2-3 lowercase letters)."""
     from pydantic import ValidationError
 
     # Valid values
-    assert ChannelsConfig(transcription_language="en").transcription_language == "en"
-    assert ChannelsConfig(transcription_language="kor").transcription_language == "kor"
-    assert ChannelsConfig(transcription_language=None).transcription_language is None
+    assert TranscriptionConfig(language="en").language == "en"
+    assert TranscriptionConfig(language="kor").language == "kor"
+    assert TranscriptionConfig(language=None).language is None
 
     # Invalid values
     with pytest.raises(ValidationError):
-        ChannelsConfig(transcription_language="EN")       # uppercase
+        TranscriptionConfig(language="EN")       # uppercase
     with pytest.raises(ValidationError):
-        ChannelsConfig(transcription_language="english")   # full word
+        TranscriptionConfig(language="english")   # full word
     with pytest.raises(ValidationError):
-        ChannelsConfig(transcription_language="en-US")     # BCP 47 tag
+        TranscriptionConfig(language="en-US")     # BCP 47 tag
 
 
 # ---------------------------------------------------------------------------

@@ -29,12 +29,15 @@ def _write_ready_config(config_path, *, channels: dict | None = None) -> None:
     config_path.write_text(
         json.dumps(
             {
-                "agents": {
-                    "defaults": {
-                        "model": "ollama/llama3.2",
+                "models": {
+                    "main": {
+                        "displayName": "Main",
                         "provider": "ollama",
+                        "model": "ollama/llama3.2",
+                        "capabilities": {"text": True},
                     }
                 },
+                "agents": {"defaults": {"modelId": "main"}},
                 "providers": {
                     "ollama": {
                         "apiBase": "http://localhost:11434/v1",
@@ -71,12 +74,15 @@ def test_status_validates_bedrock_without_constructing_provider(
     config_path.write_text(
         json.dumps(
             {
-                "agents": {
-                    "defaults": {
-                        "model": "bedrock/amazon.nova-lite-v1:0",
+                "models": {
+                    "main": {
+                        "displayName": "Main",
                         "provider": "bedrock",
+                        "model": "amazon.nova-lite-v1:0",
+                        "capabilities": {"text": True},
                     }
                 },
+                "agents": {"defaults": {"modelId": "main"}},
                 "providers": {"bedrock": {"region": "us-east-1"}},
             }
         ),
@@ -114,8 +120,16 @@ def test_status_reports_missing_key_for_anthropic_backends(
     config_path.write_text(
         json.dumps(
             {
-                "agents": {"defaults": {"model": model, "provider": provider}},
-                "providers": {provider_key: {}},
+                "models": {
+                    "main": {
+                        "displayName": provider,
+                        "provider": provider,
+                        "model": model,
+                        "capabilities": {"text": True},
+                    }
+                },
+                "agents": {"defaults": {"modelId": "main"}},
+                "providers": {provider: {}},
             }
         ),
         encoding="utf-8",
@@ -150,8 +164,16 @@ def test_status_accepts_resolved_key_for_anthropic_backends(
     config_path.write_text(
         json.dumps(
             {
-                "agents": {"defaults": {"model": model, "provider": provider}},
-                "providers": {provider_key: {"apiKey": f"${{{env_name}}}"}},
+                "models": {
+                    "main": {
+                        "displayName": provider,
+                        "provider": provider,
+                        "model": model,
+                        "capabilities": {"text": True},
+                    }
+                },
+                "agents": {"defaults": {"modelId": "main"}},
+                "providers": {provider: {"apiKey": f"${{{env_name}}}"}},
             }
         ),
         encoding="utf-8",
@@ -173,7 +195,7 @@ def test_status_reports_missing_provider_with_shortest_setup_routes(tmp_path) ->
 
     assert result.exit_code == 0
     assert "Agent: ✗" in result.stdout
-    assert "No provider is configured for model" in result.stdout
+    assert "No API key configured for provider 'anthropic'." in result.stdout
     assert "Settings → Models" in _without_rendered_line_breaks(result.stdout)
     assert "nanobot onboard --wizard" in result.stdout
     assert "nanobot status --config" in result.stdout
@@ -295,7 +317,7 @@ def test_agent_provider_setup_failure_points_to_shortest_routes(tmp_path) -> Non
     output = _without_rendered_line_breaks(result.stdout)
 
     assert result.exit_code == 1
-    assert "Agent cannot start: No provider is configured for model" in output
+    assert "Agent cannot start: No API key configured for provider 'anthropic'." in output
     assert "Settings → Models" in output
     assert "nanobot onboard --wizard" in output
     assert "nanobot status --config" in output
@@ -338,7 +360,7 @@ def test_gateway_provider_setup_failure_points_to_shortest_routes_when_webui_dis
     output = _without_rendered_line_breaks(result.stdout)
 
     assert result.exit_code == 1
-    assert "Gateway cannot start: No provider is configured for model" in output
+    assert "Gateway cannot start: No API key configured for provider 'anthropic'." in output
     assert "Settings → Models" in output
     assert "nanobot onboard --wizard" in output
     assert "nanobot status --config" in output
@@ -424,7 +446,7 @@ def test_gateway_missing_provider_managed_start_for_webui_setup(
     output = _without_rendered_line_breaks(result.stdout)
 
     assert result.exit_code == 0
-    assert "Provider/model setup is incomplete: No provider is configured for model" in output
+    assert "Provider/model setup is incomplete: No API key configured for provider 'anthropic'." in output
     assert "Gateway will start so you can configure a provider and model" in output
     assert "WebUI Settings" in output
     assert "Models." in output

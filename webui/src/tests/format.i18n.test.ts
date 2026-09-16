@@ -5,6 +5,7 @@ import {
   fmtDateTime,
   formatMessageEndTime,
   formatTurnLatency,
+  isModelCommandResponseText,
   relativeTime,
 } from "@/lib/format";
 
@@ -40,6 +41,18 @@ describe("localized format helpers", () => {
       ),
     );
     expect(english).not.toBe(chinese);
+  });
+  it("recognizes canonical multiline model responses only", () => {
+    expect(
+      isModelCommandResponseText(
+        "## Model\n- Current model ID: `main`\n- Upstream model: `Ring-2.6-1T`",
+      ),
+    ).toBe(true);
+    expect(isModelCommandResponseText("## Model\n- Current model: `Ring-2.6-1T`"))
+      .toBe(false);
+    expect(isModelCommandResponseText("This unrelated reply stays visible.")).toBe(
+      false,
+    );
   });
 
   it("formats date-time using the active locale", async () => {

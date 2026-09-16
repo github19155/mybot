@@ -63,20 +63,28 @@ class TestCustomProviderThinkingStyle:
         assert "reasoning_split" in message
 
     def test_provider_signature_tracks_dynamic_primary_thinking_style(self) -> None:
-        before = Config.model_validate(
-            {
-                "agents": {"defaults": {"modelPreset": "primary"}},
-                "modelPresets": {
-                    "primary": {"model": "tenant-model", "provider": "tenant"},
-                },
-                "providers": {
-                    "tenant": {
-                        "apiBase": "https://example.com/v1",
-                        "thinkingStyle": "thinking_type",
+        def make_config() -> Config:
+            return Config.model_validate(
+                {
+                    "models": {
+                        "main": {
+                            "displayName": "tenant",
+                            "provider": "tenant",
+                            "model": "tenant-model",
+                            "capabilities": {"text": True},
+                        }
                     },
-                },
-            }
-        )
+                    "agents": {"defaults": {"modelId": "main"}},
+                    "providers": {
+                        "tenant": {
+                            "apiBase": "https://example.com/v1",
+                            "thinkingStyle": "thinking_type",
+                        },
+                    },
+                }
+            )
+
+        before = make_config()
         after = before.model_copy(deep=True)
         after.providers.model_extra["tenant"].thinking_style = "enable_thinking"
 

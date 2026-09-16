@@ -1052,9 +1052,9 @@ class TestSecurityAttributeProtection:
 
     @pytest.mark.asyncio
     async def test_modify_models_dotpath_blocked(self):
-        """The config-derived model preset catalog is inspectable but not mutable."""
-        presets = {"fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model")}
-        tool = _make_tool(loop=_make_mock_loop(models=presets))
+        """The configured model catalog (models = config.models) is inspectable but not mutable."""
+        config_models = {"fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model")}
+        tool = _make_tool(loop=_make_mock_loop(models=config_models))
 
         result = await tool.execute(
             action="set",
@@ -1063,14 +1063,14 @@ class TestSecurityAttributeProtection:
         )
 
         assert "read-only" in result
-        assert presets == {"fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model")}
+        assert config_models == {"fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model")}
 
     @pytest.mark.asyncio
     async def test_inspect_read_only_model_dotpath(self):
-        presets = MappingProxyType({
+        config_models = MappingProxyType({
             "fast": ModelConfig(display_name="Fast", provider="openai", model="fast-model"),
         })
-        tool = _make_tool(loop=_make_mock_loop(models=presets))
+        tool = _make_tool(loop=_make_mock_loop(models=config_models))
 
         result = await tool.execute(action="check", key="models.fast.model")
 

@@ -21,7 +21,6 @@ from weakref import WeakValueDictionary
 from filelock import FileLock
 from loguru import logger
 
-from nanobot.config.paths import get_legacy_sessions_dir, get_runtime_subdir
 from nanobot.providers.base import ProviderConversationState
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
@@ -39,6 +38,19 @@ from nanobot.utils.helpers import (
     strip_think,
 )
 from nanobot.utils.subagent_channel_display import scrub_subagent_announce_body
+
+
+def get_runtime_subdir(name: str) -> Path:
+    from nanobot.config.paths import get_runtime_subdir as resolve_runtime_subdir
+
+    return resolve_runtime_subdir(name)
+
+
+def get_legacy_sessions_dir() -> Path:
+    from nanobot.config.paths import get_legacy_sessions_dir as resolve_legacy_sessions_dir
+
+    return resolve_legacy_sessions_dir()
+
 
 SESSION_CACHE_MAX_SIZE = 128
 MIN_COMPACTED_REPLAY_MESSAGES = 8

@@ -640,7 +640,7 @@ describe("webui i18n", () => {
     for (const locale of ["id", "vi"] as const) {
       const current = flattenResource(resources[locale].common);
       const copied = ACCIDENTALLY_SPANISH_SETTINGS_KEYS.filter(
-        (key) => current.get(key) === spanish.get(key),
+        (key) => current.has(key) && spanish.has(key) && current.get(key) === spanish.get(key),
       );
       expect({ locale, copied }).toEqual({ locale, copied: [] });
     }

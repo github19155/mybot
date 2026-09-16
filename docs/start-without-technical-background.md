@@ -80,9 +80,9 @@ In the browser, open **Settings → Models**. Then:
 
 1. Choose your provider.
 2. Enter its API key and base URL when required.
-3. Create or select a model preset.
+3. Create a model in **Settings → Models**.
 4. Enter a model ID available to your provider account.
-5. Save the configuration.
+5. Save it, then choose **Use** for the model you want active.
 
 Treat every API key like a password. Do not include it in screenshots or support requests.
 
@@ -116,7 +116,7 @@ Do not configure every feature immediately. Choose one next goal:
 
 | Goal | What to do |
 |---|---|
-| Change the AI model | Open **Settings → Models** |
+| Change the AI model | Open **Settings → Models**, then choose **Use** for a configured model |
 | Add a provider credential | Open **Settings → Models**, then find the provider |
 | Connect Telegram, Discord, Slack, Feishu, WeChat, or another chat app | Open **Settings → Channels**, choose the platform, and follow its connection steps |
 | Add a tool integration | Open **Apps** and choose an App or MCP integration |

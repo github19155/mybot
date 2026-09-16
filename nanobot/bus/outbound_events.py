@@ -100,16 +100,18 @@ class UserInputEvent(OutboundEvent):
 
 @dataclass(frozen=True)
 class RuntimeModelUpdatedEvent(OutboundEvent):
+    """The canonical runtime model changed; ``model`` is upstream display data."""
+
     model: str | None
-    model_preset: str | None = None
+    model_id: str | None = None
 
 
 @dataclass(frozen=True)
 class TurnModelUpdatedEvent(OutboundEvent):
-    """The canonical preset and concrete model handling one chat turn."""
+    """The canonical model handling one chat turn; ``model`` is upstream display data."""
 
     model: str
-    model_preset: str | None = None
+    model_id: str | None = None
     context_window_tokens: int | None = None
 
 
@@ -176,7 +178,7 @@ def _legacy_event_from_metadata(msg: OutboundMessage) -> OutboundEvent | None:
     if meta.get("_runtime_model_updated"):
         return RuntimeModelUpdatedEvent(
             model=_metadata_str(meta, "model"),
-            model_preset=_metadata_str(meta, "model_preset"),
+            model_id=_metadata_str(meta, "model_id"),
         )
     if meta.get("_goal_state_sync"):
         goal_state = meta.get("goal_state")

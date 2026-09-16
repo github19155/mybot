@@ -501,6 +501,13 @@ class ModelFleetManager:
         self.store.upsert_offering(offering)
         return offering
 
+    def sync_offerings(self, offerings: Sequence[ModelOffering]) -> None:
+        """Replace active offerings without deleting historical telemetry."""
+        active = {}
+        for offering in offerings:
+            active[offering.offering_id] = self.bind_offering(offering)
+        self._offerings = active
+
     async def record_call(
         self,
         offering: ModelOffering,

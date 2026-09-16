@@ -54,38 +54,67 @@ def test_find_by_name_opencode_providers() -> None:
 
 
 def test_opencode_forced_providers_use_default_api_base() -> None:
+    from nanobot.providers.factory import make_provider
+
     zen_config = Config.model_validate(
         {
             "providers": {"opencode": {"apiKey": "opencode-key"}},
-            "agents": {"defaults": {"provider": "opencode", "model": "opencode/o3"}},
+            "models": {
+                "main": {
+                    "displayName": "opencode",
+                    "provider": "opencode",
+                    "model": "opencode/o3",
+                    "capabilities": {"text": True},
+                }
+            },
+            "agents": {"defaults": {"modelId": "main"}},
         }
     )
 
-    assert zen_config.get_provider_name() == "opencode"
-    assert zen_config.get_api_key() == "opencode-key"
-    assert zen_config.get_api_base() == "https://opencode.ai/zen/v1"
+    zen_provider = make_provider(zen_config)
+    assert zen_provider.provider_name == "opencode"
+    assert zen_provider.api_key == "opencode-key"
+    assert zen_provider.api_base == "https://opencode.ai/zen/v1"
 
     legacy_zen_config = Config.model_validate(
         {
             "providers": {"opencodeZen": {"apiKey": "opencode-key"}},
-            "agents": {"defaults": {"provider": "opencode_zen", "model": "opencode/o3"}},
+            "models": {
+                "main": {
+                    "displayName": "opencode_zen",
+                    "provider": "opencode_zen",
+                    "model": "opencode/o3",
+                    "capabilities": {"text": True},
+                }
+            },
+            "agents": {"defaults": {"modelId": "main"}},
         }
     )
 
-    assert legacy_zen_config.get_provider_name() == "opencode_zen"
-    assert legacy_zen_config.get_api_key() == "opencode-key"
-    assert legacy_zen_config.get_api_base() == "https://opencode.ai/zen/v1"
+    legacy_zen_provider = make_provider(legacy_zen_config)
+    assert legacy_zen_provider.provider_name == "opencode_zen"
+    assert legacy_zen_provider.api_key == "opencode-key"
+    assert legacy_zen_provider.api_base == "https://opencode.ai/zen/v1"
 
     go_config = Config.model_validate(
         {
             "providers": {"opencodeGo": {"apiKey": "opencode-key"}},
-            "agents": {"defaults": {"provider": "opencode_go", "model": "opencode-go/o3"}},
+            "models": {
+                "main": {
+                    "displayName": "opencode_go",
+                    "provider": "opencode_go",
+                    "model": "opencode-go/o3",
+                    "capabilities": {"text": True},
+                }
+            },
+            "agents": {"defaults": {"modelId": "main"}},
         }
     )
 
-    assert go_config.get_provider_name() == "opencode_go"
-    assert go_config.get_api_key() == "opencode-key"
-    assert go_config.get_api_base() == "https://opencode.ai/zen/go/v1"
+    go_provider = make_provider(go_config)
+    assert go_provider.provider_name == "opencode_go"
+    assert go_provider.api_key == "opencode-key"
+    assert go_provider.api_base == "https://opencode.ai/zen/go/v1"
 
 
 def test_opencode_prefixes_are_stripped_before_request() -> None:

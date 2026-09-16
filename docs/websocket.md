@@ -158,15 +158,31 @@ when a config reload requires clients to refresh their model catalog:
 ```json
 {
   "event": "runtime_model_updated",
-  "model_name": "openai/gpt-4.1-mini",
-  "model_preset": "fast"
+  "model": "openai/gpt-4.1-mini",
+  "model_id": "main"
 }
 ```
 
-`model_preset` is omitted when no named preset is active. WebUI clients use this event
-to refresh model settings after default-runtime and config changes. `/model <preset>`
-is session-scoped; its selection is reflected through `session_updated` and the
-session row's `model_preset` field instead of this global event.
+- `model` is upstream display data.
+- `model_id` is the optional canonical model identity and is omitted when unavailable.
+
+**`turn_model_updated`** — sent to subscribers of a chat when its active turn's
+runtime model is selected:
+
+```json
+{
+  "event": "turn_model_updated",
+  "chat_id": "uuid-v4",
+  "model": "openai/gpt-4.1-mini",
+  "model_id": "main",
+  "context_window_tokens": 200000
+}
+```
+
+- `chat_id` identifies the chat whose active turn is using the model.
+- `model` is upstream display data.
+- `model_id` is the optional canonical model identity and is omitted when unavailable.
+- `context_window_tokens` is the positive context-window limit for the turn and is omitted when unavailable.
 
 **`attached`** — confirmation for `new_chat` / `attach` inbound envelopes (see [Multi-chat multiplexing](#multi-chat-multiplexing)):
 

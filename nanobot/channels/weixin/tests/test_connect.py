@@ -83,9 +83,8 @@ async def test_weixin_connect_persists_credentials_without_channels_config(
     """When config.json has no channels key at all, connect must still write
     the obtained token and base_url back to config.json."""
     config_path = tmp_path / "config.json"
-    # config.json with NO channels key — the bug scenario
     config_path.write_text(
-        json.dumps({"agents": {"defaults": {"model": "test"}}}),
+        json.dumps({"agents": {"defaults": {"modelId": "main"}}}),
         encoding="utf-8",
     )
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)

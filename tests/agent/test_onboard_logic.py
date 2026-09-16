@@ -1042,8 +1042,8 @@ class TestMainMenuUpdate:
         assert config.models["main"].provider == "openai_codex"
         assert config.models["main"].model == "openai-codex/gpt-5.6-sol"
 
-    def test_quick_start_openai_codex_login_failure_does_not_create_preset(self, monkeypatch):
-        """A failed Codex login must not leave a ready-looking model preset."""
+    def test_quick_start_openai_codex_login_failure_does_not_create_model(self, monkeypatch):
+        """A failed Codex login must not leave a ready-looking model."""
         config = Config()
 
         monkeypatch.setattr(onboard_wizard, "_show_quick_start_progress", lambda *_args: None)
@@ -1663,7 +1663,7 @@ class TestMainMenuUpdate:
         assert config.models["main"].provider == "anthropic"
 
     def test_quick_start_requires_upstream_model_before_setting_defaults(self, monkeypatch):
-        """Quick Start should not create a preset without an explicit model ID."""
+        """Quick Start should not configure a model without an explicit upstream model."""
         config = Config()
 
         monkeypatch.setattr(onboard_wizard, "_show_quick_start_progress", lambda *_args: None)
@@ -2131,6 +2131,19 @@ class TestModelWizard:
         model = ModelConfig(display_name="Test", provider="openai", model="gpt-test")
         _handle_provider_field(model, "provider", "Provider", "openai")
         assert model.provider == "anthropic"
+    def test_current_provider_rejects_missing_provider(self):
+        """Model prompts must not silently fall back to the ``auto`` selector."""
+        from nanobot.cli.onboard import _get_current_provider
+
+        class ModelWithoutProvider(BaseModel):
+            model: str = "gpt-test"
+
+        try:
+            _get_current_provider(ModelWithoutProvider())
+        except ValueError as exc:
+            assert "provider" in str(exc)
+        else:
+            raise AssertionError("model prompts must require an explicit provider")
 
     def test_search_provider_field_handler(self, monkeypatch):
         """_handle_search_provider_field should set the search engine from choices."""

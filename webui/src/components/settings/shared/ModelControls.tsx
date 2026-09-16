@@ -76,18 +76,8 @@ function settingsProviderRow(
 export function settingsProviderConfigured(
   payload: SettingsPayload,
   provider: string | null | undefined,
-  resolvedProvider?: string | null,
 ): boolean {
-  const row = settingsProviderRow(payload, provider);
-  if (row) return row.configured;
-  if (provider === "auto") {
-    const resolvedRow = settingsProviderRow(
-      payload,
-      resolvedProvider ?? payload.agent.resolved_provider ?? payload.agent.provider,
-    );
-    if (resolvedRow) return resolvedRow.configured;
-  }
-  return payload.agent.has_api_key;
+  return settingsProviderRow(payload, provider)?.configured ?? false;
 }
 
 export function ProviderPicker({
@@ -164,11 +154,10 @@ export function ProviderPicker({
   );
 }
 
-export function ModelIdPicker({
+export function UpstreamModelPicker({
   token,
   settings,
   provider,
-  models,
   value,
   showProviderLogos,
   emptyLabel,
@@ -179,7 +168,6 @@ export function ModelIdPicker({
   token: string;
   settings: SettingsPayload;
   provider: string;
-  models?: string[];
   value: string;
   showProviderLogos: boolean;
   emptyLabel?: string;
@@ -196,33 +184,22 @@ export function ModelIdPicker({
   const [payload, setPayload] = useState<ProviderModelsPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const effectiveProvider =
-    provider === "auto" ? settings.agent.resolved_provider ?? provider : provider;
-  const hasConcreteProvider = Boolean(effectiveProvider && effectiveProvider !== "auto");
-  const hasStaticModels = models !== undefined;
-  const providerRow = settingsProviderRow(settings, effectiveProvider);
-  const providerConfigured = settingsProviderConfigured(settings, effectiveProvider);
-  const providerRequiresConfiguration =
-    !hasStaticModels && hasConcreteProvider && !providerConfigured;
+  const hasConcreteProvider = Boolean(provider);
+  const providerRow = settingsProviderRow(settings, provider);
+  const providerConfigured = settingsProviderConfigured(settings, provider);
+  const providerRequiresConfiguration = hasConcreteProvider && !providerConfigured;
   const providerHasManagedModels = ["builtin", "hybrid"].includes(
     providerRow?.model_catalog ?? "",
   );
   const providerUsesManualModelIds =
-    !hasStaticModels &&
     hasConcreteProvider &&
     providerConfigured &&
     providerRow?.auth_type === "oauth" &&
     !providerHasManagedModels;
   const canFetchModels =
-    !hasStaticModels &&
     hasConcreteProvider && providerConfigured && !providerUsesManualModelIds;
   const normalizedQuery = query.trim().toLowerCase();
-  const providerModels: ProviderModelsPayload["models"] = useMemo(
-    () => hasStaticModels
-      ? (models?.map((id) => ({ id })) ?? [])
-      : (payload?.models ?? []),
-    [hasStaticModels, models, payload?.models],
-  );
+  const providerModels: ProviderModelsPayload["models"] = payload?.models ?? [];
   const visibleModels = useMemo(
     () => providerModels
       .filter((model) => {
@@ -234,22 +211,23 @@ export function ModelIdPicker({
     [normalizedQuery, providerModels],
   );
   const isCatalog = payload?.catalog_kind === "catalog";
-  const defersModelList = DEFERRED_MODEL_LIST_PROVIDERS.has(effectiveProvider);
+  const defersModelList = DEFERRED_MODEL_LIST_PROVIDERS.has(provider);
   const hasDeferredSearchQuery =
     normalizedQuery.length >= DEFERRED_MODEL_LIST_QUERY_MIN_LENGTH;
   const shouldFetchModels =
     canFetchModels && (!defersModelList || hasDeferredSearchQuery);
   const waitingForModelSearch =
     open && canFetchModels && defersModelList && !hasDeferredSearchQuery;
-  const hasModelList = hasStaticModels || payload?.status === "available";
+  const hasModelList = payload?.status === "available";
   const showModels = Boolean(
-    hasModelList && (hasStaticModels || (payload && (!isCatalog || normalizedQuery))),
+    hasModelList && payload && (!isCatalog || normalizedQuery),
   );
-  const customCandidate = query.trim();
-  const allowCustomModel = !providerRequiresConfiguration;
-  const exactQueryMatch = providerModels.some((model) => model.id === customCandidate);
-  const showCustomModel = Boolean(
-    allowCustomModel && customCandidate && !exactQueryMatch && customCandidate !== value,
+  const manualModelCandidate = query.trim();
+  const showManualModel = Boolean(
+    !providerRequiresConfiguration &&
+    manualModelCandidate &&
+    !providerModels.some((model) => model.id === manualModelCandidate) &&
+    manualModelCandidate !== value,
   );
   const providerModelCount = payload?.model_count ?? providerModels.length;
   const modelUnconfigured = !value.trim() || !providerConfigured;
@@ -257,7 +235,7 @@ export function ModelIdPicker({
   useEffect(() => {
     if (!open) return;
     setQuery(providerUsesManualModelIds || !hasConcreteProvider ? value : "");
-  }, [open, effectiveProvider, hasConcreteProvider, providerUsesManualModelIds, value]);
+  }, [open, provider, hasConcreteProvider, providerUsesManualModelIds, value]);
 
   useEffect(() => {
     if (!open || !shouldFetchModels) {
@@ -270,7 +248,7 @@ export function ModelIdPicker({
     setPayload(null);
     setError(null);
     setLoading(true);
-    fetchProviderModels(tokenRef.current, effectiveProvider)
+    fetchProviderModels(tokenRef.current, provider)
       .then((nextPayload) => {
         if (!cancelled) setPayload(nextPayload);
       })
@@ -283,7 +261,7 @@ export function ModelIdPicker({
     return () => {
       cancelled = true;
     };
-  }, [effectiveProvider, open, shouldFetchModels]);
+  }, [provider, open, shouldFetchModels]);
 
   const selectModel = (model: string) => {
     onChange(model);
@@ -292,9 +270,9 @@ export function ModelIdPicker({
   const navigationValues = useMemo(
     () => [
       ...(showModels ? visibleModels.map((model) => model.id) : []),
-      ...(showCustomModel ? [customCandidate] : []),
+      ...(showManualModel ? [manualModelCandidate] : []),
     ],
-    [customCandidate, showCustomModel, showModels, visibleModels],
+    [manualModelCandidate, showManualModel, showModels, visibleModels],
   );
   const navigation = useComboboxNavigation({
     open,
@@ -318,7 +296,7 @@ export function ModelIdPicker({
     >
       <span className="flex min-w-0 items-center gap-2">
         <ProviderPickerIcon
-          provider={effectiveProvider}
+          provider={provider}
           showBrandLogos={showProviderLogos}
           unconfigured={!providerConfigured}
         />
@@ -355,7 +333,7 @@ export function ModelIdPicker({
         >
           <span className="flex min-w-0 items-center gap-2">
             <ProviderPickerIcon
-              provider={effectiveProvider}
+              provider={provider}
               showBrandLogos={showProviderLogos}
               unconfigured={modelUnconfigured}
             />
@@ -400,17 +378,9 @@ export function ModelIdPicker({
           <div className="px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
             {tx("settings.models.providerNotConfigured", "Configure this provider before loading models.")}
           </div>
-        ) : hasStaticModels && !providerModels.length ? (
-          <div className="px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
-            {emptyMessage || tx("settings.models.unsupportedModelList", "Type a model ID manually.")}
-          </div>
         ) : providerUsesManualModelIds ? (
           <div className="px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
             {tx("settings.models.unsupportedModelList", "Type a model ID manually.")}
-          </div>
-        ) : !canFetchModels ? (
-          <div className="px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
-            {tx("settings.models.autoProviderCustomOnly", "Auto provider mode uses custom model IDs.")}
           </div>
         ) : waitingForModelSearch ? (
           <div className="px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
@@ -431,7 +401,7 @@ export function ModelIdPicker({
           </div>
         ) : payload?.status === "unsupported" || payload?.status === "missing_api_base" ? (
           <div className="px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
-            {payload.message || tx("settings.models.unsupportedModelList", "Type a model ID manually.")}
+            {payload.message || emptyMessage || tx("settings.models.unsupportedModelList", "Type a model ID manually.")}
           </div>
         ) : isCatalog && !normalizedQuery ? (
           <div className="px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
@@ -451,21 +421,21 @@ export function ModelIdPicker({
                 renderModelRow(model, { selected: model.id === value }),
               )
               : null}
-            {showCustomModel ? (
+            {showManualModel ? (
               <>
                 {showModels && visibleModels.length ? (
                   <div role="separator" className="-mx-1.5 my-1.5 h-px bg-border/50" />
                 ) : null}
                 <ComboboxOption
-                  {...navigation.getOptionProps(customCandidate)}
+                  {...navigation.getOptionProps(manualModelCandidate)}
                   className="flex cursor-default items-center gap-2 rounded-control px-2 py-1.5 text-[12px]"
                 >
                   <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-muted/80 text-muted-foreground">
                     <Pencil className="h-3 w-3" aria-hidden />
                   </span>
                   <span className="min-w-0 truncate">
-                    {tx("settings.models.useCustomModel", "Use")}{" "}
-                    <span className="font-medium text-foreground">“{customCandidate}”</span>
+                    {tx("settings.models.useModel", "Use")} {" "}
+                    <span className="font-medium text-foreground">“{manualModelCandidate}”</span>
                   </span>
                 </ComboboxOption>
               </>
@@ -476,7 +446,6 @@ export function ModelIdPicker({
             {tx("settings.models.noModelResults", "No matching models.")}
           </div>
         ) : null}
-
       </PopoverContent>
     </Popover>
   );

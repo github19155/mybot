@@ -1,75 +1,77 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { SettingsPayload } from "@/lib/types";
-import { requestMutationMock, jsonResponse, settingsPayload, renderSettingsView, openPopover, installSettingsViewTestHooks } from "@/tests/settings-test-utils";
+import { requestMutationMock, jsonResponse, settingsPayload, renderSettingsView, installSettingsViewTestHooks } from "@/tests/settings-test-utils";
 
 
 describe("Settings capabilities", () => {
   installSettingsViewTestHooks();
 
 
-  it("selects image models from provider-specific options", async () => {
+  it("selects and saves image generation models by canonical model ID", async () => {
     const base = settingsPayload();
+    const imageDefault = {
+      ...base.models[0],
+      model_id: "image-default",
+      display_name: "Canonical image",
+      provider: "openrouter",
+      model: "openai/gpt-5.4-image-2",
+      capabilities: { ...base.models[0].capabilities, image_generation: true },
+      is_default: true,
+    };
+    const imageAlternative = {
+      ...imageDefault,
+      model_id: "image-alternative",
+      display_name: "Alternative image",
+      provider: "gemini",
+      model: "imagen-4.0-generate-001",
+      is_default: false,
+    };
     const payload: SettingsPayload = {
       ...base,
+      models: [base.models[0], imageDefault, imageAlternative],
+      providers: [
+        { name: "openrouter", label: "OpenRouter", configured: true },
+        { name: "gemini", label: "Gemini", configured: true },
+      ],
       image_generation: {
         ...base.image_generation,
-        providers: [
-          {
-            name: "openrouter",
-            label: "OpenRouter",
-            configured: true,
-            models: ["openai/gpt-5.4-image-2"],
-            default_model: "openai/gpt-5.4-image-2",
-          },
-          {
-            name: "gemini",
-            label: "Gemini",
-            configured: true,
-            models: ["gemini-2.5-flash-image", "imagen-4.0-generate-001"],
-            default_model: "gemini-2.5-flash-image",
-          },
-          {
-            name: "custom",
-            label: "Custom",
-            configured: true,
-            models: [],
-            default_model: null,
-          },
-        ],
+        model_id: "image-default",
       },
     };
+    const updatedPayload: SettingsPayload = {
+      ...payload,
+      image_generation: { ...payload.image_generation, model_id: "image-alternative" },
+    };
+    requestMutationMock.mockResolvedValueOnce(updatedPayload);
 
     renderSettingsView({ initialSection: "image", initialSettings: payload });
 
-    expect(screen.queryByDisplayValue("openai/gpt-5.4-image-2")).not.toBeInTheDocument();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "OpenRouter" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Gemini" }));
+    const modelSelect = screen.getByRole("combobox", { name: "Image model" });
+    expect(modelSelect).toHaveValue("image-default");
+    expect(screen.getByRole("option", { name: "Canonical image — openrouter · openai/gpt-5.4-image-2" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Alternative image — gemini · imagen-4.0-generate-001" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "OpenRouter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Search or type model ID" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Custom / provider model")).not.toBeInTheDocument();
 
-    expect(await screen.findByRole("button", { name: "gemini-2.5-flash-image" })).toBeInTheDocument();
-    await openPopover(screen.getByRole("button", { name: "gemini-2.5-flash-image" }));
-    fireEvent.click(await screen.findByRole("option", { name: "imagen-4.0-generate-001" }));
+    fireEvent.change(modelSelect, { target: { value: "image-alternative" } });
+    expect(modelSelect).toHaveValue("image-alternative");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "imagen-4.0-generate-001" })).toBeInTheDocument(),
+      expect(requestMutationMock).toHaveBeenCalledWith(
+        "settings.image_generation.update",
+        {
+          enabled: false,
+          model_id: "image-alternative",
+          default_aspect_ratio: "1:1",
+          default_image_size: "1K",
+          max_images_per_turn: 4,
+        },
+        20_000,
+      ),
     );
-
-    await openPopover(screen.getByRole("button", { name: "imagen-4.0-generate-001" }));
-    const modelInput = await screen.findByRole("combobox", { name: "Search or type model ID" });
-    fireEvent.change(modelInput, { target: { value: "imagen-5-preview" } });
-    fireEvent.click(await screen.findByRole("option", { name: "Use “imagen-5-preview”" }));
-    expect(await screen.findByRole("button", { name: "imagen-5-preview" })).toBeInTheDocument();
-
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Gemini" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Custom" }));
-    expect(screen.getByRole("button", { name: "imagen-5-preview" })).toBeInTheDocument();
-
-    await openPopover(screen.getByRole("button", { name: "imagen-5-preview" }));
-    const customProviderInput = await screen.findByRole("combobox", {
-      name: "Search or type model ID",
-    });
-    fireEvent.change(customProviderInput, { target: { value: "private/image-v2" } });
-    fireEvent.keyDown(customProviderInput, { key: "Enter" });
-    expect(await screen.findByRole("button", { name: "private/image-v2" })).toBeInTheDocument();
   });
 
   it("saves network safety without exposing technical SSRF copy", async () => {
@@ -249,6 +251,74 @@ describe("Settings capabilities", () => {
         expect.objectContaining({
           headers: { Authorization: "Bearer fresh-token" },
         }),
+      ),
+    );
+  });
+
+  it("selects and saves transcription models by canonical model ID", async () => {
+    const base = settingsPayload();
+    const transcriptionDefault = {
+      ...base.models[0],
+      model_id: "speech-default",
+      display_name: "Speech default",
+      provider: "openai",
+      model: "whisper-1",
+      capabilities: { ...base.models[0].capabilities, transcription: true },
+      is_default: true,
+    };
+    const transcriptionAlternative = {
+      ...transcriptionDefault,
+      model_id: "speech-alternative",
+      display_name: "Speech alternative",
+      provider: "assemblyai",
+      model: "universal-3-pro",
+      is_default: false,
+    };
+    const payload: SettingsPayload = {
+      ...base,
+      models: [base.models[0], transcriptionDefault, transcriptionAlternative],
+      providers: [
+        { name: "openai", label: "OpenAI", configured: true },
+        { name: "assemblyai", label: "AssemblyAI", configured: true },
+      ],
+      transcription: {
+        enabled: true,
+        model_id: "speech-default",
+        language: null,
+        max_duration_sec: 120,
+        max_upload_mb: 25,
+      },
+    };
+    const updatedPayload: SettingsPayload = {
+      ...payload,
+      transcription: { ...payload.transcription!, model_id: "speech-alternative" },
+    };
+    requestMutationMock.mockResolvedValueOnce(updatedPayload);
+
+    renderSettingsView({ initialSection: "voice", initialSettings: payload });
+
+    const modelSelect = screen.getByRole("combobox", { name: "Model" });
+    expect(modelSelect).toHaveValue("speech-default");
+    expect(screen.getByRole("option", { name: "Speech default — openai · whisper-1" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Speech alternative — assemblyai · universal-3-pro" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Primary/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "OpenAI" })).not.toBeInTheDocument();
+    expect(screen.getByText("whisper-1")).toBeInTheDocument();
+    fireEvent.change(modelSelect, { target: { value: "speech-alternative" } });
+    expect(modelSelect).toHaveValue("speech-alternative");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(requestMutationMock).toHaveBeenCalledWith(
+        "settings.transcription.update",
+        {
+          enabled: true,
+          model_id: "speech-alternative",
+          language: "",
+          max_duration_sec: 120,
+          max_upload_mb: 25,
+        },
+        20_000,
       ),
     );
   });

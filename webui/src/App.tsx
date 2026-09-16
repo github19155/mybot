@@ -98,7 +98,6 @@ type BootState =
       client: NanobotClient;
       token: string;
       tokenExpiresAt: number | null;
-      modelName: string | null;
       ingressLimits: BootstrapResponse["limits"] | null;
       runtimeSurface: RuntimeSurface;
     };
@@ -814,7 +813,6 @@ export default function App() {
               ...current,
               token: boot.api_token ?? "",
               tokenExpiresAt,
-              modelName: boot.model_name ?? current.modelName,
               ingressLimits: boot.limits ?? current.ingressLimits,
               runtimeSurface,
             }
@@ -859,7 +857,6 @@ export default function App() {
             tokenExpiresAt: boot.expires_in
               ? bootstrapTokenExpiresAt(boot.expires_in)
               : null,
-            modelName: boot.model_name ?? null,
             ingressLimits: boot.limits ?? null,
             runtimeSurface,
           });
@@ -939,11 +936,6 @@ export default function App() {
     );
   }
 
-  const handleModelNameChange = (modelName: string | null) => {
-    setState((current) =>
-      current.status === "ready" ? { ...current, modelName } : current,
-    );
-  };
 
   const handleLogout = () => {
     if (state.status === "ready") {
@@ -982,12 +974,10 @@ export default function App() {
     <ClientProvider
       client={state.client}
       token={state.token}
-      modelName={state.modelName}
       ingressLimits={state.ingressLimits}
     >
       <Shell
         runtimeSurface={state.runtimeSurface}
-        onModelNameChange={handleModelNameChange}
         onLogout={handleLogout}
         onNativeEngineRestart={handleNativeEngineRestart}
       />
@@ -997,12 +987,10 @@ export default function App() {
 
 function Shell({
   runtimeSurface,
-  onModelNameChange,
   onLogout,
   onNativeEngineRestart,
 }: {
   runtimeSurface: RuntimeSurface;
-  onModelNameChange: (modelName: string | null) => void;
   onLogout: () => void;
   onNativeEngineRestart: () => Promise<string>;
 }) {
@@ -1480,12 +1468,10 @@ function Shell({
 
   const onCreateChat = useCallback(async (
     workspaceScope?: WorkspaceScopePayload | null,
-    _initialMessage?: string,
-    modelPreset?: string | null,
   ) => {
     try {
       const scope = workspaceScope ?? activeWorkspaceScope;
-      const chatId = await createChat(scope, modelPreset);
+      const chatId = await createChat(scope);
       const key = `websocket:${chatId}`;
       pendingCreatedSessionKeyRef.current = key;
       navigate({
@@ -1514,7 +1500,6 @@ function Shell({
     async (
       workspaceScope?: WorkspaceScopePayload | null,
       initialMessage?: string,
-      modelPreset?: string | null,
     ) => {
       try {
         const chatId = await client.newTemporaryChat();
@@ -1525,7 +1510,6 @@ function Shell({
         const nextSession: ChatSummary = {
           ...session,
           preview: initialMessage ?? "",
-          modelPreset: modelPreset ?? null,
           ...(restrictedScope ? { workspaceScope: restrictedScope } : {}),
         };
         setTemporarySessions((current) => ({
@@ -1975,11 +1959,6 @@ function Shell({
     void client.sendSystemCommand(chatId, "/restart").catch(() => {});
   }, [activeSession?.chatId, client]);
 
-  useEffect(() => {
-    return client.onRuntimeModelUpdate((modelName) => {
-      onModelNameChange(modelName);
-    });
-  }, [client, onModelNameChange]);
 
   useEffect(() => {
     return client.onRunStatus((chatId, startedAt) => {
@@ -2757,7 +2736,6 @@ function Shell({
                     showSidebar={view === "settings"}
                     onToggleTheme={toggle}
                     onBackToChat={onBackToChat}
-                    onModelNameChange={onModelNameChange}
                     onSettingsChange={setSettingsSnapshot}
                     skills={skills}
                     onSectionChange={onSettingsSectionChange}

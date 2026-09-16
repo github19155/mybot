@@ -1203,6 +1203,7 @@ class TestToolEventProgress:
         next_provider.generation = loop.llm_runtime().generation
         loop.runtime_resolver.adopt_snapshot(ProviderSnapshot(
             provider=next_provider,
+            model_id="switched",
             model="switched-after-turn",
             context_window_tokens=loop.context_window_tokens,
             signature=("switched-after-turn",),

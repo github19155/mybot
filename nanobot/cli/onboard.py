@@ -644,10 +644,14 @@ def _input_with_existing(
 
 
 def _get_current_provider(model: BaseModel) -> str:
-    """Get the current provider setting from a model (if available)."""
-    if hasattr(model, "provider"):
-        return getattr(model, "provider", "auto") or "auto"
-    return "auto"
+    """Return the concrete provider required by model-domain prompts."""
+    provider = getattr(model, "provider", None)
+    if not isinstance(provider, str) or not provider.strip():
+        raise ValueError("model configuration requires an explicit provider")
+    normalized = provider.strip()
+    if normalized.casefold() == "auto":
+        raise ValueError("model configuration requires a concrete provider")
+    return normalized
 
 
 def _input_model_with_autocomplete(

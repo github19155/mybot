@@ -72,11 +72,22 @@ def test_capability_domain_updates_representative_settings() -> None:
     assert payload["api"]["host"] == "127.0.0.2"
     assert payload["api"]["port"] == 8900
     assert payload["image_generation"]["model_id"] == "image"
-    assert payload["image_generation"]["provider"] == "openrouter"
-    assert payload["image_generation"]["model"] == "google/gemini-2.5-flash-image"
+    assert set(payload["image_generation"]) == {
+        "enabled",
+        "model_id",
+        "default_aspect_ratio",
+        "default_image_size",
+        "max_images_per_turn",
+        "save_dir",
+    }
     assert payload["transcription"]["model_id"] == "speech"
-    assert payload["transcription"]["provider"] == "openrouter"
-    assert payload["transcription"]["model"] == "openai/whisper-large-v3"
+    assert set(payload["transcription"]) == {
+        "enabled",
+        "model_id",
+        "language",
+        "max_duration_sec",
+        "max_upload_mb",
+    }
 
 
 def test_tavily_web_search_keeps_custom_base_url() -> None:

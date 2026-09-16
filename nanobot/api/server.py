@@ -47,7 +47,7 @@ __all__ = (
 API_SESSION_KEY = "api:default"
 API_CHAT_ID = "default"
 _AGENT_LOOP_KEY = web.AppKey[Any]("agent_loop")
-_MODEL_NAME_KEY = web.AppKey[str]("model_name")
+_MODEL_ID_KEY = web.AppKey[str]("model_id")
 _REQUEST_TIMEOUT_KEY = web.AppKey[float]("request_timeout")
 _SESSION_LOCKS_KEY = web.AppKey[dict[str, asyncio.Lock]]("session_locks")
 _PREPARE_AGENT_KEY = web.AppKey[Callable[[], Awaitable[None]] | None]("prepare_agent")
@@ -301,12 +301,14 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         "request_timeout",
         120.0,
     )
-    model_name: str = _app_value(request.app, _MODEL_NAME_KEY, "model_name", "nanobot")
+    model_id: str = _app_value(request.app, _MODEL_ID_KEY, "model_id")
 
     stream = False
+    provided_model = False
     try:
         if content_type.startswith("multipart/"):
             text, media_paths, session_id, requested_model = await _parse_multipart(request)
+            provided_model = requested_model is not None
         else:
             try:
                 body = await request.json()
@@ -316,6 +318,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
                 return _error_json(400, "Invalid JSON body")
             body = cast(dict[str, Any], body)
             stream = body.get("stream", False)
+            provided_model = "model" in body
             requested_model = body.get("model")
             text, media_paths = _parse_json_content(body)
             session_id = body.get("session_id")
@@ -327,8 +330,8 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         logger.exception("Error parsing upload")
         return _error_json(413, "File too large or invalid upload")
 
-    if requested_model and requested_model != model_name:
-        return _error_json(400, f"Only configured model '{model_name}' is available")
+    if provided_model and (not isinstance(requested_model, str) or requested_model != model_id):
+        return _error_json(400, f"Only configured model_id '{model_id}' is available")
 
     session_key = f"api:{session_id}" if session_id else API_SESSION_KEY
     session_locks: dict[str, asyncio.Lock] = _app_value(
@@ -398,7 +401,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
                 token = await queue.get()
                 if token is None:
                     break
-                await resp.write(_sse_chunk(token, model_name, chunk_id))
+                await resp.write(_sse_chunk(token, model_id, chunk_id))
         finally:
             if not task.done():
                 task.cancel()
@@ -406,7 +409,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
                     await task
 
         if not stream_failed:
-            await resp.write(_sse_chunk("", model_name, chunk_id, finish_reason="stop"))
+            await resp.write(_sse_chunk("", model_id, chunk_id, finish_reason="stop"))
             await resp.write(_SSE_DONE)
         return resp
 
@@ -440,19 +443,19 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         return _error_json(500, "Internal server error", err_type="server_error")
 
     return web.json_response(
-        _chat_completion_response(response_text, model_name, usage_capture.usage)
+        _chat_completion_response(response_text, model_id, usage_capture.usage)
     )
 
 
 async def handle_models(request: web.Request) -> web.Response:
     """GET /v1/models"""
-    model_name = _app_value(request.app, _MODEL_NAME_KEY, "model_name", "nanobot")
+    model_id = _app_value(request.app, _MODEL_ID_KEY, "model_id")
     return web.json_response(
         {
             "object": "list",
             "data": [
                 {
-                    "id": model_name,
+                    "id": model_id,
                     "object": "model",
                     "created": 0,
                     "owned_by": "nanobot",
@@ -474,7 +477,7 @@ async def handle_health(request: web.Request) -> web.Response:
 
 def create_app(
     agent_loop: "AgentLoop",
-    model_name: str = "nanobot",
+    model_id: str,
     request_timeout: float = 120.0,
     api_key: str = "",
     prepare_agent: Callable[[], Awaitable[None]] | None = None,
@@ -483,14 +486,14 @@ def create_app(
 
     Args:
         agent_loop: An initialized AgentLoop instance.
-        model_name: Model name reported in responses.
+        model_id: Canonical configured model ID reported in API responses.
         request_timeout: Per-request timeout in seconds.
         api_key: Optional API key for Bearer-token authentication on API routes.
         prepare_agent: Optional application-owned readiness callback run before each turn.
     """
     app = web.Application(client_max_size=20 * 1024 * 1024)  # 20MB for base64 images
     app[_AGENT_LOOP_KEY] = agent_loop
-    app[_MODEL_NAME_KEY] = model_name
+    app[_MODEL_ID_KEY] = model_id
     app[_REQUEST_TIMEOUT_KEY] = request_timeout
     app[_SESSION_LOCKS_KEY] = {}  # per-user locks, keyed by session_key
     app[_PREPARE_AGENT_KEY] = prepare_agent

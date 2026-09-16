@@ -12,7 +12,6 @@ interface SettingsViewProps {
   showSidebar?: boolean;
   onToggleTheme: () => void;
   onBackToChat: () => void;
-  onModelNameChange: (modelName: string | null) => void;
   onSettingsChange?: (payload: SettingsPayload) => void;
   skills?: SkillSummary[];
   onSectionChange?: (section: SettingsSectionKey) => void;
@@ -30,7 +29,6 @@ export function SettingsView({
   showSidebar = true,
   onToggleTheme,
   onBackToChat,
-  onModelNameChange,
   onSettingsChange,
   skills = [],
   onSectionChange,
@@ -43,7 +41,6 @@ export function SettingsView({
   const controller = useSettingsController({
     initialSection,
     initialSettings,
-    onModelNameChange,
     onSettingsChange,
     onSectionChange,
     onRestart,

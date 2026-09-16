@@ -1,6 +1,6 @@
 # Install and Quick Start
 
-This guide has one goal: get a normal nanobot reply in your browser. Do not add chat apps, MCP servers, extra model presets, or deployment until this path works.
+This guide has one goal: get a normal nanobot reply in your browser. Do not add chat apps, MCP servers, extra model entries, or deployment until this path works.
 
 If terminals, Python, or API keys are unfamiliar, use the [beginner walkthrough](./start-without-technical-background.md), which explains each term and screen.
 
@@ -10,7 +10,7 @@ These repository docs follow current `main`. The recommended installer uses the 
 
 - Python 3.11 or newer.
 - Access to one supported AI provider, company endpoint, or local model server.
-- The credential, endpoint URL, and model ID required by that service. Local providers such as Ollama may not require a key.
+- The credential, endpoint URL, and upstream model name required by that service. Local providers such as Ollama may not require a key.
 
 Git and [Bun](https://bun.sh/) are only needed for a source install. The published package already contains the WebUI and fetches a checksummed, version-matched TUI archive with its licenses, notices, corresponding application source, source offer, and relinking instructions on first use.
 
@@ -40,14 +40,14 @@ Keep the installer terminal open. The browser opens the local WebUI; go to **Set
 
 1. Choose the provider or endpoint that owns your credential.
 2. Enter its API key or base URL when required.
-3. Create or select a model preset using a model ID that provider can run.
+3. Create or select a model entry with a canonical `model_id`, concrete `provider`, and upstream `model` route.
 4. Save the configuration.
 
 The WebUI launcher creates or updates:
 
 | Path | Purpose |
 |---|---|
-| `~/.nanobot/config.json` | Provider, model, WebUI, channel, tool, and runtime settings |
+| `~/.nanobot/config.json` | Provider credentials, the `models` registry, WebUI, channel, tool, and runtime settings |
 | `~/.nanobot/workspace/` | Memory, skills, automations, and generated files |
 | `~/.nanobot/sessions/<workspace-id>/` | Recent session history stored outside the workspace; the ID remains stable across workspace moves |
 
@@ -72,7 +72,7 @@ nanobot status
 You want:
 
 - a check mark for **Config** and **Workspace**;
-- the model or preset you selected;
+- the active canonical `model_id` and model;
 - a configured state for the provider used by that model.
 
 Most other providers can say `not set`. This command validates local setup but does not call the model.
@@ -190,7 +190,7 @@ On Windows, the managed-environment form is `& "$HOME\.nanobot\venv\Scripts\pyth
 
 ## Manual Configuration Fallback
 
-Use this only when the wizard is unavailable or you intentionally manage JSON. First run `nanobot onboard`, then merge a provider and a named model preset into `~/.nanobot/config.json`.
+Use this only when the wizard is unavailable or you intentionally manage JSON. First run `nanobot onboard`, then merge provider credentials and a model entry into `~/.nanobot/config.json`.
 
 A generic OpenAI-compatible setup has this shape:
 
@@ -202,21 +202,25 @@ A generic OpenAI-compatible setup has this shape:
       "apiBase": "https://api.example.com/v1"
     }
   },
-  "modelPresets": {
-    "primary": {
+  "models": {
+    "main": {
+      "displayName": "Primary model",
       "provider": "custom",
-      "model": "model-id-from-your-provider"
+      "model": "model-id-from-your-provider",
+      "capabilities": {
+        "text": true
+      }
     }
   },
   "agents": {
     "defaults": {
-      "modelPreset": "primary"
+      "modelId": "main"
     }
   }
 }
 ```
 
-Replace the provider, endpoint, and model together. Do not pair a credential from one service with a model ID from another. See [Provider Cookbook](./provider-cookbook.md) for hosted, OAuth, company, and local examples, and [Configuration](./configuration.md) for exact fields.
+Set the provider credentials or endpoint and the matching `models` entry together. Select the model with its canonical `model_id`; do not use the upstream `model` value as a selector. See [Provider Cookbook](./provider-cookbook.md) for hosted, OAuth, company, and local examples, and [Configuration](./configuration.md) for exact fields.
 
 ## Updating
 
@@ -260,7 +264,7 @@ nanobot agent -m "Hello!"
 | `nanobot: command not found` | Reuse the installer command or method-specific runner described under [Other Install Methods](#other-install-methods) |
 | JSON parse error | Check commas and braces; remember that docs examples are usually snippets |
 | `401` or invalid API key | Verify the selected provider owns that key and remove accidental spaces |
-| Model not found | Use a model ID available from the provider selected in the active preset |
+| Model not found | Check that `agents.defaults.model_id` or `/model <model_id>` matches a key under `models` |
 | CLI works but WebUI does not open | Use port `8765`, not gateway health port `18790` |
 | WebUI works but a chat app does not | Check **Settings → Channels**, then run `nanobot channels status` |
 

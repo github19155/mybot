@@ -41,17 +41,25 @@ def test_novita_forced_provider_uses_default_api_base() -> None:
                 "apiKey": "novita-key",
             },
         },
-        "agents": {
-            "defaults": {
-                "model": "deepseek-v4-pro",
+        "models": {
+            "main": {
+                "displayName": "novita",
                 "provider": "novita",
-            },
+                "model": "deepseek-v4-pro",
+                "capabilities": {"text": True},
+            }
         },
+        "agents": {"defaults": {"modelId": "main"}},
     })
 
-    assert config.get_provider_name("deepseek-v4-pro") == "novita"
-    assert config.get_api_key("deepseek-v4-pro") == "novita-key"
-    assert config.get_api_base("deepseek-v4-pro") == "https://api.novita.ai/openai"
+    from nanobot.providers.factory import make_provider
+
+    provider = make_provider(config)
+
+    assert provider.provider_name == "novita"
+    assert provider.api_key == "novita-key"
+    assert provider.api_base == "https://api.novita.ai/openai"
+    assert provider.get_default_model() == "deepseek-v4-pro"
 
 
 def test_novita_gateway_routes_unprefixed_models_when_configured() -> None:
@@ -61,16 +69,24 @@ def test_novita_gateway_routes_unprefixed_models_when_configured() -> None:
                 "apiKey": "novita-key",
             },
         },
-        "agents": {
-            "defaults": {
+        "models": {
+            "main": {
+                "displayName": "novita",
+                "provider": "novita",
                 "model": "deepseek-v4-pro",
-            },
+                "capabilities": {"text": True},
+            }
         },
+        "agents": {"defaults": {"modelId": "main"}},
     })
 
-    assert config.get_provider_name("deepseek-v4-pro") == "novita"
-    assert config.get_api_key("deepseek-v4-pro") == "novita-key"
-    assert config.get_api_base("deepseek-v4-pro") == "https://api.novita.ai/openai"
+    from nanobot.providers.factory import make_provider
+
+    provider = make_provider(config)
+
+    assert provider.provider_name == "novita"
+    assert provider.api_key == "novita-key"
+    assert provider.api_base == "https://api.novita.ai/openai"
 
 
 def test_novita_preserves_model_api_id() -> None:

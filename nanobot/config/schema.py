@@ -32,13 +32,18 @@ if TYPE_CHECKING:
 class _StrictConsumerModelBase(Base):
     """Consumer DTO base that rejects removed model-binding fields."""
 
-    model_config = ConfigDict(**Base.model_config, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
 class ChannelsConfig(Base):
-    """Configuration for chat channels."""
+    """Global channel defaults and open-ended plugin-owned channel sections.
 
-    model_config = ConfigDict(**Base.model_config, extra="allow")
+    Plugin channel sections require ``extra="allow"``; explicitly reject the
+    removed root-level transcription keys at this trust boundary instead of
+    allowing them to survive as channel extras.
+    """
+
+    model_config = ConfigDict(extra="allow")
     send_progress: bool = True
     send_tool_hints: bool = True
     show_reasoning: bool = True

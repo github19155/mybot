@@ -1,9 +1,9 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 
-import { ProviderPicker } from "@/components/settings/shared/ModelControls";
 import {
   NumberInput,
+  ReadOnlyRow,
   RestartSettingsFooter,
   SettingsGroup,
   SettingsRow,
@@ -17,8 +17,7 @@ import type { SettingsPayload, TranscriptionSettingsUpdate } from "@/lib/types";
 
 export const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
   enabled: true,
-  provider: "groq",
-  model: "",
+  modelId: "",
   language: "",
   maxDurationSec: 120,
   maxUploadMb: 25,
@@ -26,21 +25,17 @@ export const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
 
 export const DEFAULT_TRANSCRIPTION_SETTINGS: NonNullable<SettingsPayload["transcription"]> = {
   enabled: true,
-  provider: "groq",
-  provider_configured: false,
-  model: "whisper-large-v3",
+  model_id: null,
   language: null,
   max_duration_sec: 120,
   max_upload_mb: 25,
-  providers: [],
 };
 
 export function transcriptionFormFromPayload(payload: SettingsPayload): TranscriptionSettingsUpdate {
   const transcription = payload.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
   return {
     enabled: transcription.enabled,
-    provider: transcription.provider,
-    model: transcription.model,
+    modelId: transcription.model_id ?? "",
     language: transcription.language ?? "",
     maxDurationSec: transcription.max_duration_sec,
     maxUploadMb: transcription.max_upload_mb,
@@ -55,7 +50,6 @@ export function TranscriptionSettings({
   onChangeForm,
   onSave,
   onOpenProviders,
-  showBrandLogos,
   onRestart,
   isRestarting,
   requiresRestartPending,
@@ -74,11 +68,14 @@ export function TranscriptionSettings({
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  const transcription = settings.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
-  const selectedProvider =
-    transcription.providers.find((provider) => provider.name === form.provider) ??
-    transcription.providers[0];
-  const providerConfigured = !!selectedProvider?.configured;
+  const transcriptionModels = settings.models.filter(
+    (row) => row.capabilities?.transcription === true,
+  );
+  const selectedModel = transcriptionModels.find((row) => row.model_id === form.modelId) ?? null;
+  const selectedProvider = selectedModel
+    ? settings.providers.find((provider) => provider.name === selectedModel.provider)
+    : null;
+  const providerConfigured = selectedProvider?.configured === true;
 
   return (
     <section>
@@ -95,15 +92,39 @@ export function TranscriptionSettings({
             label={form.enabled ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
           />
         </SettingsRow>
-        <SettingsRow title={tx("settings.rows.transcriptionProvider", "Provider")}>
-          <ProviderPicker
-            providers={transcription.providers}
-            value={form.provider}
-            emptyLabel={tx("settings.voice.selectProvider", "Select provider")}
-            showProviderLogos={showBrandLogos}
-            onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider }))}
-          />
+        <SettingsRow
+          title={tx("settings.rows.transcriptionModel", "Transcription model")}
+          description={tx(
+            "settings.help.transcriptionModel",
+            "Choose a configured model that supports transcription.",
+          )}
+        >
+          <select
+            aria-label={tx("settings.rows.transcriptionModel", "Transcription model")}
+            value={form.modelId}
+            onChange={(event) => onChangeForm((prev) => ({ ...prev, modelId: event.target.value }))}
+            className="h-9 max-w-[360px] rounded-control border border-input bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">{tx("settings.voice.selectModel", "Select transcription model")}</option>
+            {transcriptionModels.map((row) => (
+              <option key={row.model_id} value={row.model_id}>
+                {row.display_name || row.model_id} — {row.provider} · {row.model}
+              </option>
+            ))}
+          </select>
         </SettingsRow>
+        <ReadOnlyRow
+          title={tx("settings.rows.transcriptionProvider", "Provider")}
+          value={selectedModel?.provider ?? tx("settings.values.notAvailable", "Not available")}
+        />
+        <ReadOnlyRow
+          title={tx("settings.rows.transcriptionUpstreamModel", "Upstream model")}
+          value={selectedModel?.model ?? tx("settings.values.notAvailable", "Not available")}
+        />
+        <ReadOnlyRow
+          title={tx("settings.rows.transcriptionDisplayName", "Display name")}
+          value={selectedModel?.display_name ?? tx("settings.values.notAvailable", "Not available")}
+        />
         <SettingsRow
           title={tx("settings.rows.transcriptionProviderStatus", "Provider status")}
           description={tx("settings.help.transcriptionProviderStatus", "API keys stay under providers, not in transcription settings.")}
@@ -114,22 +135,12 @@ export function TranscriptionSettings({
                 ? tx("settings.values.configured", "Configured")
                 : tx("settings.values.notConfigured", "Not configured")}
             </StatusPill>
-            {!providerConfigured ? (
+            {selectedModel && !providerConfigured ? (
               <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
                 {tx("settings.voice.configureProvider", "Configure provider")}
               </Button>
             ) : null}
           </div>
-        </SettingsRow>
-        <SettingsRow
-          title={tx("settings.rows.transcriptionModel", "Model")}
-          description={tx("settings.help.transcriptionModel", "Leave as the resolved default unless your provider needs a custom model id.")}
-        >
-          <Input
-            value={form.model}
-            onChange={(event) => onChangeForm((prev) => ({ ...prev, model: event.target.value }))}
-            className="h-8 w-[min(300px,70vw)] rounded-full text-[13px]"
-          />
         </SettingsRow>
         <SettingsRow
           title={tx("settings.rows.transcriptionLanguage", "Language")}

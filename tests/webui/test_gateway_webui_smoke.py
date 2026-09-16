@@ -32,10 +32,17 @@ def _write_smoke_config(path: Path, *, workspace: Path, ws_port: int, gateway_po
         "agents": {
             "defaults": {
                 "workspace": str(workspace),
-                "provider": "custom",
-                "model": "custom/smoke-model",
+                "model_id": "main",
                 "maxToolIterations": 1,
                 "dream": {"enabled": False},
+            }
+        },
+        "models": {
+            "main": {
+                "display_name": "Smoke Model",
+                "provider": "custom",
+                "model": "custom/smoke-model",
+                "capabilities": {"text": True},
             }
         },
         "providers": {
@@ -176,7 +183,8 @@ async def test_gateway_webui_bootstrap_message_and_thread_hydration(tmp_path: Pa
                 "turn_id": "smoke-turn",
             }))
             answer = await _recv_until(ws, "message")
-            assert "Current model: `custom/smoke-model`" in answer["text"]
+            assert "Current model ID: `main`" in answer["text"]
+            assert "Upstream model: `custom/smoke-model`" in answer["text"]
             await _recv_until(ws, "turn_end")
 
             await ws.send(json.dumps({
@@ -204,7 +212,8 @@ async def test_gateway_webui_bootstrap_message_and_thread_hydration(tmp_path: Pa
         )
         contents = [str(message.get("content") or "") for message in thread["messages"]]
         assert "/model" in contents
-        assert any("Current model: `custom/smoke-model`" in text for text in contents)
+        assert any("Current model ID: `main`" in text for text in contents)
+        assert any("Upstream model: `custom/smoke-model`" in text for text in contents)
         assert "!printf shell-ok" in contents
         assert any("shell-ok" in text for text in contents)
     finally:

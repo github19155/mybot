@@ -20,10 +20,11 @@ Concrete scenarios showing when and how to use the my tool effectively.
 
 ### "What model are you running?"
 ```
+→ my(action="check", key="model_id")
+  → 'main'
 → my(action="check", key="model")
-  → 'anthropic/claude-sonnet-4-6'
-→ my(action="check", key="model_preset")
-  → 'deep'
+  → 'claude-opus-4-5'
+→ "I'm running model_id 'main' (upstream model 'claude-opus-4-5'). List the configured catalog with my(action=\"check\", key=\"models\")."
 ```
 
 ## Adaptive Behavior
@@ -32,17 +33,19 @@ Concrete scenarios showing when and how to use the my tool effectively.
 ```
 → my(action="check")
   → context_window_tokens: 200000
-→ my(action="set", key="model_preset", value="deep")
-  → "Set model_preset = 'deep' for the next turn; context_window_tokens will be 262144"
-→ "I've selected the configured deep preset for this session's next turn."
+→ my(action="set", key="model_id", value="deep")
+  → "Set model_id = 'deep' for the next turn; model will be '<resolved model>'; context_window_tokens will be 262144"
+→ "I've switched to the configured 'deep' model for this session's next turn."
 ```
 
-### Switching to a configured model preset
+### Switching to a configured model
 ```
-→ my(action="set", key="model_preset", value="fast")
-  → "Set model_preset = 'fast' for the next turn; model will be 'openai/gpt-4.1-mini'"
-→ "Selected the fast preset for this session's next turn."
+→ my(action="set", key="model_id", value="fast")
+  → "Set model_id = 'fast' for the next turn; model will be '<resolved model>'; context_window_tokens will be <n>"
+→ "Selected the configured 'fast' model for this session's next turn."
 ```
+
+Model selection is by `model_id` — the stable slug of an entry in your configured `models` catalog (e.g. 'main', 'deep', 'fast'). The set response echoes the resolved upstream model and new context window; exact values depend on that config. Unknown IDs are rejected, and raw upstream provider model strings are never valid `model_id` values.
 
 ## Cross-Turn Memory
 

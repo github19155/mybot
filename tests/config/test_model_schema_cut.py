@@ -173,11 +173,11 @@ def test_removed_consumer_fields_are_rejected(
         {"transcription_language": "en"},
     ],
 )
-def test_channels_reject_removed_transcription_fallback_fields(
+def test_config_rejects_removed_channel_transcription_fields(
     payload: dict[str, object]
 ) -> None:
-    with pytest.raises(ValidationError, match="removed ChannelsConfig field"):
-        ChannelsConfig.model_validate(payload)
+    with pytest.raises(ValidationError):
+        Config.model_validate(_config(channels=payload))
 
 
 def test_root_rejects_model_presets_in_both_old_spellings() -> None:

@@ -220,6 +220,21 @@ async def test_recommendation_returns_model_id_and_filters_pool_capability(tmp_p
     assert recommended["model_id"] == "cpa_same"
     assert "preset" not in recommended
 
+@pytest.mark.asyncio
+async def test_sync_offerings_replaces_active_catalog_and_keeps_history(tmp_path: Path) -> None:
+    config = _config()
+    store = ModelFleetStore(tmp_path / "fleet.db")
+    fleet = ModelFleetManager(store, config=config)
+    retained = offering_from_config(config, model_id="main")
+    removed = offering_from_config(config, model_id="cpa_same")
+
+    fleet.sync_offerings([retained, removed])
+    fleet.sync_offerings([retained])
+
+    status = await fleet.status(refresh=False)
+    assert [item["model_id"] for item in status["offerings"]] == ["main"]
+    assert {row["model_id"] for row in store.offerings()} == {"main", "cpa_same"}
+
 
 def test_offering_identity_is_provider_plus_upstream_and_model_ids_are_distinct() -> None:
     config = _config()

@@ -35,7 +35,7 @@ def test_find_by_name_skywork() -> None:
     assert spec.name == "skywork"
 
 
-def test_skywork_model_auto_matches_with_default_api_base() -> None:
+def test_skywork_forced_provider_uses_default_api_base() -> None:
     config = Config.model_validate(
         {
             "providers": {
@@ -43,17 +43,26 @@ def test_skywork_model_auto_matches_with_default_api_base() -> None:
                     "apiKey": "sky-key",
                 },
             },
-            "agents": {
-                "defaults": {
+            "models": {
+                "main": {
+                    "displayName": "skywork",
+                    "provider": "skywork",
                     "model": "skywork-ai/skyclaw-v1",
-                },
+                    "capabilities": {"text": True},
+                }
             },
+            "agents": {"defaults": {"modelId": "main"}},
         }
     )
 
-    assert config.get_provider_name("skywork-ai/skyclaw-v1") == "skywork"
-    assert config.get_api_key("skywork-ai/skyclaw-v1") == "sky-key"
-    assert config.get_api_base("skywork-ai/skyclaw-v1") == "https://api.apifree.ai/agent/v1"
+    from nanobot.providers.factory import make_provider
+
+    provider = make_provider(config)
+
+    assert provider.provider_name == "skywork"
+    assert provider.api_key == "sky-key"
+    assert provider.api_base == "https://api.apifree.ai/agent/v1"
+    assert provider.get_default_model() == "skywork-ai/skyclaw-v1"
 
 
 def test_skywork_preserves_model_id_and_uses_chat_completion_max_tokens() -> None:

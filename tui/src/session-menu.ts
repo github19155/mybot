@@ -32,7 +32,7 @@ export class SessionMenu {
   private spinnerFrame = 0
   private spinnerTimer: ReturnType<typeof setInterval> | null = null
   private rows: SessionMenuRow[] = []
-  private defaultModelPreset = ""
+  private defaultModelId: string | null = null
   private readonly snapshots = new Map<string, {
     preview: string
     runStartedAt: number | null
@@ -49,7 +49,7 @@ export class SessionMenu {
       key: (session) => session.chatId,
       searchText: (session) => [
         sessionLabel(session),
-        session.modelPreset || "",
+        session.modelId || "",
         session.preview,
         session.chatId,
         session.workspaceScope?.project_name || "",
@@ -90,9 +90,9 @@ export class SessionMenu {
     sessions: SessionSummary[],
     currentChatId: string,
     limit: number,
-    defaultModelPreset = "",
+    defaultModelId: string | null = null,
   ): void {
-    this.defaultModelPreset = defaultModelPreset
+    this.defaultModelId = defaultModelId
     this.observe(sessions, currentChatId)
     this.rows = this.prepareRows(sessions, currentChatId)
     this.picker.show(this.rows, "", limit)
@@ -102,9 +102,9 @@ export class SessionMenu {
   replace(
     sessions: SessionSummary[],
     currentChatId: string,
-    defaultModelPreset = this.defaultModelPreset,
+    defaultModelId: string | null = this.defaultModelId,
   ): void {
-    this.defaultModelPreset = defaultModelPreset
+    this.defaultModelId = defaultModelId
     this.observe(sessions, currentChatId)
     this.rows = this.prepareRows(sessions, currentChatId)
     this.picker.replace(this.rows)
@@ -249,8 +249,8 @@ export class SessionMenu {
   }
 
   private modelOverride(session: SessionSummary): string {
-    const preset = session.modelPreset?.trim() || ""
-    return preset && preset !== this.defaultModelPreset ? preset : ""
+    const modelId = session.modelId?.trim() || ""
+    return modelId && modelId !== this.defaultModelId ? modelId : ""
   }
 }
 

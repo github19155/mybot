@@ -1701,8 +1701,8 @@ describe("NanobotClient", () => {
 
     lastSocket().fakeMessage({
       event: "runtime_model_updated",
-      model_name: "openai/gpt-4.1",
-      model_preset: "fast",
+      model: "openai/gpt-4.1",
+      model_id: "fast",
     });
 
     expect(handler).toHaveBeenCalledWith("openai/gpt-4.1", "fast");
@@ -1722,17 +1722,15 @@ describe("NanobotClient", () => {
     lastSocket().fakeMessage({
       event: "turn_model_updated",
       chat_id: "chat-a",
-      model_name: "deepseek/deepseek-chat",
-      model_preset: "Deep Research",
-      fallback: true,
+      model: "deepseek/deepseek-chat",
+      model_id: "Deep Research",
     });
 
     expect(chatHandler).toHaveBeenCalledWith({
       event: "turn_model_updated",
       chat_id: "chat-a",
-      model_name: "deepseek/deepseek-chat",
-      model_preset: "Deep Research",
-      fallback: true,
+      model: "deepseek/deepseek-chat",
+      model_id: "Deep Research",
     });
   });
 
@@ -1937,7 +1935,7 @@ describe("NanobotClient", () => {
     lastSocket().fakeMessage({
       event: "message",
       chat_id: "chat-x",
-      text: "Switched model preset to fast.",
+      text: "Switched model to `fast`.",
       turn_id: frame.turn_id,
     });
 

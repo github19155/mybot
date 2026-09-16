@@ -9,7 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import {
-  ModelIdPicker,
+  UpstreamModelPicker,
   ProviderPicker,
   ProviderPickerIcon,
   formatContextWindow,
@@ -36,12 +36,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { cn } from "@/lib/utils";
-import type { SettingsPayload } from "@/lib/types";
+import type { ModelSettingsRow, SettingsPayload } from "@/lib/types";
 
 export interface AgentSettingsDraft {
-  model: string;
+  /** Canonical model_id of the row being edited; empty while creating a new model. */
+  modelId: string;
+  /** Human-facing display name (never an identity/selector). */
+  displayName: string;
   provider: string;
-  modelPreset: string;
+  /** Upstream model string sent to the provider API; display data only. */
+  model: string;
   maxTokens: number;
   contextWindowTokens: number;
   temperature: number;
@@ -54,48 +58,52 @@ export interface AgentSettingsDraft {
 
 const CONTEXT_WINDOW_TOKEN_OPTIONS = [65_536, 200_000, 262_144, 500_000, 1_048_576] as const;
 
-type ModelPresetWithImageCapability = SettingsPayload["model_presets"][number] & {
-  supports_image_generation?: boolean;
-};
+const MODEL_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 
-function modelPresetSupportsImageGeneration(
-  preset: SettingsPayload["model_presets"][number] | null | undefined,
-): boolean {
-  return (preset as ModelPresetWithImageCapability | null | undefined)?.supports_image_generation === true;
+export function isValidModelId(value: string): boolean {
+  return MODEL_ID_PATTERN.test(value);
 }
 
-function modelPresetValue(payload: SettingsPayload): string {
-  return (
-    payload.model_presets.find((preset) => preset.active && !preset.is_default)?.name ??
-    payload.model_presets.find((preset) => !preset.is_default)?.name ??
-    ""
-  );
+function modelCapability(model: ModelSettingsRow | null | undefined, key: "vision" | "image_generation"): boolean {
+  return model?.capabilities?.[key] === true;
 }
 
-function suggestedPresetName(
-  model: string,
-  presets: SettingsPayload["model_presets"],
+/** The canonical model_id currently selected as the instance default. */
+function modelSettingsValue(payload: SettingsPayload): string {
+  return payload.models.find((row) => row.is_default)?.model_id ?? "";
+}
+
+/** Suggest a canonical model_id slug from an upstream model string. */
+function suggestedModelId(
+  upstreamModel: string,
+  models: Pick<ModelSettingsRow, "model_id">[],
 ): string {
-  const modelName = model.trim().split("/").filter(Boolean).at(-1) ?? "";
-  const base = (modelName.toLowerCase() === "default" ? "model" : modelName).slice(0, 48);
+  const leaf = upstreamModel.trim().split("/").filter(Boolean).at(-1) ?? "";
+  let base = leaf
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  if (base === "default") base = "model";
+  if (base && !/^[a-z]/.test(base)) base = `m-${base}`;
   if (!base) return "";
 
-  const existing = new Set(
-    presets.filter((preset) => !preset.is_default).map((preset) => preset.name.toLowerCase()),
-  );
-  if (!existing.has(base.toLowerCase())) return base;
+  const existing = new Set(models.map((row) => row.model_id.toLowerCase()));
+  if (!existing.has(base)) return base;
 
   for (let index = 2; ; index += 1) {
-    const suffix = ` ${index}`;
-    const candidate = `${base.slice(0, 48 - suffix.length)}${suffix}`;
+    const suffix = `-${index}`;
+    const candidate = `${base.slice(0, 64 - suffix.length)}${suffix}`;
     if (!existing.has(candidate.toLowerCase())) return candidate;
   }
 }
 
 export const DEFAULT_AGENT_SETTINGS_DRAFT: AgentSettingsDraft = {
-  model: "",
+  modelId: "",
+  displayName: "",
   provider: "",
-  modelPreset: "",
+  model: "",
   maxTokens: 8192,
   contextWindowTokens: 200_000,
   temperature: 0.1,
@@ -108,37 +116,36 @@ export const DEFAULT_AGENT_SETTINGS_DRAFT: AgentSettingsDraft = {
 
 export function agentDraftFromPayload(
   payload: SettingsPayload,
-  preferredPresetName?: string,
+  preferredModelId?: string,
 ): AgentSettingsDraft {
-  const activePresetName = preferredPresetName ?? modelPresetValue(payload);
-  const activePreset =
-    payload.model_presets.find(
-      (preset) => !preset.is_default && preset.name === activePresetName,
-    ) ?? null;
+  const activeModelId = preferredModelId ?? modelSettingsValue(payload);
+  const activeModel = payload.models.find((row) => row.model_id === activeModelId) ?? null;
+  const agent = payload.agent;
   return {
-    model: activePreset?.model ?? payload.agent.model,
-    provider: activePreset?.provider ?? payload.agent.provider ?? payload.agent.resolved_provider ?? "",
-    modelPreset: activePresetName,
-    maxTokens: activePreset?.max_tokens ?? payload.agent.max_tokens,
+    modelId: activeModel?.model_id ?? agent.model_id ?? "",
+    displayName: activeModel?.display_name ?? agent.display_name ?? "",
+    provider: activeModel?.provider ?? agent.provider ?? "",
+    model: activeModel?.model ?? agent.model ?? "",
+    maxTokens: activeModel?.generation_defaults?.max_tokens ?? 8192,
     contextWindowTokens: normalizeContextWindowTokens(
-      activePreset?.context_window_tokens ?? payload.agent.context_window_tokens,
+      activeModel?.context_window_tokens ?? agent.context_window_tokens,
     ),
-    temperature: activePreset?.temperature ?? payload.agent.temperature,
-    reasoningEffort: activePreset?.reasoning_effort ?? "",
-    supportsVision: activePreset?.supports_vision ?? payload.agent.supports_vision ?? false,
-    supportsImageGeneration: modelPresetSupportsImageGeneration(activePreset),
-    timezone: payload.agent.timezone,
-    toolHintMaxLength: payload.agent.tool_hint_max_length,
+    temperature: activeModel?.generation_defaults?.temperature ?? 0.1,
+    reasoningEffort: activeModel?.generation_defaults?.reasoning_effort ?? "",
+    supportsVision: modelCapability(activeModel, "vision"),
+    supportsImageGeneration: modelCapability(activeModel, "image_generation"),
+    timezone: agent.timezone,
+    toolHintMaxLength: agent.tool_hint_max_length,
   };
 }
 
-export function ModelPresetDeleteDialog({
-  preset,
+export function ModelDeleteDialog({
+  model,
   deleting,
   onOpenChange,
   onConfirm,
 }: {
-  preset: SettingsPayload["model_presets"][number] | null;
+  model: ModelSettingsRow | null;
   deleting: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
@@ -146,18 +153,19 @@ export function ModelPresetDeleteDialog({
   const { t } = useTranslation();
   const tx = (key: string, fallback: string, values?: Record<string, unknown>) =>
     t(key, { defaultValue: fallback, ...(values ?? {}) });
+  const label = model?.display_name || model?.model_id || "";
   return (
-    <Dialog open={preset !== null} onOpenChange={onOpenChange}>
+    <Dialog open={model !== null} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[440px]">
         <DialogHeader className="text-left">
           <DialogTitle>
-            {tx("settings.models.deletePresetTitle", "Delete model preset?")}
+            {tx("settings.models.deleteModelTitle", "Delete model?")}
           </DialogTitle>
           <DialogDescription className="leading-5">
             {tx(
-              "settings.models.deletePresetHelp",
-              "This removes the preset “{{name}}”. Provider credentials are not affected.",
-              { name: preset?.name ?? "" },
+              "settings.models.deleteModelHelp",
+              "This removes the model “{{name}}”. Provider credentials are not affected.",
+              { name: label },
             )}
           </DialogDescription>
         </DialogHeader>
@@ -193,8 +201,8 @@ export function ModelsSettings({
   token,
   form,
   setForm,
-  editingPresetName,
-  presetNameError,
+  editingModelId,
+  modelIdError,
   settings,
   dirty,
   creating,
@@ -209,7 +217,7 @@ export function ModelsSettings({
   selectionSaving,
   showBrandLogos,
   providerSaving,
-  onSelectActivePreset,
+  onSelectActiveModel,
   onProviderOAuthLogin,
   onSave,
   onSavePromptOverrides,
@@ -217,15 +225,15 @@ export function ModelsSettings({
   imageAnalysisSaving,
   onBeginCreate,
   onCancelCreate,
-  onClearPresetNameError,
-  onSelectConfiguration,
-  onDeleteConfiguration,
+  onClearModelIdError,
+  onSelectModel,
+  onDeleteModel,
 }: {
   token: string;
   form: AgentSettingsDraft;
   setForm: Dispatch<SetStateAction<AgentSettingsDraft>>;
-  editingPresetName: string;
-  presetNameError: string | null;
+  editingModelId: string;
+  modelIdError: string | null;
   settings: SettingsPayload;
   dirty: boolean;
   creating: boolean;
@@ -240,24 +248,24 @@ export function ModelsSettings({
   selectionSaving: boolean;
   showBrandLogos: boolean;
   providerSaving: string | null;
-  onSelectActivePreset: (name: string) => void;
+  onSelectActiveModel: (modelId: string) => void;
   onProviderOAuthLogin: (provider: string) => void;
   onSave: () => void;
   onSavePromptOverrides: (overrides: SettingsPayload["system_prompt_overrides"]) => void;
-  onSaveImageAnalysisModel: (preset: string | null) => void;
+  onSaveImageAnalysisModel: (modelId: string | null) => void;
   imageAnalysisSaving: boolean;
   onBeginCreate: () => void;
   onCancelCreate: () => void;
-  onClearPresetNameError: () => void;
-  onSelectConfiguration: (name: string) => void;
-  onDeleteConfiguration: (preset: SettingsPayload["model_presets"][number]) => void;
+  onClearModelIdError: () => void;
+  onSelectModel: (modelId: string) => void;
+  onDeleteModel: (model: ModelSettingsRow) => void;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string, values?: Record<string, unknown>) =>
     t(key, { defaultValue: fallback, ...(values ?? {}) });
   const [editorOpen, setEditorOpen] = useState(false);
-  const presetNameInputRef = useRef<HTMLInputElement>(null);
-  const suggestedPresetNameRef = useRef<string | null>(null);
+  const modelIdInputRef = useRef<HTMLInputElement>(null);
+  const suggestedModelIdRef = useRef<string | null>(null);
   const [editorRowKey, setEditorRowKey] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState<SettingsPayload["system_prompt_overrides"]>(
@@ -268,31 +276,34 @@ export function ModelsSettings({
     setPromptDraft(promptOverrides);
   }, [promptOverrides]);
   useEffect(() => {
-    if (presetNameError) presetNameInputRef.current?.focus();
-  }, [presetNameError]);
+    if (modelIdError) modelIdInputRef.current?.focus();
+  }, [modelIdError]);
   useEffect(() => {
-    if (!creating) suggestedPresetNameRef.current = null;
+    if (!creating) suggestedModelIdRef.current = null;
   }, [creating]);
-  const namedPresets = settings.model_presets.filter((preset) => !preset.is_default);
-  const visionPresets = settings.model_presets.filter((preset) => preset.supports_vision === true);
+  const modelRows = [...settings.models].sort(
+    (left, right) => Number(right.is_default) - Number(left.is_default),
+  );
+  const visionModels = settings.models.filter((model) => model.capabilities.vision === true);
   const roles = settings.subagent_roles ?? [];
   const roleBindingsDirty = roles.some(
-    (role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_preset,
+    (role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_id,
   );
-  const namedPresetsByName = new Map(namedPresets.map((preset) => [preset.name, preset]));
-  const presetRows = namedPresets.map((preset) => ({
-    key: `preset:${preset.name}`,
-    name: preset.name,
-    preset,
+  const modelRowsByKey = new Map(modelRows.map((row) => [row.model_id, row]));
+  const modelConfigurationRows = modelRows.map((row) => ({
+    key: `model:${row.model_id}`,
+    name: row.display_name || row.model_id,
+    modelId: row.model_id,
+    model: row,
   }));
-  const selectedPreset = namedPresetsByName.get(editingPresetName) ?? null;
-  const activeEditorRowKey =
+  const selectedModelConfiguration = modelRowsByKey.get(editingModelId) ?? null;
+  const activeModelConfigurationRowKey =
     editorRowKey ??
-    presetRows.find((row) => row.name === selectedPreset?.name)?.key ??
+    modelConfigurationRows.find((row) => row.modelId === selectedModelConfiguration?.model_id)?.key ??
     null;
   useEffect(() => {
     setAdvancedOpen(false);
-  }, [editorOpen, selectedPreset?.name]);
+  }, [editorOpen, selectedModelConfiguration?.model_id]);
 
   const configuredProviders = settings.providers.filter((provider) => provider.configured);
   const selectedProvider = settings.providers.find((provider) => provider.name === form.provider);
@@ -300,61 +311,49 @@ export function ModelsSettings({
     ...configuredProviders,
     ...(selectedProvider ? [selectedProvider] : []),
   ]);
-  const showAutoProvider = selectedPreset?.provider === "auto" || form.provider === "auto";
-  const providerOptions = showAutoProvider
-    ? [{ name: "auto", label: tx("settings.values.auto", "Auto") }, ...selectableProviders]
-    : selectableProviders;
+  const providerOptions = selectableProviders;
   const providerValue = providerOptions.some((provider) => provider.name === form.provider)
     ? form.provider
     : "";
   const selectedProviderNeedsSignIn =
     selectedProvider?.auth_type === "oauth" && !selectedProvider.configured;
   const selectedProviderSigningIn = providerSaving === selectedProvider?.name;
-  const selectedProviderConfigured = settingsProviderConfigured(
-    settings,
-    form.provider,
-    selectedPreset?.resolved_provider,
-  );
+  const selectedProviderConfigured = settingsProviderConfigured(settings, form.provider);
   const modelFieldsMissing =
+    !form.modelId.trim() ||
+    !isValidModelId(form.modelId) ||
+    !form.displayName.trim() ||
     !form.model.trim() ||
     !form.provider.trim() ||
-    !form.modelPreset.trim() ||
     form.maxTokens <= 0 ||
     form.temperature < 0 ||
     form.temperature > 2;
-  const selectedPresetReferenced = selectedPreset?.active === true;
+  const selectedModelConfigurationReferenced = Boolean(
+    selectedModelConfiguration && (
+      selectedModelConfiguration.is_default ||
+      (selectedModelConfiguration.usages?.length ?? 0) > 0
+    ),
+  );
   const selectionBusy = selectionSaving || saving;
-  const selectPreset = (
-    preset: SettingsPayload["model_presets"][number],
-    rowKey: string,
-  ) => {
-    const toggleCurrentPreset =
-      !creating && selectedPreset?.name === preset.name && activeEditorRowKey === rowKey;
-    onSelectConfiguration(preset.name);
-    if (toggleCurrentPreset) {
+  const selectModelConfiguration = (row: ModelSettingsRow, rowKey: string) => {
+    const toggleCurrentModelConfiguration =
+      !creating &&
+      selectedModelConfiguration?.model_id === row.model_id &&
+      activeModelConfigurationRowKey === rowKey;
+    onSelectModel(row.model_id);
+    if (toggleCurrentModelConfiguration) {
       setEditorOpen((open) => !open);
       return;
     }
-    setForm((prev) => ({
-      ...prev,
-      modelPreset: preset.name,
-      model: preset.model,
-      provider: preset.provider,
-      maxTokens: preset.max_tokens,
-      contextWindowTokens: normalizeContextWindowTokens(preset.context_window_tokens),
-      temperature: preset.temperature,
-      reasoningEffort: preset.reasoning_effort ?? "",
-      supportsVision: preset.supports_vision === true,
-      supportsImageGeneration: modelPresetSupportsImageGeneration(preset),
-    }));
+    setForm(agentDraftFromPayload(settings, row.model_id));
     setEditorRowKey(rowKey);
     setEditorOpen(true);
   };
 
-  const renderPresetEditor = () => (
+  const renderModelConfigurationEditor = () => (
     <div
-      id="model-preset-editor"
-      data-testid="model-preset-editor"
+      id="model-configuration-editor"
+      data-testid="model-configuration-editor"
       className={cn(
         "mx-3 mb-3 divide-y divide-border/45 overflow-hidden rounded-floating border border-border/45 bg-background/80 shadow-sm motion-reduce:animate-none animate-in fade-in-0 slide-in-from-top-1 duration-200 sm:mx-5 lg:mx-auto lg:w-[calc(100%-2.5rem)] lg:max-w-6xl",
         creating && "mt-3",
@@ -363,52 +362,72 @@ export function ModelsSettings({
       {creating ? (
         <div className="flex min-h-[52px] items-center px-4 py-3 sm:px-5">
           <span className="text-[13px] font-semibold text-foreground/85">
-            {tx("settings.models.newPreset", "New model preset")}
+            {tx("settings.models.newModel", "New model")}
           </span>
         </div>
       ) : null}
       <SettingsRow
-        title={tx("settings.models.presetName", "Preset name")}
+        title={tx("settings.models.modelId", "Model ID")}
         description={tx(
-          "settings.models.presetNameHelp",
-          "Used everywhere, including /model commands. Names must be unique.",
+          "settings.models.modelIdHelp",
+          "Stable canonical ID used by /model and model settings. Lowercase letters, digits, “-” and “_”; fixed after creation.",
         )}
       >
         <div
           className={cn(
             "w-[min(280px,70vw)] motion-reduce:animate-none",
-            presetNameError && "animate-[preset-name-shake_180ms_ease-in-out]",
+            modelIdError && "animate-[model-id-shake_180ms_ease-in-out]",
           )}
         >
           <Input
-            ref={presetNameInputRef}
+            ref={modelIdInputRef}
             autoFocus={creating}
-            aria-label={tx("settings.models.presetName", "Preset name")}
-            aria-invalid={Boolean(presetNameError)}
-            aria-describedby={presetNameError ? "model-preset-name-error" : undefined}
-            value={form.modelPreset}
-            placeholder={tx("settings.models.presetNamePlaceholder", "e.g. Fast writing")}
+            disabled={!creating}
+            aria-label={tx("settings.models.modelId", "Model ID")}
+            aria-invalid={Boolean(modelIdError)}
+            aria-describedby={modelIdError ? "model-id-error" : undefined}
+            value={form.modelId}
+            placeholder={tx("settings.models.modelIdPlaceholder", "e.g. fast")}
+            autoCapitalize="none"
+            spellCheck={false}
             onChange={(event) => {
-              suggestedPresetNameRef.current = null;
-              onClearPresetNameError();
-              setForm((prev) => ({ ...prev, modelPreset: event.target.value }));
+              suggestedModelIdRef.current = null;
+              onClearModelIdError();
+              setForm((prev) => ({ ...prev, modelId: event.target.value }));
             }}
             className={cn(
               "h-8 rounded-full text-[13px]",
-              presetNameError &&
+              modelIdError &&
                 "border-destructive/70 focus-visible:border-destructive focus-visible:ring-destructive/25",
             )}
           />
-          {presetNameError ? (
+          {modelIdError ? (
             <p
-              id="model-preset-name-error"
+              id="model-id-error"
               role="alert"
               className="mt-1.5 px-1 text-[12px] leading-4 text-destructive"
             >
-              {presetNameError}
+              {modelIdError}
             </p>
           ) : null}
         </div>
+      </SettingsRow>
+      <SettingsRow
+        title={tx("settings.models.displayName", "Display name")}
+        description={tx(
+          "settings.models.displayNameHelp",
+          "Human-facing label. Never an identity or selector.",
+        )}
+      >
+        <Input
+          aria-label={tx("settings.models.displayName", "Display name")}
+          value={form.displayName}
+          placeholder={tx("settings.models.displayNamePlaceholder", "e.g. Fast writing")}
+          onChange={(event) => {
+            setForm((prev) => ({ ...prev, displayName: event.target.value }));
+          }}
+          className="h-8 w-[min(280px,70vw)] rounded-full text-[13px]"
+        />
       </SettingsRow>
       <SettingsRow title={t("settings.rows.provider")}>
         <ProviderPicker
@@ -418,17 +437,17 @@ export function ModelsSettings({
           showProviderLogos={showBrandLogos}
           onChange={(provider) => {
             const providerChanged = provider !== form.provider;
-            const clearSuggestedName =
+            const clearSuggestedId =
               creating &&
               providerChanged &&
-              suggestedPresetNameRef.current !== null &&
-              form.modelPreset === suggestedPresetNameRef.current;
-            if (clearSuggestedName) suggestedPresetNameRef.current = null;
+              suggestedModelIdRef.current !== null &&
+              form.modelId === suggestedModelIdRef.current;
+            if (clearSuggestedId) suggestedModelIdRef.current = null;
             setForm((prev) => ({
               ...prev,
               provider,
               model: provider === prev.provider ? prev.model : "",
-              modelPreset: clearSuggestedName ? "" : prev.modelPreset,
+              modelId: clearSuggestedId ? "" : prev.modelId,
             }));
           }}
         />
@@ -438,7 +457,7 @@ export function ModelsSettings({
           title={tx("settings.oauth.signInRequired", "Sign in required")}
           description={tx(
             "settings.oauth.signInBeforeSaving",
-            "Sign in before saving this provider in the preset.",
+            "Sign in before saving this provider in the model.",
           )}
         >
           <Button
@@ -458,24 +477,24 @@ export function ModelsSettings({
         </SettingsRow>
       ) : null}
       <SettingsRow title={t("settings.rows.model")}>
-        <ModelIdPicker
+        <UpstreamModelPicker
           token={token}
           settings={settings}
           provider={form.provider}
           value={form.model}
           showProviderLogos={showBrandLogos}
           onChange={(model) => {
-            const canSuggestName =
+            const canSuggestId =
               creating &&
-              (!form.modelPreset.trim() || form.modelPreset === suggestedPresetNameRef.current);
-            const suggestion = canSuggestName
-              ? suggestedPresetName(model, settings.model_presets)
+              (!form.modelId.trim() || form.modelId === suggestedModelIdRef.current);
+            const suggestion = canSuggestId
+              ? suggestedModelId(model, settings.models)
               : "";
-            if (canSuggestName) suggestedPresetNameRef.current = suggestion;
+            if (canSuggestId) suggestedModelIdRef.current = suggestion;
             setForm((prev) => ({
               ...prev,
               model,
-              modelPreset: canSuggestName ? suggestion : prev.modelPreset,
+              modelId: canSuggestId ? suggestion : prev.modelId,
             }));
           }}
         />
@@ -536,29 +555,29 @@ export function ModelsSettings({
           >
             {tx("settings.actions.cancel", "Cancel")}
           </Button>
-        ) : selectedPreset ? (
+        ) : selectedModelConfiguration ? (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <Button
               size="sm"
               variant="ghost"
               className="rounded-full text-muted-foreground hover:text-destructive"
-              disabled={selectedPresetReferenced || saving || selectionSaving}
+              disabled={selectedModelConfigurationReferenced || saving || selectionSaving}
               aria-describedby={
-                selectedPresetReferenced ? "model-preset-delete-hint" : undefined
+                selectedModelConfigurationReferenced ? "model-configuration-delete-hint" : undefined
               }
-              onClick={() => onDeleteConfiguration(selectedPreset)}
+              onClick={() => onDeleteModel(selectedModelConfiguration)}
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
               {tx("settings.actions.delete", "Delete")}
             </Button>
-            {selectedPresetReferenced ? (
+            {selectedModelConfigurationReferenced ? (
               <span
-                id="model-preset-delete-hint"
+                id="model-configuration-delete-hint"
                 className="text-[11px] leading-4 text-muted-foreground"
               >
                 {tx(
                   "settings.models.removeBeforeDelete",
-                  "Select another preset before deleting this one.",
+                  "This model is the default or still in use; remove its references before deleting it.",
                 )}
               </span>
             ) : null}
@@ -580,42 +599,42 @@ export function ModelsSettings({
           >
             {saving || creatingSaving
               ? tx("settings.actions.saving", "Saving...")
-              : tx("settings.actions.savePreset", "Save")}
+              : tx("settings.actions.save", "Save")}
           </Button>
         </div>
       </div>
     </div>
   );
 
-  return (
+return (
     <div className="space-y-7">
       <section>
         <SettingsSectionTitle>
-          {tx("settings.models.presets", "Model presets")}
+          {tx("settings.models.models", "Models")}
         </SettingsSectionTitle>
         <SettingsGroup>
           <div role="list" className="divide-y divide-border/45">
-            {presetRows.map(({ key, name, preset }) => {
-              const provider = modelPresetProviderKey(preset, settings);
-              const presetConfigured = settingsProviderConfigured(settings, preset.provider, preset.resolved_provider);
-              const isSelected = editorOpen && !creating && activeEditorRowKey === key && selectedPreset?.name === name;
+            {modelConfigurationRows.map(({ key, name, modelId, model }) => {
+              const provider = modelProviderKey(model, settings);
+              const modelConfigured = settingsProviderConfigured(settings, model.provider);
+              const isSelected = editorOpen && !creating && activeModelConfigurationRowKey === key && selectedModelConfiguration?.model_id === modelId;
               return (
                 <div key={key} role="listitem">
-                  <div data-testid={`model-preset-row-${name}`} className={cn("group flex min-h-[76px] items-center gap-3 px-4 py-3 transition-colors sm:px-5", "hover:bg-muted/25", isSelected && "bg-muted/45 hover:bg-muted/45")}>
-                    <button type="button" aria-pressed={selectedPreset?.name === name} aria-expanded={isSelected} aria-controls={isSelected ? "model-preset-editor" : undefined} onClick={() => selectPreset(preset, key)} className="flex min-w-0 flex-1 items-center gap-3 rounded-control text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      <ProviderPickerIcon provider={provider} showBrandLogos={showBrandLogos} unconfigured={!presetConfigured} />
-                      <span className="min-w-0 flex-1"><span className="flex min-w-0 flex-wrap items-center gap-2"><span className="truncate text-[14px] font-medium text-foreground">{name}</span>{preset.active ? (<StatusPill tone="success">{tx("settings.models.active", "Active")}</StatusPill>) : null}{!presetConfigured ? (<span className="text-[11px] font-medium text-amber-700 dark:text-amber-300">{tx("settings.models.providerSetupRequired", "Provider setup required")}</span>) : null}</span><span className="mt-0.5 block truncate text-[12px] text-muted-foreground">{preset.model}</span></span>
+                  <div data-testid={`model-configuration-row-${name}`} className={cn("group flex min-h-[76px] items-center gap-3 px-4 py-3 transition-colors sm:px-5", "hover:bg-muted/25", isSelected && "bg-muted/45 hover:bg-muted/45")}>
+                    <button type="button" aria-pressed={selectedModelConfiguration?.model_id === modelId} aria-expanded={isSelected} aria-controls={isSelected ? "model-configuration-editor" : undefined} onClick={() => selectModelConfiguration(model, key)} className="flex min-w-0 flex-1 items-center gap-3 rounded-control text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <ProviderPickerIcon provider={provider} showBrandLogos={showBrandLogos} unconfigured={!modelConfigured} />
+                      <span className="min-w-0 flex-1"><span className="flex min-w-0 flex-wrap items-center gap-2"><span className="truncate text-[14px] font-medium text-foreground">{name}</span>{model.is_default ? (<StatusPill tone="success">{tx("settings.models.active", "Default")}</StatusPill>) : null}{!modelConfigured ? (<span className="text-[11px] font-medium text-amber-700 dark:text-amber-300">{tx("settings.models.providerSetupRequired", "Provider setup required")}</span>) : null}</span><span className="mt-0.5 block truncate text-[12px] text-muted-foreground">{model.model_id} · {model.model}</span></span>
                       <ChevronRight className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", isSelected && "rotate-90")} aria-hidden />
                     </button>
-                    <Button type="button" size="sm" variant={preset.active ? "secondary" : "outline"} className="shrink-0 rounded-full" disabled={selectionBusy || preset.active || !presetConfigured} onClick={() => onSelectActivePreset(preset.name)}>{preset.active ? tx("settings.models.active", "Active") : tx("settings.models.usePreset", "Use")}</Button>
+                    <Button type="button" size="sm" variant={model.is_default ? "secondary" : "outline"} className="shrink-0 rounded-full" disabled={selectionBusy || model.is_default || !modelConfigured} onClick={() => onSelectActiveModel(model.model_id)}>{model.is_default ? tx("settings.models.active", "Default") : tx("settings.models.useModel", "Use")}</Button>
                   </div>
-                  {isSelected ? renderPresetEditor() : null}
+                  {isSelected ? renderModelConfigurationEditor() : null}
                 </div>
               );
             })}
           </div>
-          {!creating ? (<button type="button" className="flex min-h-[58px] w-full items-center justify-between gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:px-5" disabled={selectionBusy} onClick={() => { setEditorRowKey(null); setEditorOpen(true); onBeginCreate(); }}><span className="inline-flex items-center text-[13px] font-medium"><Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />{tx("settings.models.newPreset", "New model preset")}</span>{selectionSaving ? (<SettingsStatusMessage><span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{tx("settings.actions.saving", "Saving...")}</span></SettingsStatusMessage>) : null}</button>) : null}
-          {creating && editorOpen ? renderPresetEditor() : null}
+          {!creating ? (<button type="button" className="flex min-h-[58px] w-full items-center justify-between gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:px-5" disabled={selectionBusy} onClick={() => { setEditorRowKey(null); setEditorOpen(true); onBeginCreate(); }}><span className="inline-flex items-center text-[13px] font-medium"><Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />{tx("settings.models.newModel", "New model")}</span>{selectionSaving ? (<SettingsStatusMessage><span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{tx("settings.actions.saving", "Saving...")}</span></SettingsStatusMessage>) : null}</button>) : null}
+          {creating && editorOpen ? renderModelConfigurationEditor() : null}
         </SettingsGroup>
       </section>
       <section>
@@ -627,13 +646,13 @@ export function ModelsSettings({
             title={tx("settings.models.imageAnalysis.model", "Vision model")}
             description={tx(
               "settings.models.imageAnalysis.help",
-              "Used by the image_analyze tool when the active model cannot see images. Mark vision-capable presets in Advanced options.",
+              "Used by the image_analyze tool when the active model cannot see images. Mark vision-capable models in Advanced options.",
             )}
           >
             <div className="flex flex-wrap items-center gap-2">
               <select
                 aria-label={tx("settings.models.imageAnalysis.model", "Vision model")}
-                value={settings.agent.image_analysis_model_preset ?? ""}
+                value={settings.agent.image_analysis_model_id ?? ""}
                 disabled={imageAnalysisSaving}
                 onChange={(event) =>
                   onSaveImageAnalysisModel(event.target.value || null)
@@ -643,11 +662,11 @@ export function ModelsSettings({
                 <option value="">
                   {tx("settings.models.imageAnalysis.perRequest", "Choose per request")}
                 </option>
-                {visionPresets.map((preset) => (
-                  <option key={preset.name} value={preset.name}>
-                    {preset.is_default ? tx("settings.values.default", "Default") : preset.name}
+                {visionModels.map((model) => (
+                  <option key={model.model_id} value={model.model_id}>
+                    {model.is_default ? tx("settings.values.default", "Default") : (model.display_name || model.model_id)}
                     {" — "}
-                    {preset.model}
+                    {model.model}
                   </option>
                 ))}
               </select>
@@ -685,21 +704,21 @@ export function ModelsSettings({
                     {tx(`settings.models.subagentRoles.permissions.${role.permissions}`, role.permissions)}
                   </StatusPill>
                   <select
-                    aria-label={tx("settings.models.subagentRoles.presetLabel", "Model preset for {{role}}", {
+                    aria-label={tx("settings.models.subagentRoles.modelLabel", "Model for {{role}}", {
                       role: tx(`settings.models.subagentRoles.names.${role.name}`, role.name),
                     })}
-                    value={(role.name in roleBindingsDraft ? roleBindingsDraft[role.name] : role.model_preset) ?? ""}
+                    value={(role.name in roleBindingsDraft ? roleBindingsDraft[role.name] : role.model_id) ?? ""}
                     onChange={(event) => {
-                      const preset = event.target.value || null;
-                      setRoleBindingsDraft((current) => ({ ...current, [role.name]: preset }));
+                      const modelId = event.target.value || null;
+                      setRoleBindingsDraft((current) => ({ ...current, [role.name]: modelId }));
                     }}
                     className="h-9 max-w-full rounded-control border border-input bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <option value="">
                       {tx("settings.models.subagentRoles.inherit", "Inherit parent model")}
                     </option>
-                    {namedPresets.map((preset) => (
-                      <option key={preset.name} value={preset.name}>{preset.name}</option>
+                    {modelRows.map((row) => (
+                      <option key={row.model_id} value={row.model_id}>{row.display_name || row.model_id}</option>
                     ))}
                   </select>
                 </div>
@@ -744,14 +763,14 @@ export function ModelsSettings({
               />
               <div className="flex items-center gap-2">
                 <Input
-                  value={row.models.join(", ")}
+                  value={row.model_ids.join(", ")}
                   onChange={(event) =>
                     setPromptDraft(
                       promptDraft.map((item, i) =>
                         i === index
                           ? {
                               ...item,
-                              models: event.target.value
+                              model_ids: event.target.value
                                 .split(",")
                                 .map((id) => id.trim())
                                 .filter(Boolean),
@@ -782,7 +801,7 @@ export function ModelsSettings({
               type="button"
               variant="ghost"
               disabled={promptOverridesSaving}
-              onClick={() => setPromptDraft([...promptDraft, { prompt: "", models: [] }])}
+              onClick={() => setPromptDraft([...promptDraft, { prompt: "", model_ids: [] }])}
             >
               <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
               {tx("settings.models.addPromptOverride", "Add override")}
@@ -799,7 +818,7 @@ export function ModelsSettings({
               }
               onClick={() =>
                 onSavePromptOverrides(
-                  promptDraft.filter((row) => row.prompt.trim() && row.models.length > 0),
+                  promptDraft.filter((row) => row.prompt.trim() && row.model_ids.length > 0),
                 )
               }
             >
@@ -955,19 +974,11 @@ function uniqueProviders(
   });
 }
 
-function modelPresetProviderKey(
-  preset: SettingsPayload["model_presets"][number],
+function modelProviderKey(
+  preset: ModelSettingsRow,
   settings: SettingsPayload,
   options: { draftProvider?: string } = {},
 ): string {
   const provider = options.draftProvider ?? preset.provider;
-  if (provider === "auto") {
-    return (
-      preset.resolved_provider ||
-      settings.agent.resolved_provider ||
-      settings.agent.provider ||
-      preset.provider
-    );
-  }
-  return provider;
+  return provider || settings.agent.provider;
 }

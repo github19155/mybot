@@ -11,7 +11,8 @@ def test_load_config_missing_file_uses_defaults(tmp_path) -> None:
     config_path = tmp_path / "instance" / "missing.json"
     config = load_config(config_path)
 
-    assert config.agents.defaults.model
+    assert config.agents.defaults.model_id == "main"
+    assert "main" in config.models
     assert config.runtime_data_dir == config_path.parent
 
 

@@ -30,7 +30,7 @@ const options: AppOptions = {
   apiUrl: "",
   apiToken: "",
   model: "test/model",
-  modelPreset: "default",
+  modelId: "default",
   workspace: "/tmp/nanobot-workspace",
   version: "test",
   access: "workspace access",
@@ -570,8 +570,8 @@ describe("NanobotTui layout", () => {
     ui.commandMenu.setCommands([{
       command: "/model",
       title: "Model",
-      description: "Show or switch model presets",
-      argHint: "[preset]",
+      description: "Show or switch models",
+      argHint: "[model_id]",
       lifecycle: "side_channel",
       acceptsArgs: true,
     }])
@@ -984,7 +984,7 @@ describe("NanobotTui layout", () => {
           title: "Release checklist",
           preview: "Prepare stable release",
           updated_at: "2026-08-12T10:00:00Z",
-          model_preset: "Deep Research",
+          model_id: "deep-research",
         },
       ],
     })))) as unknown as typeof fetch
@@ -1015,7 +1015,7 @@ describe("NanobotTui layout", () => {
       ui.composer.submit()
       await waitUntil(() => attached.length === 1)
       expect(attached).toEqual(["other"])
-      expect(ui.runtimeControls.modelText.plainText).toBe("Deep Research ▾")
+      expect(ui.runtimeControls.modelText.plainText).toBe("deep-research ▾")
       expect(ui.runtimeControls.modelText.plainText).not.toContain("test/model")
 
       app.accept({ event: "attached", chat_id: "other" })
@@ -1183,55 +1183,35 @@ describe("NanobotTui layout", () => {
     }
   })
 
-  test("tracks canonical presets without overwriting a session override", async () => {
+  test("tracks canonical model IDs while keeping upstream model display separate", async () => {
     setup = await createRenderer({ width: 96, height: 20, screenMode: "alternate-screen" })
     const app = mount(setup)
     const ui = app as unknown as { runtimeControls: { modelText: { plainText: string } } }
 
-    app.accept({ event: "attached", chat_id: "chat", model_preset: "Codex" })
-    app.accept({
-      event: "turn_model_updated",
-      chat_id: "chat",
-      model_name: "openai/gpt-5.6",
-      model_preset: "Codex",
-    })
+    app.accept({ event: "turn_model_updated", chat_id: "chat", model: "openai/gpt-5.6", model_id: "codex" })
     await setup.flush()
-    expect(ui.runtimeControls.modelText.plainText).toBe("Codex ▾")
+    expect(ui.runtimeControls.modelText.plainText).toBe("codex ▾")
     expect(ui.runtimeControls.modelText.plainText).not.toContain("openai/gpt-5.6")
 
-    app.accept({
-      event: "runtime_model_updated",
-      model_name: "deepseek/deepseek-chat",
-      model_preset: "DeepSeek",
-    })
+    app.accept({ event: "runtime_model_updated", model: "deepseek/deepseek-chat", model_id: "deepseek" })
     await setup.flush()
-    expect(ui.runtimeControls.modelText.plainText).toBe("Codex ▾")
-    expect(ui.runtimeControls.modelText.plainText).not.toContain("DeepSeek")
+    expect(ui.runtimeControls.modelText.plainText).toBe("codex ▾")
+    expect(ui.runtimeControls.modelText.plainText).not.toContain("deepseek")
   })
 
-  test("returns a default-following chat to the canonical default preset", async () => {
+  test("uses a neutral model label when runtime identity is unavailable", async () => {
     setup = await createRenderer({ width: 96, height: 20, screenMode: "alternate-screen" })
-    const app = NanobotTui.mount(
-      setup.renderer,
-      { ...options, model: "openai/gpt-5.6", modelPreset: "Codex" },
-      client(),
-      new MockTreeSitterClient({ autoResolveTimeout: 0 }),
-    )
+    const app = mount(setup)
     const ui = app as unknown as { runtimeControls: { modelText: { plainText: string } } }
 
-    app.accept({ event: "attached", chat_id: "chat", model_preset: null })
-    app.accept({
-      event: "runtime_model_updated",
-      model_name: "deepseek/deepseek-chat",
-      model_preset: null,
-    })
+    app.accept({ event: "turn_model_updated", chat_id: "chat", model: "openai/gpt-5.6" })
     await setup.flush()
-
-    expect(ui.runtimeControls.modelText.plainText).toBe("default ▾")
-    expect(ui.runtimeControls.modelText.plainText).not.toContain("deepseek/deepseek-chat")
+    expect(ui.runtimeControls.modelText.plainText).toBe("Choose model ▾")
+    expect(ui.runtimeControls.modelText.plainText).not.toContain("openai/gpt-5.6")
   })
 
-  test("refreshes the canonical preset after the model command completes", async () => {
+
+  test("refreshes the canonical model ID after the model command completes", async () => {
     setup = await createRenderer({ width: 96, height: 20, screenMode: "alternate-screen" })
     const original = globalThis.fetch
     globalThis.fetch = ((input: string | URL | Request) => {
@@ -1239,7 +1219,7 @@ describe("NanobotTui layout", () => {
         return Promise.resolve(new Response(JSON.stringify({})))
       }
       return Promise.resolve(new Response(JSON.stringify({
-        sessions: [{ key: "websocket:chat", model_preset: "Deep Research" }],
+        sessions: [{ key: "websocket:chat", model_id: "deep-research" }],
       })))
     }) as typeof fetch
     const sent: string[] = []
@@ -1256,27 +1236,27 @@ describe("NanobotTui layout", () => {
     }
 
     try {
-      app.accept({ event: "attached", chat_id: "chat", model_preset: null })
+      app.accept({ event: "attached", chat_id: "chat" })
       ui.commandMenu.setCommands([{
         command: "/model",
         title: "Model",
-        description: "Show or switch model presets",
-        argHint: "[preset]",
+        description: "Show or switch models",
+        argHint: "[model_id]",
         lifecycle: "side_channel",
         acceptsArgs: true,
       }])
-      ui.composer.setText("/model deep research")
+      ui.composer.setText("/model deep-research")
       ui.composer.submit()
       await waitUntil(() => sent.length === 1)
       app.accept({
         event: "message",
         chat_id: "chat",
-        text: "Switched model preset to Deep Research.",
+        text: "Switched model to deep-research.",
         turn_id: "turn",
       })
-      await waitUntil(() => ui.runtimeControls.modelText.plainText.includes("Deep Research"))
+      await waitUntil(() => ui.runtimeControls.modelText.plainText.includes("deep-research"))
 
-      expect(sent).toEqual(["/model deep research"])
+      expect(sent).toEqual(["/model deep-research"])
     } finally {
       globalThis.fetch = original
     }
@@ -1293,9 +1273,9 @@ describe("NanobotTui layout", () => {
       if (url.endsWith("/api/settings")) {
         settingsRequests += 1
         return new Response(JSON.stringify({
-          model_presets: [
-            { name: "default", model: "test/model" },
-            { name: "fast", model: "fast/model" },
+          models: [
+            { model_id: "default", display_name: "Default", model: "test/model" },
+            { model_id: "fast", display_name: "Fast", model: "fast/model" },
           ],
         }))
       }
@@ -1366,7 +1346,7 @@ describe("NanobotTui layout", () => {
       await setup.flush()
       const accessRows = ui.runtimeControls.menuRoot.getChildren() as TextRenderable[]
       const full = accessRows.find((row) => row.plainText.includes("Full access"))
-      if (!full) throw new Error("full access row was not rendered")
+      if (!full) throw new Error(`access rows: ${accessRows.map((row) => row.plainText).join("|")} requests=${settingsRequests}/${workspaceRequests} full=${(ui.runtimeControls as unknown as { canUseFullAccess: boolean }).canUseFullAccess}`)
       ui.composer.blur()
       expect(ui.composer.focused).toBe(false)
       await setup.mockMouse.click(full.x + 2, full.y)

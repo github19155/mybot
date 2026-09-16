@@ -46,16 +46,16 @@ class WebUIOutboundTransport(Protocol):
     async def send_runtime_model_updated(
         self,
         *,
-        model_name: str | None,
-        model_preset: str | None = None,
+        model: str | None,
+        model_id: str | None = None,
     ) -> None: ...
 
     async def send_turn_model_updated(
         self,
         chat_id: str,
         *,
-        model_name: str,
-        model_preset: str | None = None,
+        model: str,
+        model_id: str | None = None,
         context_window_tokens: int | None = None,
     ) -> None: ...
 
@@ -137,8 +137,8 @@ class WebUIOutboundProjector:
         progress_event = event if isinstance(event, ProgressEvent) else None
         if isinstance(event, RuntimeModelUpdatedEvent):
             await self._transport.send_runtime_model_updated(
-                model_name=event.model,
-                model_preset=event.model_preset,
+                model=event.model,
+                model_id=event.model_id,
             )
             return
 
@@ -163,8 +163,8 @@ class WebUIOutboundProjector:
             if conns:
                 await self._transport.send_turn_model_updated(
                     msg.chat_id,
-                    model_name=event.model,
-                    model_preset=event.model_preset,
+                    model=event.model,
+                    model_id=event.model_id,
                     context_window_tokens=event.context_window_tokens,
                 )
             return

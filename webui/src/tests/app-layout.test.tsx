@@ -70,29 +70,30 @@ function mockFetchRoutes(routes: Record<string, unknown>): void {
 function baseSettingsPayload() {
   return {
     agent: {
+      model_id: "primary",
+      display_name: "Primary",
+      provider: "openai",
       model: "openai/gpt-4o",
-      provider: "auto",
-      resolved_provider: "openai",
+      capabilities: { text: true, vision: false, image_generation: false, transcription: false },
+      context_window_tokens: 200000,
+      generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
       has_api_key: true,
-      model_preset: "default",
-      max_tokens: 8192,
-      context_window_tokens: 65536,
-      temperature: 0.1,
-      reasoning_effort: null,
+      image_analysis_model_id: null,
       timezone: "UTC",
       tool_hint_max_length: 40,
     },
-    model_presets: [{
-      name: "default",
-      label: "Default",
-      active: true,
-      is_default: true,
+    models: [{
+      model_id: "primary",
+      display_name: "Primary",
+      provider: "openai",
       model: "openai/gpt-4o",
-      provider: "auto",
-      max_tokens: 8192,
-      context_window_tokens: 65536,
-      temperature: 0.1,
-      reasoning_effort: null,
+      capabilities: { text: true, vision: false, image_generation: false, transcription: false },
+      context_window_tokens: 200000,
+      pricing: {},
+      generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
+      is_default: true,
+      usages: [],
+      reasoning_effort_values: [],
     }],
     providers: [],
     web_search: {
@@ -494,12 +495,11 @@ describe("App layout", () => {
         ...base,
         agent: {
           ...base.agent,
+          model_id: "",
           model: "",
-          resolved_provider: "",
           has_api_key: false,
-          model_preset: "",
         },
-        model_presets: [],
+        models: [],
       },
     });
 
@@ -2351,43 +2351,57 @@ describe("App layout", () => {
             status: 200,
             json: async () => ({
               agent: {
+                model_id: "primary",
+                display_name: "primary",
+                provider: "openai",
                 model: "openai/gpt-4o",
-                provider: "auto",
-                resolved_provider: "openai",
+                capabilities: { text: true, vision: false, image_generation: false, transcription: false },
+                context_window_tokens: 200000,
+                generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
                 has_api_key: true,
-                model_preset: "primary",
-                max_tokens: 8192,
-                context_window_tokens: 65536,
-                temperature: 0.1,
-                reasoning_effort: null,
+                image_analysis_model_id: null,
                 timezone: "UTC",
                 tool_hint_max_length: 40,
               },
-              model_presets: [
+              models: [
                 {
-                  name: "primary",
-                  label: "Primary",
-                  active: true,
-                  is_default: false,
+                  model_id: "primary",
+                  display_name: "primary",
+                  provider: "openai",
                   model: "openai/gpt-4o",
-                  provider: "auto",
-                  resolved_provider: "openai",
-                  max_tokens: 8192,
-                  context_window_tokens: 65536,
-                  temperature: 0.1,
-                  reasoning_effort: null,
+                  capabilities: { text: true, vision: false, image_generation: false, transcription: false },
+                  context_window_tokens: 200000,
+                  pricing: {},
+                  generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
+                  is_default: false,
+                  usages: [],
+                  reasoning_effort_values: [],
                 },
                 {
-                  name: "deep",
-                  label: "deep",
-                  active: false,
-                  is_default: false,
-                  model: "anthropic/claude-opus-4-5",
+                  model_id: "deep",
+                  display_name: "deep",
                   provider: "anthropic",
-                  max_tokens: 8192,
+                  model: "anthropic/claude-opus-4-5",
+                  capabilities: { text: true, vision: false, image_generation: false, transcription: false },
                   context_window_tokens: 200000,
-                  temperature: 0.1,
-                  reasoning_effort: "high",
+                  pricing: {},
+                  generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: "high" },
+                  is_default: false,
+                  usages: [],
+                  reasoning_effort_values: [],
+                },
+                {
+                  model_id: "image-openrouter",
+                  display_name: "OpenRouter Image",
+                  provider: "openrouter",
+                  model: "openai/gpt-5.4-image-2",
+                  capabilities: { text: false, vision: false, image_generation: true, transcription: false },
+                  context_window_tokens: 200000,
+                  pricing: {},
+                  generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
+                  is_default: false,
+                  usages: [],
+                  reasoning_effort_values: [],
                 },
               ],
               providers: [
@@ -2476,31 +2490,11 @@ describe("App layout", () => {
               },
               image_generation: {
                 enabled: false,
-                provider: "openrouter",
-                provider_configured: true,
-                model: "openai/gpt-5.4-image-2",
+                model_id: "image-openrouter",
                 default_aspect_ratio: "1:1",
                 default_image_size: "1K",
                 max_images_per_turn: 4,
                 save_dir: "generated",
-                providers: [
-                  {
-                    name: "openrouter",
-                    label: "OpenRouter",
-                    configured: true,
-                    api_key_hint: "sk-o••••test",
-                    api_base: "https://openrouter.ai/api/v1",
-                    default_api_base: "https://openrouter.ai/api/v1",
-                  },
-                  {
-                    name: "gemini",
-                    label: "Gemini",
-                    configured: false,
-                    api_key_hint: null,
-                    api_base: null,
-                    default_api_base: "https://generativelanguage.googleapis.com/v1beta/openai/",
-                  },
-                ],
               },
               runtime: {
                 config_path: "/tmp/config.json",
@@ -2588,10 +2582,13 @@ describe("App layout", () => {
     fireEvent.pointerDown(within(settingsNav).getByRole("button", { name: "Settings: Appearance" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Models" }));
     expect(screen.queryByText("AI")).not.toBeInTheDocument();
-    expect(screen.getByText("Model presets")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "New model preset" }));
-    expect(screen.queryByRole("dialog", { name: "New model preset" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Preset name" }), {
+    expect(screen.getByRole("heading", { name: "Models" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New model" }));
+    expect(screen.queryByRole("dialog", { name: "New model" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Model ID" }), {
+      target: { value: "fast" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Display name" }), {
       target: { value: "Fast writing" },
     });
     expect(
@@ -2605,11 +2602,15 @@ describe("App layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("Up to date.")).not.toBeInTheDocument();
     fireEvent.click(
-      within(screen.getByTestId("model-preset-row-primary")).getAllByRole("button")[0],
+      within(screen.getByTestId("model-configuration-row-primary")).getAllByRole("button")[0],
     );
-    fireEvent.pointerDown(screen.getByRole("button", { name: /Auto/ }));
+    const providerPicker = screen
+      .getAllByRole("button", { name: /OpenAI/ })
+      .find((button) => button.getAttribute("aria-haspopup") === "menu");
+    if (!providerPicker) throw new Error("provider picker was not found");
+    fireEvent.pointerDown(providerPicker);
     expect(screen.getAllByTestId("provider-picker-logo-openai").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("menuitem", { name: /Auto/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "OpenAI" }));
     const openModelPicker = async () => {
       const modelButtons = screen.getAllByRole("button", { name: /openai\/gpt-4o/ });
       await user.click(modelButtons[modelButtons.length - 1]);
@@ -2623,7 +2624,7 @@ describe("App layout", () => {
     expect(screen.queryByText("Ant Ling")).not.toBeInTheDocument();
     expect(
       screen.queryByText(
-        "Bring your own provider keys. Nanobot reads these values from the current config and only configured providers can be used in model presets.",
+        "Bring your own provider keys. Nanobot reads these values from the current config and only configured providers can be used in model configurations.",
       ),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("azure_openai")).not.toBeInTheDocument();
@@ -2665,7 +2666,7 @@ describe("App layout", () => {
     expect(screen.queryByRole("heading", { name: "Image" })).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Image generation" })).toBeInTheDocument();
     expect(screen.getByText("Provider status")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "openai/gpt-5.4-image-2" })).toBeInTheDocument();
+    expect(screen.getByText("openai/gpt-5.4-image-2")).toBeInTheDocument();
     expect(screen.getByText("Save directory")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(
@@ -2816,8 +2817,8 @@ describe("App layout", () => {
 
     fireEvent.click(modelsButton);
 
-    expect(await screen.findByText("Model presets")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Models" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Models" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Model configurations" })).not.toBeInTheDocument();
     expect(window.location.hash).toBe("#/settings?section=models");
     expect(modelsButton).toHaveAttribute("aria-current", "page");
     expect(settingsHighlight).toHaveAttribute("data-active-id", "models");
@@ -2925,30 +2926,31 @@ describe("App layout", () => {
             status: 200,
             json: async () => ({
               agent: {
-                model: "openai/gpt-4o",
+                model_id: "primary",
+                display_name: "primary",
                 provider: "openai",
-                resolved_provider: "openai",
+                model: "openai/gpt-4o",
+                capabilities: { text: true, vision: false, image_generation: false, transcription: false },
+                context_window_tokens: 200000,
+                generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
                 has_api_key: true,
-                model_preset: "default",
-                max_tokens: 8192,
-                context_window_tokens: 65536,
-                temperature: 0.1,
-                reasoning_effort: null,
+                image_analysis_model_id: null,
                 timezone: "UTC",
                 tool_hint_max_length: 40,
               },
-              model_presets: [
+              models: [
                 {
-                  name: "default",
-                  label: "Default",
-                  active: true,
-                  is_default: true,
-                  model: "openai/gpt-4o",
+                  model_id: "primary",
+                  display_name: "primary",
                   provider: "openai",
-                  max_tokens: 8192,
-                  context_window_tokens: 65536,
-                  temperature: 0.1,
-                  reasoning_effort: null,
+                  model: "openai/gpt-4o",
+                  capabilities: { text: true, vision: false, image_generation: false, transcription: false },
+                  context_window_tokens: 200000,
+                  pricing: {},
+                  generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
+                  is_default: true,
+                  usages: [],
+                  reasoning_effort_values: [],
                 },
               ],
               providers: [{ name: "openai", label: "OpenAI", configured: true }],

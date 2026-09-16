@@ -42,7 +42,21 @@ from nanobot.utils.llm_runtime import runtime_from_provider_snapshot
 def _write_config(tmp_path: Path, overrides: dict | None = None) -> Path:
     data = {
         "providers": {"openrouter": {"apiKey": "sk-test-key"}},
-        "agents": {"defaults": {"model": "openai/gpt-4.1"}},
+        "models": {
+            "main": {
+                "displayName": "Main",
+                "provider": "openrouter",
+                "model": "openai/gpt-4.1",
+                "capabilities": {"text": True},
+            },
+            "fast": {
+                "displayName": "Fast",
+                "provider": "openrouter",
+                "model": "openai/gpt-4.1-mini",
+                "capabilities": {"text": True},
+            },
+        },
+        "agents": {"defaults": {"modelId": "main"}},
     }
     if overrides:
         data.update(overrides)
@@ -118,42 +132,30 @@ def test_from_config_composes_configured_mcp_outside_agent_loop(tmp_path):
     assert bot._mcp_provider._registry is bot._loop.tools
 
 
-def test_from_config_accepts_default_model_override(tmp_path):
+def test_from_config_accepts_default_model_id_override(tmp_path):
     config_path = _write_config(tmp_path)
 
     bot = Nanobot.from_config(
         config_path,
         workspace=tmp_path,
-        model="openai/gpt-4.1-mini",
+        model_id="fast",
     )
 
     assert bot.runtime.model == "openai/gpt-4.1-mini"
-    assert bot._loop.model_preset is None
+    assert bot._loop.model_id == "fast"
 
 
-def test_from_config_accepts_default_model_preset(tmp_path):
-    config_path = _write_config(
-        tmp_path,
-        {
-            "modelPresets": {
-                "fast": {
-                    "model": "openai/gpt-4.1-mini",
-                    "provider": "openrouter",
-                }
-            }
-        },
-    )
-
-    bot = Nanobot.from_config(config_path, workspace=tmp_path, model_preset="fast")
-
-    assert bot.runtime.model == "openai/gpt-4.1-mini"
-    assert bot._loop.model_preset == "fast"
-
-
-def test_from_config_rejects_multiple_model_selectors(tmp_path):
+def test_from_config_rejects_legacy_model_preset_kwarg(tmp_path):
     config_path = _write_config(tmp_path)
 
-    with pytest.raises(ValueError, match="mutually exclusive"):
+    with pytest.raises(TypeError):
+        Nanobot.from_config(config_path, workspace=tmp_path, model_preset="fast")
+
+
+def test_from_config_rejects_legacy_model_selectors(tmp_path):
+    config_path = _write_config(tmp_path)
+
+    with pytest.raises(TypeError):
         Nanobot.from_config(
             config_path,
             workspace=tmp_path,
@@ -166,7 +168,8 @@ def test_from_config_default_path():
     from nanobot.config.schema import Config
 
     with patch("nanobot.config.loader.load_config") as mock_load, \
-         patch("nanobot.providers.factory.make_provider") as mock_prov:
+         patch("nanobot.providers.factory.make_provider") as mock_prov, \
+         patch("nanobot.providers.factory.provider_signature", return_value=("test",)):
         mock_load.return_value = Config()
         mock_prov.return_value = MagicMock()
         mock_prov.return_value.get_default_model.return_value = "test"
@@ -749,14 +752,14 @@ async def test_run_model_overrides_can_overlap_without_default_mutation(tmp_path
     both_entered = asyncio.Event()
     release_first = asyncio.Event()
 
-    def fake_resolve(*, model, model_preset):
-        assert model is not None
-        assert model_preset is None
+    def fake_resolve(*, model_id):
+        assert model_id is not None
         return runtime_from_provider_snapshot(ProviderSnapshot(
-            provider=_fake_provider(model, max_tokens=2048),
-            model=model,
+            provider=_fake_provider(model_id, max_tokens=2048),
+            model_id=model_id,
+            model=model_id,
             context_window_tokens=4096,
-            signature=("sdk", model),
+            signature=("sdk", model_id),
         ))
 
     bot._loop.runtime_resolver.resolve_override = MagicMock(side_effect=fake_resolve)
@@ -776,14 +779,14 @@ async def test_run_model_overrides_can_overlap_without_default_mutation(tmp_path
     first = asyncio.create_task(bot.run(
         "first",
         session_key="sdk:first",
-        model="model:first",
+        model_id="model:first",
     ))
     await asyncio.wait_for(first_entered.wait(), timeout=1)
 
     second = asyncio.create_task(bot.run(
         "second",
         session_key="sdk:second",
-        model="model:second",
+        model_id="model:second",
     ))
     await asyncio.wait_for(both_entered.wait(), timeout=1)
     assert not first.done()
@@ -812,6 +815,7 @@ async def test_run_model_override_is_per_run_without_default_mutation(tmp_path):
     override_provider = _fake_provider("override-provider", max_tokens=2048)
     override = ProviderSnapshot(
         provider=override_provider,
+        model_id="fast",
         model="openai/gpt-4.1-mini",
         context_window_tokens=4096,
         signature=("sdk", "override"),
@@ -831,52 +835,23 @@ async def test_run_model_override_is_per_run_without_default_mutation(tmp_path):
 
     bot._loop.process_direct = fake_process_direct
 
-    result = await bot.run("hi", model="openai/gpt-4.1-mini")
+    result = await bot.run("hi", model_id="fast")
 
     assert result.content == "ok"
     bot._loop.runtime_resolver.resolve_override.assert_called_once_with(
-        model="openai/gpt-4.1-mini",
-        model_preset=None,
+        model_id="fast",
     )
     assert not hasattr(bot._loop.runner, "provider")
     assert bot._loop.runtime_resolver.runtime is original_runtime
 
 
 @pytest.mark.asyncio
-async def test_run_model_preset_override_is_per_run(tmp_path):
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.factory import ProviderSnapshot
-
+async def test_run_rejects_legacy_model_preset_kwarg(tmp_path):
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
-    original_runtime = bot._loop.runtime_resolver.runtime
-    override_provider = _fake_provider("preset-provider", max_tokens=1024)
-    override = ProviderSnapshot(
-        provider=override_provider,
-        model="openai/gpt-4.1-mini",
-        context_window_tokens=2048,
-        signature=("preset", "fast"),
-        model_preset="fast",
-    )
-    override_runtime = runtime_from_provider_snapshot(override)
-    bot._loop.runtime_resolver.resolve_override = MagicMock(
-        return_value=override_runtime
-    )
 
-    async def fake_process_direct(message, *, session_key, hooks, runtime):
-        assert runtime is override_runtime
-        return OutboundMessage(channel="cli", chat_id="direct", content="ok")
-
-    bot._loop.process_direct = fake_process_direct
-
-    await bot.run("hi", model_preset="fast")
-
-    bot._loop.runtime_resolver.resolve_override.assert_called_once_with(
-        model=None,
-        model_preset="fast",
-    )
-    assert bot._loop.runtime_resolver.runtime is original_runtime
-    assert bot._loop.model_preset is None
+    with pytest.raises(TypeError):
+        await bot.run("hi", model_preset="fast")
 
 
 @pytest.mark.asyncio
@@ -884,7 +859,7 @@ async def test_run_rejects_multiple_model_selectors(tmp_path):
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
 
-    with pytest.raises(ValueError, match="mutually exclusive"):
+    with pytest.raises(TypeError):
         await bot.run("hi", model="openai/gpt-4.1", model_preset="fast")
 
 
@@ -1167,6 +1142,7 @@ async def test_run_streamed_model_override_reports_admitted_runtime(tmp_path):
     override_provider = _fake_provider("stream-provider", max_tokens=2048)
     override = ProviderSnapshot(
         provider=override_provider,
+        model_id="fast",
         model="openai/gpt-4.1-mini",
         context_window_tokens=4096,
         signature=("sdk", "stream"),
@@ -1195,23 +1171,23 @@ async def test_run_streamed_model_override_reports_admitted_runtime(tmp_path):
 
     bot._loop.process_direct = fake_process_direct
 
-    run = await bot.run_streamed("hi", model="openai/gpt-4.1-mini")
+    run = await bot.run_streamed("hi", model_id="fast")
     events = [event async for event in run.stream_events()]
     result = await run.wait()
 
     assert result.content == "ok"
     assert events[0].type == "run.started"
     assert events[0].metadata["model"] == "openai/gpt-4.1-mini"
-    assert events[0].metadata["model_preset"] is None
+    assert events[0].metadata["model_id"] == "fast"
     assert bot._loop.runtime_resolver.runtime is original_runtime
 
 
 @pytest.mark.asyncio
-async def test_stream_rejects_multiple_model_selectors(tmp_path):
+async def test_stream_rejects_legacy_model_selectors(tmp_path):
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
 
-    with pytest.raises(ValueError, match="mutually exclusive"):
+    with pytest.raises(TypeError):
         _ = [event async for event in bot.stream(
             "hi",
             model="openai/gpt-4.1",

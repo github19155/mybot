@@ -14,7 +14,7 @@ overwrite the original Ollama model.
 
 - a repeatable two-turn cache check
 - an optional derived `llama3.1:8b-prefix-stable-v1` Ollama tag
-- a nanobot model preset that uses the derived tag
+- a root `models` entry that explicitly selects the derived Ollama model
 
 ## When to use this
 
@@ -167,9 +167,11 @@ ollama list
 Ollama reuses the existing model layers. The new tag adds a small template and
 manifest instead of copying the base weights.
 
-## Select the derived model in nanobot
+## Configure the derived model in nanobot
 
-Merge this preset into `~/.nanobot/config.json` and select it:
+Merge this into `~/.nanobot/config.json`. The `model_id` is the canonical key
+under `models`; the `provider` and upstream `model` are configured explicitly in
+that entry:
 
 ```json
 {
@@ -178,24 +180,32 @@ Merge this preset into `~/.nanobot/config.json` and select it:
       "apiBase": "http://localhost:11434/v1"
     }
   },
-  "modelPresets": {
-    "Ollama Llama 3.1 prefix-stable": {
+  "models": {
+    "ollama_llama31_prefix_stable_v1": {
+      "displayName": "Ollama Llama 3.1 prefix-stable",
       "provider": "ollama",
       "model": "llama3.1:8b-prefix-stable-v1",
-      "maxTokens": 2048,
+      "capabilities": {
+        "text": true
+      },
       "contextWindowTokens": 16384,
-      "temperature": 0.1
+      "generationDefaults": {
+        "maxTokens": 2048,
+        "temperature": 0.1
+      }
     }
   },
   "agents": {
     "defaults": {
-      "modelPreset": "Ollama Llama 3.1 prefix-stable"
+      "model_id": "ollama_llama31_prefix_stable_v1"
     }
   }
 }
 ```
 
-Verify the selected model and repeat the two-turn check:
+The canonical selector is `ollama_llama31_prefix_stable_v1`, not the upstream
+Ollama tag. Verify the selected model and repeat the two-turn check:
+
 
 ```bash
 nanobot status
@@ -212,8 +222,8 @@ Treat these numbers as a diagnostic example, not a performance guarantee.
 
 ## Roll back
 
-Switch `agents.defaults.modelPreset` back to the original preset. When no config
-uses the derived tag, remove it with:
+Switch `agents.defaults.model_id` back to the original model's canonical ID. When
+no config uses the derived upstream tag, remove it with:
 
 ```bash
 ollama rm llama3.1:8b-prefix-stable-v1

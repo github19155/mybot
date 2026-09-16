@@ -70,7 +70,7 @@ def test_session_selection_accepts_registry_model_id_not_raw_upstream() -> None:
     assert selected.model_id == "fast"
     assert selected.model == "openai/gpt-5.6"
 
-    with pytest.raises(KeyError, match="model_id 'openai/gpt-5.6' not found"):
+    with pytest.raises(ValueError, match="model_id must match"):
         resolver.resolve_model("openai/gpt-5.6")
 
 

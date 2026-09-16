@@ -586,16 +586,42 @@ async def test_agent_loop_extra_hooks_do_not_swallow_loop_hook_errors(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_loop_no_hooks_backward_compat(tmp_path):
-    """Without hooks param, behavior is identical to before."""
+    """Without hooks param, behavior is identical to before: both tool calls
+    succeed through registry validation and the run ends at the max-iteration fallback."""
+    from nanobot.agent.tools.base import Tool
     from nanobot.providers.base import LLMResponse, ToolCallRequest
 
+    class ListDirTool(Tool):
+        """Main-callable list_dir stand-in registered on the loop registry."""
+
+        _scopes = {"orchestrator"}
+
+        @property
+        def name(self) -> str:
+            return "list_dir"
+
+        @property
+        def description(self) -> str:
+            return "List directory contents (test stand-in)."
+
+        @property
+        def parameters(self) -> dict:
+            return {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            }
+
+        async def execute(self, path: str | None = None, **_kwargs) -> str:
+            return "ok"
+
     loop = _make_loop(tmp_path)
+    loop.tools.register(ListDirTool())
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
         content="working",
         tool_calls=[ToolCallRequest(id="c1", name="list_dir", arguments={"path": "."})],
     ))
     loop.tools.get_definitions = MagicMock(return_value=[])
-    loop.tools.execute = AsyncMock(return_value="ok")
     loop.max_iterations = 2
 
     result = await loop._run_agent_loop(

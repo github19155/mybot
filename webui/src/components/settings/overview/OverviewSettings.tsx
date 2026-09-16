@@ -55,20 +55,15 @@ export function OverviewSettings({
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  const activePresetName = settings.agent.model_preset;
-  const activePreset =
-    activePresetName && activePresetName !== "default"
-      ? settings.model_presets.find((preset) => preset.name === activePresetName)?.name ??
-        activePresetName
-      : null;
-  const activeProvider = settings.agent.resolved_provider ?? settings.agent.provider;
+  const activeModelRow = settings.models.find((row) => row.model_id === settings.agent.model_id) ?? null;
+  const activeProvider = activeModelRow?.provider ?? settings.agent.provider;
   const activeProviderConfigured = settingsProviderConfigured(settings, activeProvider);
   const activeProviderLabel = providerDisplayLabel(settings.providers, activeProvider);
   const activeModelValue = activeProviderConfigured
-    ? settings.agent.model
+    ? (activeModelRow?.display_name || settings.agent.display_name || settings.agent.model)
     : tx("settings.values.notConfigured", "Not configured");
   const activeModelCaption = activeProviderConfigured
-    ? [activeProvider, activePreset].filter(Boolean).join(" · ")
+    ? [activeProvider, activeModelRow?.model].filter(Boolean).join(" · ")
     : activeProviderLabel || settings.agent.model
       ? [activeProviderLabel, settings.agent.model].filter(Boolean).join(" · ")
       : tx("settings.byok.noConfiguredProviders", "No configured providers");
@@ -100,20 +95,26 @@ export function OverviewSettings({
   const imageStatus = settings.image_generation.enabled
     ? tx("settings.values.enabled", "Enabled")
     : tx("settings.values.disabled", "Disabled");
-  const imageCaption = `${providerDisplayLabel(settings.image_generation.providers, settings.image_generation.provider)} · ${
-    settings.image_generation.provider_configured
-      ? tx("settings.values.configured", "Configured")
-      : tx("settings.values.notConfigured", "Not configured")
-  }`;
+  const imageModel = settings.models.find(
+    (row) => row.model_id === settings.image_generation.model_id,
+  );
+  const imageProvider = imageModel?.provider;
+  const imageProviderConfigured = settingsProviderConfigured(settings, imageProvider);
+  const imageCaption = imageModel
+    ? `${imageModel.display_name || imageModel.model_id} · ${imageProviderConfigured ? tx("settings.values.configured", "Configured") : tx("settings.values.notConfigured", "Not configured")}`
+    : tx("settings.values.notConfigured", "Not configured");
   const transcription = settings.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
   const voiceStatus = transcription.enabled
     ? tx("settings.values.enabled", "Enabled")
     : tx("settings.values.disabled", "Disabled");
-  const voiceCaption = `${providerDisplayLabel(transcription.providers, transcription.provider)} · ${
-    transcription.provider_configured
-      ? tx("settings.values.configured", "Configured")
-      : tx("settings.values.notConfigured", "Not configured")
-  }`;
+  const transcriptionModel = settings.models.find(
+    (row) => row.model_id === transcription.model_id,
+  );
+  const transcriptionProvider = transcriptionModel?.provider;
+  const transcriptionProviderConfigured = settingsProviderConfigured(settings, transcriptionProvider);
+  const voiceCaption = transcriptionModel
+    ? `${transcriptionModel.display_name || transcriptionModel.model_id} · ${transcriptionProviderConfigured ? tx("settings.values.configured", "Configured") : tx("settings.values.notConfigured", "Not configured")}`
+    : tx("settings.values.notConfigured", "Not configured");
   const isNativeHost = (settings.surface ?? settings.runtime_surface) === "native";
   const workspaceCaption = shortWorkspacePath(settings.runtime.workspace_path);
   const runtimeTitle = isNativeHost
@@ -162,7 +163,7 @@ export function OverviewSettings({
           />
           <OverviewListRow
             icon={ImageIcon}
-            valueLogoProvider={settings.image_generation.provider}
+            valueLogoProvider={imageProvider}
             title={tx("settings.overview.imageGeneration", "Image generation")}
             value={imageStatus}
             caption={imageCaption}
@@ -171,7 +172,7 @@ export function OverviewSettings({
           />
           <OverviewListRow
             icon={Mic}
-            valueLogoProvider={transcription.provider}
+            valueLogoProvider={transcriptionProvider}
             title={tx("settings.overview.voiceInput", "Voice input")}
             value={voiceStatus}
             caption={voiceCaption}

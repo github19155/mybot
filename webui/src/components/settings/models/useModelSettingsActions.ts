@@ -6,7 +6,7 @@ import type {
   MaybeRestartHostEngine,
   PendingRestartSections,
 } from "@/components/settings/contracts";
-import { agentDraftFromPayload } from "@/components/settings/models/ModelsSettings";
+import { agentDraftFromPayload, isValidModelId } from "@/components/settings/models/ModelsSettings";
 import {
   CUSTOM_PROVIDER_CREATION_KEY,
   providerFormFromRow,
@@ -30,6 +30,7 @@ import {
 } from "@/lib/api";
 import type { NanobotClient } from "@/lib/nanobot-client";
 import type {
+  ModelSettingsRow,
   ProviderOAuthAuthorizationRequired,
   ProviderOAuthCompletionResult,
   ProviderOAuthLoginResult,
@@ -50,14 +51,8 @@ function isProviderOAuthPending(
   return (payload as ProviderOAuthPending).status === "pending";
 }
 
-function presetSupportsImageGeneration(
-  preset: SettingsPayload["model_presets"][number],
-): boolean {
-  return (
-    preset as SettingsPayload["model_presets"][number] & {
-      supports_image_generation?: boolean;
-    }
-  ).supports_image_generation === true;
+function modelSupportsImageGeneration(model: ModelSettingsRow | null | undefined): boolean {
+  return model?.capabilities?.image_generation === true;
 }
 
 interface ModelSettingsActionsOptions {
@@ -69,7 +64,6 @@ interface ModelSettingsActionsOptions {
   maybeRestartHostEngine: MaybeRestartHostEngine;
   setPendingRestartSections: Dispatch<SetStateAction<PendingRestartSections>>;
   setError: Dispatch<SetStateAction<string | null>>;
-  onModelNameChange: (modelName: string | null) => void;
   remoteBrowserAccess: boolean;
   closeProviderOAuthFlow: () => void;
   installCapabilities: (names: string[]) => Promise<boolean>;
@@ -86,7 +80,6 @@ export function useModelSettingsActions({
   maybeRestartHostEngine,
   setPendingRestartSections,
   setError,
-  onModelNameChange,
   remoteBrowserAccess,
   closeProviderOAuthFlow,
   installCapabilities,
@@ -96,17 +89,17 @@ export function useModelSettingsActions({
   const {
     expandedProvider,
     form,
-    modelPresetSelecting,
+    modelSelecting,
     modelConfigurationSaving,
     promptOverrides,
     promptOverridesSaving,
     roleBindingsDraft,
     roleBindingsSaving,
     imageAnalysisSaving,
-    modelPresetBeforeCreateRef,
-    modelPresetCreating,
-    modelPresetEditingName,
-    modelPresetPendingDelete,
+    modelBeforeCreateRef,
+    modelCreating,
+    editingModelId,
+    modelPendingDelete,
     providerForms,
     providerOAuthCompleting,
     providerOAuthFlowRef,
@@ -117,16 +110,16 @@ export function useModelSettingsActions({
     setExpandedProvider,
     setForm,
     setImageAnalysisSaving,
-    setModelPresetSelecting,
+    setModelSelecting,
     setModelConfigurationSaving,
     setPromptOverrides,
     setPromptOverridesSaving,
     setRoleBindingsDraft,
     setRoleBindingsSaving,
-    setModelPresetCreating,
-    setModelPresetEditingName,
-    setModelPresetNameError,
-    setModelPresetPendingDelete,
+    setModelCreating,
+    setEditingModelId,
+    setModelIdError,
+    setModelPendingDelete,
     setProviderForms,
     setProviderOAuthCompleting,
     setProviderOAuthDialogError,
@@ -138,28 +131,27 @@ export function useModelSettingsActions({
     visibleProviderKeys,
   } = state;
 
-  const presetNameConflict = (name: string, currentName?: string) => {
-    const normalized = name.toLowerCase();
-    return settings?.model_presets.some(
-      (preset) =>
-        !preset.is_default &&
-        preset.name !== currentName &&
-        preset.name.toLowerCase() === normalized,
+  const modelIdConflict = (modelId: string, currentId?: string) => {
+    const normalized = modelId.toLowerCase();
+    return settings?.models.some(
+      (row) =>
+        row.model_id !== currentId &&
+        row.model_id.toLowerCase() === normalized,
     ) ?? false;
   };
 
-  const showPresetNameConflict = () => {
-    setModelPresetNameError(
-      t("settings.models.presetNameDuplicate", {
-        defaultValue: "A preset with this name already exists.",
+  const showModelIdConflict = () => {
+    setModelIdError(
+      t("settings.models.modelIdDuplicate", {
+        defaultValue: "A model with this ID already exists.",
       }),
     );
     setError(null);
   };
 
-  const handlePresetSaveError = (reason: unknown) => {
+  const handleModelSaveError = (reason: unknown) => {
     if (reason instanceof ApiError && reason.status === 409) {
-      showPresetNameConflict();
+      showModelIdConflict();
       return;
     }
     setError((reason as Error).message);
@@ -169,18 +161,21 @@ export function useModelSettingsActions({
     if (
       !settings ||
       saving ||
-      modelPresetSelecting ||
+      modelSelecting ||
       modelConfigurationSaving
     ) {
       return;
     }
 
-    if (modelPresetCreating) {
-      const name = form.modelPreset.trim();
+    if (modelCreating) {
+      const modelId = form.modelId.trim();
+      const displayName = form.displayName.trim();
       const provider = form.provider.trim();
       const model = form.model.trim();
       if (
-        !name ||
+        !modelId ||
+        !isValidModelId(modelId) ||
+        !displayName ||
         !provider ||
         !model ||
         form.maxTokens <= 0 ||
@@ -190,15 +185,16 @@ export function useModelSettingsActions({
       ) {
         return;
       }
-      if (presetNameConflict(name)) {
-        showPresetNameConflict();
+      if (modelIdConflict(modelId)) {
+        showModelIdConflict();
         return;
       }
-      setModelPresetNameError(null);
+      setModelIdError(null);
       setModelConfigurationSaving(true);
       try {
         const payload = await createModelConfiguration(client, {
-          name,
+          modelId,
+          displayName,
           provider,
           model,
           maxTokens: form.maxTokens,
@@ -208,28 +204,27 @@ export function useModelSettingsActions({
           supportsVision: form.supportsVision,
           supportsImageGeneration: form.supportsImageGeneration,
         });
-        const createdPreset = payload.created_model_preset;
+        const createdModelId = payload.created_model_id;
         applyPayload(payload);
-        if (createdPreset) {
-          setForm(agentDraftFromPayload(payload, createdPreset));
-          setModelPresetEditingName(createdPreset);
+        if (createdModelId) {
+          setForm(agentDraftFromPayload(payload, createdModelId));
+          setEditingModelId(createdModelId);
         }
 
         let finalPayload = payload;
-        if (createdPreset && payload.agent.model_preset !== createdPreset) {
-          finalPayload = await updateSettings(client, { modelPreset: createdPreset });
+        if (createdModelId && payload.agent.model_id !== createdModelId) {
+          finalPayload = await updateSettings(client, { modelId: createdModelId });
           applyPayload(finalPayload);
         }
-        if (createdPreset) {
-          setForm(agentDraftFromPayload(finalPayload, createdPreset));
-          setModelPresetEditingName(createdPreset);
+        if (createdModelId) {
+          setForm(agentDraftFromPayload(finalPayload, createdModelId));
+          setEditingModelId(createdModelId);
         }
-        modelPresetBeforeCreateRef.current = null;
-        onModelNameChange(finalPayload.agent.model || null);
-        setModelPresetNameError(null);
+        modelBeforeCreateRef.current = null;
+        setModelIdError(null);
         setError(null);
       } catch (err) {
-        handlePresetSaveError(err);
+        handleModelSaveError(err);
       } finally {
         setModelConfigurationSaving(false);
       }
@@ -237,103 +232,99 @@ export function useModelSettingsActions({
     }
 
     if (!modelDirty) return;
-    const selectedPreset = settings.model_presets.find(
-      (preset) => !preset.is_default && preset.name === modelPresetEditingName,
+    const selectedModel = settings.models.find(
+      (row) => row.model_id === editingModelId,
     );
-    if (!selectedPreset) return;
-    const nextName = form.modelPreset.trim();
-    const nameChanged = form.modelPreset !== selectedPreset.name;
-    if (nameChanged && presetNameConflict(nextName, selectedPreset.name)) {
-      showPresetNameConflict();
-      return;
-    }
-    setModelPresetNameError(null);
+    if (!selectedModel) return;
     const reasoningEffort = form.reasoningEffort || null;
     setSaving(true);
     try {
       const payload = await updateModelConfiguration(client, {
-        name: selectedPreset.name,
-        newName: nameChanged ? nextName : undefined,
-        model: form.model !== selectedPreset.model ? form.model : undefined,
-        provider: form.provider !== selectedPreset.provider ? form.provider : undefined,
+        modelId: selectedModel.model_id,
+        displayName:
+          form.displayName !== selectedModel.display_name ? form.displayName : undefined,
+        model: form.model !== selectedModel.model ? form.model : undefined,
+        provider: form.provider !== selectedModel.provider ? form.provider : undefined,
         maxTokens:
-          form.maxTokens !== selectedPreset.max_tokens ? form.maxTokens : undefined,
+          form.maxTokens !== selectedModel.generation_defaults.max_tokens ? form.maxTokens : undefined,
         contextWindowTokens:
           form.contextWindowTokens !==
-          normalizeContextWindowTokens(selectedPreset.context_window_tokens)
+          normalizeContextWindowTokens(selectedModel.context_window_tokens)
             ? form.contextWindowTokens
             : undefined,
         temperature:
-          form.temperature !== selectedPreset.temperature ? form.temperature : undefined,
+          form.temperature !== selectedModel.generation_defaults.temperature
+            ? form.temperature
+            : undefined,
         reasoningEffort:
-          reasoningEffort !== selectedPreset.reasoning_effort ? reasoningEffort : undefined,
+          reasoningEffort !== selectedModel.generation_defaults.reasoning_effort
+            ? reasoningEffort
+            : undefined,
         supportsVision:
-          form.supportsVision !== (selectedPreset.supports_vision === true) ? form.supportsVision : undefined,
+          form.supportsVision !== (selectedModel.capabilities.vision === true)
+            ? form.supportsVision
+            : undefined,
         supportsImageGeneration:
-          form.supportsImageGeneration !== presetSupportsImageGeneration(selectedPreset)
+          form.supportsImageGeneration !== modelSupportsImageGeneration(selectedModel)
             ? form.supportsImageGeneration
             : undefined,
       });
       applyPayload(payload);
-      setForm(agentDraftFromPayload(payload, nextName));
-      setModelPresetEditingName(nextName);
-      onModelNameChange(payload.agent.model || null);
-      setModelPresetNameError(null);
+      setForm(agentDraftFromPayload(payload, selectedModel.model_id));
+      setEditingModelId(selectedModel.model_id);
+      setModelIdError(null);
       setError(null);
     } catch (err) {
-      handlePresetSaveError(err);
+      handleModelSaveError(err);
     } finally {
       setSaving(false);
     }
   };
 
-  const beginModelPresetCreation = () => {
-    if (!settings || saving || modelPresetSelecting || modelConfigurationSaving) return;
-    const primaryPreset = settings.model_presets.find(
-      (preset) => !preset.is_default && preset.active,
-    );
-    const currentProvider = primaryPreset?.provider === "auto"
-      ? primaryPreset.resolved_provider ?? settings.agent.resolved_provider
-      : primaryPreset?.provider ?? settings.agent.provider;
+  const beginModelCreation = () => {
+    if (!settings || saving || modelSelecting || modelConfigurationSaving) return;
+    const defaultModel = settings.models.find((row) => row.is_default) ?? null;
+    const currentProvider = defaultModel?.provider ?? settings.agent.provider;
     const provider =
       configuredModelProviderOptions.find((option) => option.name === currentProvider)?.name ??
       configuredModelProviderOptions[0]?.name ??
       "";
-    modelPresetBeforeCreateRef.current = modelPresetEditingName;
-    setModelPresetNameError(null);
+    modelBeforeCreateRef.current = editingModelId;
+    setModelIdError(null);
     setForm((prev) => ({
       ...prev,
-      modelPreset: "",
+      modelId: "",
+      displayName: "",
       provider,
       model: "",
-      maxTokens: primaryPreset?.max_tokens ?? settings.agent.max_tokens,
+      maxTokens: defaultModel?.generation_defaults?.max_tokens ?? settings.agent.generation_defaults.max_tokens,
       contextWindowTokens: normalizeContextWindowTokens(
-        primaryPreset?.context_window_tokens ?? settings.agent.context_window_tokens,
+        defaultModel?.context_window_tokens ?? settings.agent.context_window_tokens,
       ),
-      temperature: primaryPreset?.temperature ?? settings.agent.temperature,
-      reasoningEffort: primaryPreset?.reasoning_effort ?? settings.agent.reasoning_effort ?? "",
+      temperature: defaultModel?.generation_defaults?.temperature ?? settings.agent.generation_defaults.temperature,
+      reasoningEffort: defaultModel?.generation_defaults?.reasoning_effort ?? "",
       supportsVision: false,
       supportsImageGeneration: false,
     }));
-    setModelPresetCreating(true);
+    setModelCreating(true);
   };
 
-  const cancelModelPresetCreation = () => {
+  const cancelModelCreation = () => {
     if (!settings || modelConfigurationSaving) return;
-    const previousPreset = modelPresetBeforeCreateRef.current;
-    setModelPresetCreating(false);
-    setModelPresetNameError(null);
-    setForm(agentDraftFromPayload(settings, previousPreset ?? undefined));
-    setModelPresetEditingName(previousPreset ?? agentDraftFromPayload(settings).modelPreset);
-    modelPresetBeforeCreateRef.current = null;
+    const previousModelId = modelBeforeCreateRef.current;
+    setModelCreating(false);
+    setModelIdError(null);
+    setForm(agentDraftFromPayload(settings, previousModelId ?? undefined));
+    setEditingModelId(previousModelId ?? agentDraftFromPayload(settings).modelId);
+    modelBeforeCreateRef.current = null;
   };
 
-  const saveImageAnalysisModel = async (preset: string | null) => {
+  const saveImageAnalysisModel = async (modelId: string | null) => {
     if (!settings || imageAnalysisSaving) return;
     setImageAnalysisSaving(true);
     try {
       const payload = await updateSettings(client, {
-        imageAnalysisModelPreset: preset,
+        imageAnalysisModelId: modelId,
       });
       applyPayload(payload, { preserveAgentForm: true });
       setError(null);
@@ -344,19 +335,18 @@ export function useModelSettingsActions({
     }
   };
 
-  const selectActiveModelPreset = async (name: string) => {
-    if (!settings || saving || modelPresetSelecting || modelConfigurationSaving) return;
-    if (settings.agent.model_preset === name) return;
-    setModelPresetSelecting(true);
+  const selectActiveModel = async (modelId: string) => {
+    if (!settings || saving || modelSelecting || modelConfigurationSaving) return;
+    if (settings.agent.model_id === modelId) return;
+    setModelSelecting(true);
     try {
-      const payload = await updateSettings(client, { modelPreset: name });
+      const payload = await updateSettings(client, { modelId });
       applyPayload(payload, { preserveAgentForm: true });
-      onModelNameChange(payload.agent.model || null);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setModelPresetSelecting(false);
+      setModelSelecting(false);
     }
   };
 
@@ -370,7 +360,6 @@ export function useModelSettingsActions({
     try {
       const payload = await updateSystemPromptOverrides(client, nextOverrides);
       applyPayload(payload, { preserveAgentForm: true });
-      onModelNameChange(payload.agent.model || null);
       setError(null);
     } catch (err) {
       setPromptOverrides(previous);
@@ -384,7 +373,7 @@ export function useModelSettingsActions({
     if (!settings || roleBindingsSaving) return;
     const bindings = Object.fromEntries(
       (settings.subagent_roles ?? [])
-        .filter((role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_preset)
+        .filter((role) => role.name in roleBindingsDraft && roleBindingsDraft[role.name] !== role.model_id)
         .map((role) => [role.name, roleBindingsDraft[role.name]]),
     );
     if (!Object.keys(bindings).length) return;
@@ -393,7 +382,7 @@ export function useModelSettingsActions({
       const payload = await updateSubagentRoles(client, bindings);
       applyPayload(payload, { preserveAgentForm: true });
       setRoleBindingsDraft((current) => Object.fromEntries(
-        Object.entries(current).filter(([name, preset]) => !(name in bindings) || preset !== bindings[name]),
+        Object.entries(current).filter(([name, modelId]) => !(name in bindings) || modelId !== bindings[name]),
       ));
       setError(null);
     } catch (err) {
@@ -406,18 +395,18 @@ export function useModelSettingsActions({
 
   const handleDeleteModelConfiguration = async () => {
     if (
-      !modelPresetPendingDelete ||
+      !modelPendingDelete ||
       saving ||
-      modelPresetSelecting ||
+      modelSelecting ||
       modelConfigurationSaving
     ) {
       return;
     }
     setSaving(true);
     try {
-      const payload = await deleteModelConfiguration(client, modelPresetPendingDelete.name);
+      const payload = await deleteModelConfiguration(client, modelPendingDelete.model_id);
       applyPayload(payload);
-      setModelPresetPendingDelete(null);
+      setModelPendingDelete(null);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -647,9 +636,9 @@ export function useModelSettingsActions({
   };
 
   return {
-    beginModelPresetCreation,
-    cancelModelPresetCreation,
-    selectActiveModelPreset,
+    beginModelCreation,
+    cancelModelCreation,
+    selectActiveModel,
     savePromptOverrides,
     saveRoleBindings,
     completeProviderOAuthResponse,

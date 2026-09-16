@@ -38,13 +38,12 @@ import {
   type LocalPreferences,
 } from "@/lib/local-preferences";
 import { isLoopbackHost } from "@/lib/network";
-import type { SettingsPayload } from "@/lib/types";
+import type { ModelSettingsRow, SettingsPayload } from "@/lib/types";
 import { useClient } from "@/providers/ClientProvider";
 
 interface SettingsControllerOptions {
   initialSection: SettingsSectionKey;
   initialSettings: SettingsPayload | null;
-  onModelNameChange: (modelName: string | null) => void;
   onSettingsChange?: (payload: SettingsPayload) => void;
   onSectionChange?: (section: SettingsSectionKey) => void;
   onRestart?: () => void;
@@ -66,20 +65,13 @@ function pendingRestartSectionsFromPayload(payload: SettingsPayload): PendingRes
   };
 }
 
-function presetSupportsImageGeneration(
-  preset: SettingsPayload["model_presets"][number],
-): boolean {
-  return (
-    preset as SettingsPayload["model_presets"][number] & {
-      supports_image_generation?: boolean;
-    }
-  ).supports_image_generation === true;
+function modelSupportsImageGeneration(model: ModelSettingsRow | null | undefined): boolean {
+  return model?.capabilities?.image_generation === true;
 }
 
 export function useSettingsController({
   initialSection,
   initialSettings,
-  onModelNameChange,
   onSettingsChange,
   onSectionChange,
   onRestart,
@@ -101,17 +93,17 @@ export function useSettingsController({
   const [localPrefs, setLocalPrefs] = useState<LocalPreferences>(() => readLocalPreferences());
   const modelState = useModelSettingsState(initialSettings);
   const {
-    editingProviderKeys, expandedProvider, form, modelPresetSelecting,
-    imageAnalysisSaving, modelConfigurationSaving, modelPresetBeforeCreateRef,
+    editingProviderKeys, expandedProvider, form, modelSelecting,
+    imageAnalysisSaving, modelConfigurationSaving, modelBeforeCreateRef,
     promptOverrides, promptOverridesSaving,
     roleBindingsDraft, roleBindingsSaving, setRoleBindingsDraft,
-    modelPresetCreating, modelPresetEditingName, modelPresetNameError, modelPresetPendingDelete,
+    modelCreating, editingModelId, modelIdError, modelPendingDelete,
     providerForms, providerOAuthCompleting,
     providerOAuthDialogError, providerOAuthFlow, providerOAuthFlowRef, providerOAuthResponse,
     providerSaving, saving, setForm,
-    setModelPresetCreating, setModelPresetEditingName, setModelPresetNameError,
+    setModelCreating, setEditingModelId, setModelIdError,
     setPromptOverrides,
-    setModelPresetPendingDelete,
+    setModelPendingDelete,
     setProviderForms, setProviderOAuthCompleting, setProviderOAuthDialogError,
     setProviderOAuthFlow, setProviderOAuthResponse, visibleProviderKeys,
   } = modelState;
@@ -164,8 +156,8 @@ export function useSettingsController({
       if (!options.preserveAgentForm) {
         const nextForm = agentDraftFromPayload(payload);
         setForm(nextForm);
-        setModelPresetEditingName(nextForm.modelPreset);
-        setModelPresetCreating(false);
+        setEditingModelId(nextForm.modelId);
+        setModelCreating(false);
       }
       setPromptOverrides(payload.system_prompt_overrides ?? []);
       setWebSearchForm((prev) => webSearchFormFromPayload(payload, prev));
@@ -268,29 +260,29 @@ export function useSettingsController({
 
   const modelDirty = useMemo(() => {
     if (!settings) return false;
-    const selectedPreset = settings.model_presets.find(
-      (preset) => !preset.is_default && preset.name === modelPresetEditingName,
+    const selectedModel = settings.models.find(
+      (row) => row.model_id === editingModelId,
     );
-    if (!selectedPreset) return false;
+    if (!selectedModel) return false;
+    const defaults = selectedModel.generation_defaults ?? { temperature: 0.1, max_tokens: 8192, reasoning_effort: null };
     return (
-      form.modelPreset !== selectedPreset.name ||
-      form.model !== selectedPreset.model ||
-      form.provider !== selectedPreset.provider ||
-      form.maxTokens !== selectedPreset.max_tokens ||
-      form.contextWindowTokens !== normalizeContextWindowTokens(selectedPreset.context_window_tokens) ||
-      form.temperature !== selectedPreset.temperature ||
-      form.reasoningEffort !== (selectedPreset.reasoning_effort ?? "") ||
-      form.supportsVision !== (selectedPreset.supports_vision === true) ||
-      form.supportsImageGeneration !== presetSupportsImageGeneration(selectedPreset)
+      form.displayName !== selectedModel.display_name ||
+      form.model !== selectedModel.model ||
+      form.provider !== selectedModel.provider ||
+      form.maxTokens !== defaults.max_tokens ||
+      form.contextWindowTokens !== normalizeContextWindowTokens(selectedModel.context_window_tokens) ||
+      form.temperature !== defaults.temperature ||
+      form.reasoningEffort !== (defaults.reasoning_effort ?? "") ||
+      form.supportsVision !== (selectedModel.capabilities?.vision === true) ||
+      form.supportsImageGeneration !== modelSupportsImageGeneration(selectedModel)
     );
-  }, [form, modelPresetEditingName, settings]);
+  }, [form, editingModelId, settings]);
 
   const imageGenerationDirty = useMemo(() => {
     if (!settings) return false;
     return (
       imageGenerationForm.enabled !== settings.image_generation.enabled ||
-      imageGenerationForm.provider !== settings.image_generation.provider ||
-      imageGenerationForm.model !== settings.image_generation.model ||
+      imageGenerationForm.modelId !== settings.image_generation.model_id ||
       imageGenerationForm.defaultAspectRatio !== settings.image_generation.default_aspect_ratio ||
       imageGenerationForm.defaultImageSize !== settings.image_generation.default_image_size ||
       imageGenerationForm.maxImagesPerTurn !== settings.image_generation.max_images_per_turn
@@ -302,8 +294,7 @@ export function useSettingsController({
     const transcription = settings.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
     return (
       transcriptionForm.enabled !== transcription.enabled ||
-      transcriptionForm.provider !== transcription.provider ||
-      transcriptionForm.model !== transcription.model ||
+      transcriptionForm.modelId !== transcription.model_id ||
       transcriptionForm.language !== (transcription.language ?? "") ||
       transcriptionForm.maxDurationSec !== transcription.max_duration_sec ||
       transcriptionForm.maxUploadMb !== transcription.max_upload_mb
@@ -412,7 +403,6 @@ export function useSettingsController({
     maybeRestartHostEngine,
     setPendingRestartSections,
     setError,
-    onModelNameChange,
     remoteBrowserAccess,
     closeProviderOAuthFlow,
     installCapabilities,
@@ -434,9 +424,9 @@ export function useSettingsController({
     networkSafetyDirty,
   });
   const {
-    beginModelPresetCreation,
-    cancelModelPresetCreation,
-    selectActiveModelPreset,
+    beginModelCreation,
+    cancelModelCreation,
+    selectActiveModel,
     completeProviderOAuthResponse,
     createCustomProvider,
     handleDeleteModelConfiguration,
@@ -491,9 +481,9 @@ export function useSettingsController({
     automationsLoading,
     automationsQuery,
     automationsSort,
-    beginModelPresetCreation,
-    cancelModelPresetCreation,
-    selectActiveModelPreset,
+    beginModelCreation,
+    cancelModelCreation,
+    selectActiveModel,
     channelsQuery,
     cliApps,
     cliAppsAction,
@@ -547,16 +537,16 @@ export function useSettingsController({
     mcpPresetAction,
     mcpPresets,
     mcpPresetsLoading,
-    modelPresetSelecting,
+    modelSelecting,
     modelConfigurationSaving,
     modelDirty,
-    modelPresetBeforeCreateRef,
-    modelPresetCreating,
-    modelPresetEditingName,
+    modelBeforeCreateRef,
+    modelCreating,
+    editingModelId,
     promptOverrides, promptOverridesSaving,
     roleBindingsDraft, roleBindingsSaving, setRoleBindingsDraft,
-    modelPresetNameError,
-    modelPresetPendingDelete,
+    modelIdError,
+    modelPendingDelete,
     nanobotFeatureAction,
     nanobotFeatureConfirm,
     nanobotFeatures,
@@ -607,10 +597,10 @@ export function useSettingsController({
     setMcpMessage,
     setMcpOAuthCallbackError,
     setMcpOAuthCallbackUrl,
-    setModelPresetCreating,
-    setModelPresetEditingName,
-    setModelPresetNameError,
-    setModelPresetPendingDelete,
+    setModelCreating,
+    setEditingModelId,
+    setModelIdError,
+    setModelPendingDelete,
     setNanobotFeatureConfirm,
     setNanobotFeatures,
     setNanobotFeaturesError,

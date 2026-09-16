@@ -20,7 +20,9 @@ from nanobot.utils.llm_runtime import LLMRuntime
 def _runtime(model: str = "test-model") -> LLMRuntime:
     provider = MagicMock(spec=LLMProvider)
     provider.generation = GenerationSettings()
-    return LLMRuntime.capture(provider, model, context_window_tokens=128_000)
+    return LLMRuntime.capture(
+        provider, model, context_window_tokens=128_000, model_id=model
+    )
 
 
 @pytest.mark.asyncio
@@ -75,7 +77,7 @@ async def test_subagent_tool_keeps_task_local_context() -> None:
             label: str | None,
             role: str = "coder",
             model: str | None = None,
-            model_preset: str | None = None,
+            model_id: str | None = None,
             origin_channel: str,
             origin_chat_id: str,
             session_key: str,
@@ -210,7 +212,7 @@ async def test_subagent_tool_basic_request_context_and_execute() -> None:
             label,
             role="coder",
             model=None,
-            model_preset=None,
+            model_id=None,
             origin_channel,
             origin_chat_id,
             session_key,
@@ -252,7 +254,7 @@ async def test_subagent_tool_rejects_missing_request_runtime() -> None:
             label,
             role="coder",
             model=None,
-            model_preset=None,
+            model_id=None,
             origin_channel,
             origin_chat_id,
             session_key,

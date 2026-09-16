@@ -256,7 +256,7 @@ class MyTool(Tool):
             raw_events = st.get("tool_events", [])
             phase = st.get("phase", "unknown")
             role = st.get("role", "coder")
-            model = st.get("model", "")
+            model = st.get("model_id", "")
             iteration = st.get("iteration", 0)
             usage = st.get("usage", {})
             error = st.get("error")
@@ -266,7 +266,7 @@ class MyTool(Tool):
             raw_events = st.tool_events
             phase = st.phase
             role = st.role
-            model = st.model
+            model = st.model_id
             iteration = st.iteration
             usage = st.usage
             error = st.error

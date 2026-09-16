@@ -18,7 +18,7 @@ interface RuntimeControlsTheme extends PickerMenuTheme {
 }
 
 type Choice =
-  | { kind: "model"; name: string; label: string; detail: string }
+  | { kind: "model"; id: string; label: string; detail: string }
   | { kind: "access"; mode: "restricted" | "full"; label: string; detail: string }
 
 const CONTROLS_CACHE_MS = 10_000
@@ -26,15 +26,14 @@ const CONTROLS_CACHE_MS = 10_000
 interface RuntimeControlsOptions {
   apiUrl: string
   apiToken: string
-  model: string
-  modelPreset: string
+  modelId: string | null
   workspace: string
   access: string
   reauthenticateApi?: ApiReauthenticator
   available: () => boolean
   beforeOpen: () => void
   refreshScope: () => Promise<void>
-  onModel: (name: string) => void
+  onModel: (modelId: string) => void
   onAccess: (scope: WorkspaceScopePayload) => void
   onStatus: (message: string) => void
   onVisibilityChange: (visible: boolean) => void
@@ -48,9 +47,8 @@ export class RuntimeControls {
   readonly menuRoot: BoxRenderable
   private readonly menu: PickerMenu<Choice>
   private kind: Choice["kind"] | null = null
-  private model: string
-  private modelPreset: string
-  private modelPresets: Array<{ name: string; model: string }>
+  private modelId: string | null
+  private models: Array<{ modelId: string; displayName: string; model: string }>
   private canUseFullAccess: boolean
   private controlsLoaded = false
   private controlsLoadedAt = 0
@@ -62,9 +60,8 @@ export class RuntimeControls {
     private theme: RuntimeControlsTheme,
     private readonly options: RuntimeControlsOptions,
   ) {
-    this.model = options.model
-    this.modelPreset = options.modelPreset
-    this.modelPresets = [{ name: options.modelPreset, model: options.model }]
+    this.modelId = options.modelId
+    this.models = []
     this.scope = {
       project_path: options.workspace,
       access_mode: options.access.toLocaleLowerCase().includes("full") ? "full" : "restricted",
@@ -99,9 +96,8 @@ export class RuntimeControls {
     return this.scope
   }
 
-  updateModel(model: string, preset: string): void {
-    this.model = model
-    this.modelPreset = preset
+  updateModel(modelId?: string): void {
+    this.modelId = modelId || null
     this.render()
   }
 
@@ -209,18 +205,9 @@ export class RuntimeControls {
         this.options.apiToken,
         this.options.reauthenticateApi,
       )
-      const presets = new Map(controls.modelPresets.map((preset) => [
-        preset.name.toLocaleLowerCase(),
-        preset,
-      ]))
-      if (!presets.has(this.modelPreset.toLocaleLowerCase())) {
-        presets.set(this.modelPreset.toLocaleLowerCase(), {
-          name: this.modelPreset,
-          model: this.model,
-        })
-      }
-      this.modelPresets = [...presets.values()]
+      this.models = controls.models
       this.canUseFullAccess = controls.canUseFullAccess
+      this.render()
       this.controlsLoaded = true
       this.controlsLoadedAt = Date.now()
     })().finally(() => { this.controlsPromise = null })
@@ -237,15 +224,15 @@ export class RuntimeControls {
     }
     this.options.beforeOpen()
     this.kind = "model"
-    const choices: Choice[] = this.modelPresets
-      .map((preset) => ({
+    const choices: Choice[] = this.models
+      .map((model) => ({
         kind: "model" as const,
-        name: preset.name,
-        label: `${preset.name === this.modelPreset ? "●" : " "} ${preset.name}`,
-        detail: preset.model,
+        id: model.modelId,
+        label: `${model.modelId === this.modelId ? "●" : " "} ${model.displayName}`,
+        detail: model.model,
       }))
-      .sort((left, right) => Number(right.name === this.modelPreset)
-        - Number(left.name === this.modelPreset))
+      .sort((left, right) => Number(right.id === this.modelId)
+        - Number(left.id === this.modelId))
     this.menu.show(choices, "", rendererLimit(this.renderer.height))
     this.opened()
   }
@@ -293,7 +280,7 @@ export class RuntimeControls {
   private apply(choice: Choice): void {
     this.hide()
     if (choice.kind === "model") {
-      if (choice.name !== this.modelPreset) this.options.onModel(choice.name)
+      if (choice.id !== this.modelId) this.options.onModel(choice.id)
       return
     }
     if (choice.mode === this.scope.access_mode) return
@@ -309,7 +296,8 @@ export class RuntimeControls {
   }
 
   private render(): void {
-    this.modelText.content = `${this.modelPreset} ▾`
+    const current = this.modelId ? this.models.find((model) => model.modelId === this.modelId) : undefined
+    this.modelText.content = `${current?.displayName || this.modelId || "Choose model"} ▾`
     const access = this.scope.access_mode === "full" ? "full access" : "workspace access"
     this.accessText.content = `     ${access} ▾`
     this.renderColors()

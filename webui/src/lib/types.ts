@@ -434,8 +434,8 @@ export interface ChatSummary {
   updatedAt: string | null;
   title?: string;
   preview: string;
-  /** Model preset persisted for this session; null means it still follows the global default. */
-  modelPreset?: string | null;
+  /** Canonical model_id persisted for this session; null means it follows the global default. */
+  modelId?: string | null;
   /** Unix epoch seconds when this session currently has a turn in flight. */
   runStartedAt?: number | null;
   /** Durable recovery state that needs attention after an interrupted turn. */
@@ -522,7 +522,6 @@ export interface BootstrapResponse {
   ws_url?: string | null;
   expires_in?: number;
   limits?: WebUIIngressLimits;
-  model_name?: string | null;
   runtime_surface?: RuntimeSurface;
   runtime_capabilities?: RuntimeCapabilities;
 }
@@ -616,6 +615,41 @@ export interface ProviderOAuthPending {
 export type ProviderOAuthLoginResult = SettingsPayload | ProviderOAuthAuthorizationRequired;
 export type ProviderOAuthCompletionResult = SettingsPayload | ProviderOAuthPending;
 
+export interface ModelCapabilities {
+  text: boolean;
+  vision: boolean;
+  image_generation: boolean;
+  transcription: boolean;
+}
+
+export interface ModelGenerationDefaults {
+  temperature: number;
+  max_tokens: number;
+  reasoning_effort: string | null;
+}
+
+/** One canonical ``Config.models`` row as projected by the settings surface. */
+export interface ModelSettingsRow {
+  model_id: string;
+  display_name: string;
+  provider: string;
+  model: string;
+  capabilities: ModelCapabilities;
+  context_window_tokens: number;
+  pricing: {
+    input?: number | null;
+    output?: number | null;
+    cache_read?: number | null;
+  };
+  generation_defaults: ModelGenerationDefaults;
+  offering_id?: string | null;
+  pools?: string[];
+  max_concurrent_requests?: number | null;
+  is_default: boolean;
+  usages: string[];
+  reasoning_effort_values?: string[];
+}
+
 export interface SettingsPayload {
   surface?: RuntimeSurface;
   runtime_surface?: RuntimeSurface;
@@ -626,54 +660,37 @@ export interface SettingsPayload {
   };
   restart_behavior_by_section?: Record<string, RestartBehavior>;
   agent: {
-    model: string;
+    model_id: string;
+    display_name: string;
     provider: string;
-    resolved_provider: string | null;
-    has_api_key: boolean;
-    model_preset: string | null;
-    supports_vision?: boolean;
-    image_analysis_model_preset?: string | null;
-    max_tokens: number;
+    model: string;
+    capabilities: ModelCapabilities;
     context_window_tokens: number;
-    temperature: number;
-    reasoning_effort: string | null;
+    generation_defaults: ModelGenerationDefaults;
+    has_api_key: boolean;
+    image_analysis_model_id: string | null;
     timezone: string;
     tool_hint_max_length: number;
   };
-  model_presets: Array<{
-    name: string;
-    /** @deprecated Compatibility alias. New clients must use `name`. */
-    label?: string;
-    active: boolean;
-    is_default: boolean;
-    model: string;
-    provider: string;
-    resolved_provider?: string | null;
-    max_tokens: number;
-    context_window_tokens: number;
-    temperature: number;
-    reasoning_effort: string | null;
-    supports_vision?: boolean;
-    reasoning_effort_values?: string[];
-  }>;
+  models: ModelSettingsRow[];
   image_analysis?: {
     enabled: boolean;
-    model_preset: string | null;
+    model_id: string | null;
     max_image_mb: number;
     max_images: number;
   };
   system_prompt_overrides: Array<{
     prompt: string;
-    models: string[];
+    model_ids: string[];
   }>;
   subagent_roles?: Array<{
     name: string;
     description: string;
     permissions: string;
-    model_preset: string | null;
+    model_id: string | null;
   }>;
   max_concurrent_subagents?: number;
-  created_model_preset?: string;
+  created_model_id?: string;
   created_provider?: string;
   providers: Array<{
     name: string;
@@ -746,41 +763,20 @@ export interface SettingsPayload {
   };
   image_generation: {
     enabled: boolean;
-    provider: string;
-    provider_configured: boolean;
-    model: string;
+    /** Canonical Config.models selector. */
+    model_id: string | null;
     default_aspect_ratio: string;
     default_image_size: string;
     max_images_per_turn: number;
     save_dir: string;
-    providers: Array<{
-      name: string;
-      label: string;
-      configured: boolean;
-      auth_type?: "api_key" | "oauth";
-      api_key_hint?: string | null;
-      api_base?: string | null;
-      default_api_base?: string | null;
-      models?: string[];
-      default_model?: string | null;
-    }>;
   };
   transcription?: {
     enabled: boolean;
-    provider: string;
-    provider_configured: boolean;
-    model: string;
+    /** Canonical Config.models selector. */
+    model_id: string | null;
     language: string | null;
     max_duration_sec: number;
     max_upload_mb: number;
-    providers: Array<{
-      name: string;
-      label: string;
-      configured: boolean;
-      api_key_hint?: string | null;
-      api_base?: string | null;
-      default_api_base?: string | null;
-    }>;
   };
   runtime: {
     config_path: string;
@@ -1261,17 +1257,15 @@ export interface ChannelConfigurePayload {
 }
 
 export interface SettingsUpdate {
-  model?: string;
-  provider?: string;
-  modelPreset?: string | null;
-  imageAnalysisModelPreset?: string | null;
-  contextWindowTokens?: number;
+  modelId?: string;
+  imageAnalysisModelId?: string | null;
   timezone?: string;
   toolHintMaxLength?: number;
 }
 
 export interface ModelConfigurationCreate {
-  name: string;
+  modelId: string;
+  displayName: string;
   provider: string;
   model: string;
   maxTokens?: number;
@@ -1279,11 +1273,12 @@ export interface ModelConfigurationCreate {
   temperature?: number;
   reasoningEffort?: string | null;
   supportsVision?: boolean;
+  supportsImageGeneration?: boolean;
 }
 
 export interface ModelConfigurationUpdate {
-  name: string;
-  newName?: string;
+  modelId: string;
+  displayName?: string;
   provider?: string;
   model?: string;
   maxTokens?: number;
@@ -1291,6 +1286,7 @@ export interface ModelConfigurationUpdate {
   temperature?: number;
   reasoningEffort?: string | null;
   supportsVision?: boolean;
+  supportsImageGeneration?: boolean;
 }
 
 export interface ProviderSettingsUpdate {
@@ -1335,8 +1331,7 @@ export interface NetworkSafetySettingsUpdate {
 
 export interface ImageGenerationSettingsUpdate {
   enabled: boolean;
-  provider: string;
-  model: string;
+  modelId: string;
   defaultAspectRatio: string;
   defaultImageSize: string;
   maxImagesPerTurn: number;
@@ -1344,8 +1339,7 @@ export interface ImageGenerationSettingsUpdate {
 
 export interface TranscriptionSettingsUpdate {
   enabled: boolean;
-  provider: string;
-  model: string;
+  modelId: string;
   language: string;
   maxDurationSec: number;
   maxUploadMb: number;
@@ -1483,14 +1477,15 @@ export type InboundEvent =
     } & InboundTurnMetadata)
   | {
       event: "runtime_model_updated";
-      model_name: string;
-      model_preset?: string | null;
+      model: string;
+      model_id?: string;
     }
   | {
       event: "turn_model_updated";
       chat_id: string;
-      model_name: string;
-      model_preset?: string | null;
+      model: string;
+      model_id?: string;
+      context_window_tokens?: number;
     }
   | ({
       event: "turn_end";

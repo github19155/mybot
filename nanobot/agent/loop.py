@@ -233,7 +233,7 @@ class AgentLoop:
 
     @property
     def models(self) -> Mapping[str, ModelConfig]:
-        """Configured model presets exposed for selection and display."""
+        """Configured models exposed for selection and display."""
         return self.runtime_resolver.models
 
     @property
@@ -241,7 +241,7 @@ class AgentLoop:
         return self.runtime_resolver.model_id
 
     @model_id.setter
-    def model_id(self, name: str | None) -> None:
+    def model_id(self, name: str) -> None:
         self.set_model_id(name)
 
     def llm_runtime(self) -> LLMRuntime:
@@ -405,7 +405,6 @@ class AgentLoop:
         self.model_management = (
             ModelManagement(
                 model_management_config,
-                runtime_resolver=self.runtime_resolver,
                 invalidate=self.invalidate_runtime_config,
             )
             if model_management_config is not None else None
@@ -505,14 +504,9 @@ class AgentLoop:
         if bus is None:
             bus = MessageBus()
         defaults = config.agents.defaults
-        if "session_manager" not in extra:
-            data_dir = config.runtime_data_dir
-            extra["session_manager"] = SessionManager(
-                config.workspace_path,
-                sessions_root=data_dir / "sessions" if data_dir is not None else None,
-            )
 
-        explicit_provider = extra.pop("provider", None)
+        if "provider" in extra:
+            raise ValueError("raw provider overrides are not supported; use provider_snapshot")
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
         supplied_snapshot_loader = provider_snapshot_loader is not None
         if provider_snapshot_loader is None:
@@ -524,11 +518,19 @@ class AgentLoop:
             provider_snapshot_loader = _load_provider_snapshot
 
         provider_snapshot = extra.pop("provider_snapshot", None)
-        if provider_snapshot is None and explicit_provider is None:
+        if provider_snapshot is None:
             if supplied_snapshot_loader:
                 provider_snapshot = provider_snapshot_loader()
             else:
                 provider_snapshot = build_provider_snapshot(config)
+        if provider_snapshot is None:
+            raise RuntimeError("provider snapshot is required")
+        if "session_manager" not in extra:
+            data_dir = config.runtime_data_dir
+            extra["session_manager"] = SessionManager(
+                config.workspace_path,
+                sessions_root=data_dir / "sessions" if data_dir is not None else None,
+            )
 
         model_id_override = extra.pop("model_id", None)
         if "model" in extra:
@@ -537,11 +539,7 @@ class AgentLoop:
 
         loop = cls(
             bus=bus,
-            provider=(
-                provider_snapshot.provider
-                if provider_snapshot is not None
-                else explicit_provider
-            ),
+            provider=provider_snapshot.provider,
             provider_snapshot=provider_snapshot,
             workspace=config.workspace_path,
             model=None,

@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/floating-surface";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
-import { inferProviderFromModelName, providerBrand } from "@/lib/provider-brand";
+import { providerBrand } from "@/lib/provider-brand";
 import { cn } from "@/lib/utils";
 
 const pickerWidthClassName = "w-[min(18rem,calc(100vw-2rem))]";
@@ -28,7 +28,7 @@ const DOCK_MAX_SCALE = 1.08;
 const DOCK_RADIUS = 1.5;
 const SETTLE_MS = 200;
 
-interface PresetGesture {
+interface ModelGesture {
   active: boolean;
   baseIndex: number;
   latestY: number;
@@ -39,7 +39,7 @@ interface PresetGesture {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-interface PresetMotion {
+interface ModelMotion {
   index: number;
   remainder: number;
   settling: boolean;
@@ -73,18 +73,24 @@ function compactModelName(model?: string | null): string | null {
   return value.split("/").at(-1) || value;
 }
 
-export interface ModelPresetOption {
-  name: string;
+export interface ModelOption {
+  /** Canonical model_id; also the /model command argument. */
+  modelId: string;
+  /** Human-facing display label from Config.models. */
+  label?: string | null;
+  /** Upstream model, shown as detail only. */
   model?: string | null;
+  /** Explicit configured provider, shown as detail only. */
   provider?: string | null;
 }
 
-interface ModelPresetBadgeProps {
+interface ModelBadgeProps {
   label: string;
   modelDetail?: string | null;
-  modelPreset?: string | null;
-  modelPresets?: ModelPresetOption[];
-  onPresetChange?: (name: string) => void;
+  /** Active canonical model_id. */
+  modelId?: string | null;
+  models?: ModelOption[];
+  onModelIdChange?: (modelId: string) => void;
   onManageModels?: () => void;
   onRequestComposerFocus?: () => void;
   provider?: string | null;
@@ -95,12 +101,12 @@ interface ModelPresetBadgeProps {
   onClick?: () => void;
 }
 
-export function ModelPresetBadge({
+export function ModelBadge({
   label,
   modelDetail,
-  modelPreset,
-  modelPresets = [],
-  onPresetChange,
+  modelId,
+  models = [],
+  onModelIdChange,
   onManageModels,
   onRequestComposerFocus,
   provider,
@@ -109,41 +115,36 @@ export function ModelPresetBadge({
   attentionRequest = 0,
   isHero,
   onClick,
-}: ModelPresetBadgeProps) {
+}: ModelBadgeProps) {
+
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [motion, setMotion] = useState<PresetMotion | null>(null);
+  const [motion, setMotion] = useState<ModelMotion | null>(null);
   const [motionWidth, setMotionWidth] = useState<number | null>(null);
-  const gestureRef = useRef<PresetGesture | null>(null);
+  const gestureRef = useRef<ModelGesture | null>(null);
   const suppressClickRef = useRef(false);
-  const activeName = modelPreset?.trim() || "";
-  const listedIndex = modelPresets.findIndex((preset) => preset.name === activeName);
-  const activePreset: ModelPresetOption = {
-    ...(listedIndex >= 0 ? modelPresets[listedIndex] : undefined),
-    name: activeName,
-    model: modelDetail ?? modelPresets[listedIndex]?.model,
-    provider: provider || modelPresets[listedIndex]?.provider,
-  };
+  const activeModelId = modelId?.trim() || "";
+  const listedIndex = models.findIndex((option) => option.modelId === activeModelId);
   const displayLabel = label;
   const displayModelDetail = modelDetail;
   const displayProvider = provider;
-  const presets = !activeName
-    ? modelPresets
-    : listedIndex < 0
-      ? [activePreset, ...modelPresets]
-      : modelPresets.map((preset, index) => index === listedIndex ? activePreset : preset);
+  const modelsForPicker = listedIndex < 0
+    ? models
+    : models.map((option, index) => index === listedIndex
+      ? { ...option, model: modelDetail ?? option.model, provider: provider ?? option.provider }
+      : option);
   const opensSetup = Boolean(onClick);
-  const canSwitch = !opensSetup && Boolean(onPresetChange) && activeName !== "" && presets.length > 1;
-  const currentIndex = Math.max(0, presets.findIndex((preset) => preset.name === activeName));
+  const canSwitch = !opensSetup && Boolean(onModelIdChange) && activeModelId !== "" && modelsForPicker.length > 1;
+  const currentIndex = Math.max(0, modelsForPicker.findIndex((option) => option.modelId === activeModelId));
   const pillHeight = isHero ? 32 : 36;
   const pillStride = pillHeight + PILL_GAP_PX;
   const switchModelLabel = t("thread.composer.switchModel", {
     defaultValue: "Switch model for this chat",
   });
 
-  const selectPreset = (name: string) => {
+  const selectModel = (modelIdValue: string) => {
     setOpen(false);
-    if (name !== activeName) onPresetChange?.(name);
+    if (modelIdValue !== activeModelId) onModelIdChange?.(modelIdValue);
     requestAnimationFrame(() => onRequestComposerFocus?.());
   };
 
@@ -178,7 +179,7 @@ export function ModelPresetBadge({
     return () => clearTimeout(timer);
   }, [motion?.settling]);
 
-  const updateMotion = (gesture: PresetGesture, clientY: number) => {
+  const updateMotion = (gesture: ModelGesture, clientY: number) => {
     const raw = -(clientY - gesture.startY) / pillStride;
     gesture.step = stepWithHysteresis(raw, gesture.step);
     setMotion({
@@ -191,7 +192,7 @@ export function ModelPresetBadge({
   const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     if (!canSwitch || gestureRef.current || motion) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    const gesture: PresetGesture = {
+    const gesture: ModelGesture = {
       active: false,
       baseIndex: currentIndex,
       latestY: event.clientY,
@@ -240,9 +241,9 @@ export function ModelPresetBadge({
       return;
     }
     suppressClickRef.current = true;
-    const selected = presets[wrapIndex(gesture.baseIndex + gesture.step, presets.length)];
+    const selected = modelsForPicker[wrapIndex(gesture.baseIndex + gesture.step, modelsForPicker.length)];
     setMotion((current) => current && { ...current, remainder: 0, settling: true });
-    if (selected && selected.name !== activeName) selectPreset(selected.name);
+    if (selected && selected.modelId !== activeModelId) selectModel(selected.modelId);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -250,17 +251,17 @@ export function ModelPresetBadge({
       ArrowUp: currentIndex - 1,
       ArrowDown: currentIndex + 1,
       Home: 0,
-      End: presets.length - 1,
+      End: modelsForPicker.length - 1,
     };
     const target = targetByKey[event.key];
     if (target === undefined) return;
     event.preventDefault();
-    const next = presets[wrapIndex(target, presets.length)];
-    if (next?.name !== activeName) selectPreset(next.name);
+    const next = modelsForPicker[wrapIndex(target, modelsForPicker.length)];
+    if (next?.modelId !== activeModelId) selectModel(next.modelId);
   };
 
   const pill = (
-    <PresetPill
+    <ModelPill
       key={needsSetup ? attentionRequest : undefined}
       label={displayLabel}
       modelDetail={displayModelDetail}
@@ -361,13 +362,13 @@ export function ModelPresetBadge({
                   }}
                 >
                   {PILL_OFFSETS.map((offset) => {
-                    const preset = presets[wrapIndex(motion.index + offset, presets.length)];
+                    const model = modelsForPicker[wrapIndex(motion.index + offset, modelsForPicker.length)];
                     return (
-                      <PresetPill
+                      <ModelPill
                         key={motion.index + offset}
-                        label={preset.name}
-                        modelDetail={preset.model}
-                        provider={preset.provider}
+                        label={model.label || model.modelId}
+                        modelDetail={model.model}
+                        provider={model.provider}
                         isHero={isHero}
                         offset={offset}
                         scale={motion.settling ? 1 : dockScale(offset - motion.remainder)}
@@ -405,12 +406,12 @@ export function ModelPresetBadge({
           aria-label={switchModelLabel}
           className="max-h-[min(16rem,var(--radix-popover-content-available-height))] overflow-y-auto py-1 scrollbar-thin scrollbar-track-transparent"
         >
-          {presets.map((preset) => (
-            <PresetOption
-              key={preset.name}
-              preset={preset}
-              selected={preset.name === activeName}
-              onSelect={selectPreset}
+          {modelsForPicker.map((model) => (
+            <ModelOptionItem
+              key={model.modelId}
+              model={model}
+              selected={model.modelId === activeModelId}
+              onSelect={selectModel}
             />
           ))}
         </div>
@@ -435,23 +436,24 @@ export function ModelPresetBadge({
   );
 }
 
-function PresetOption({
-  preset,
+function ModelOptionItem({
+  model,
   selected,
   onSelect,
 }: {
-  preset: ModelPresetOption;
+  model: ModelOption;
   selected: boolean;
-  onSelect: (name: string) => void;
+  onSelect: (modelId: string) => void;
 }) {
-  const detail = compactModelName(preset.model);
+  const detail = compactModelName(model.model);
+  const optionLabel = model.label || model.modelId;
   return (
     <button
       type="button"
       role="option"
-      aria-label={preset.name}
+      aria-label={optionLabel}
       aria-selected={selected}
-      onClick={() => onSelect(preset.name)}
+      onClick={() => onSelect(model.modelId)}
       className={cn(
         floatingItemClassName,
         floatingItemFocusClassName,
@@ -459,15 +461,13 @@ function PresetOption({
         selected && "bg-muted/55 text-foreground",
       )}
     >
-      <PresetProviderIcon
-        label={preset.name}
-        modelDetail={detail}
-        provider={preset.provider}
+      <ModelProviderIcon
+        provider={model.provider}
         isHero={false}
       />
       <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden whitespace-nowrap">
-        <span className="shrink-0 text-[13px] font-medium text-foreground">{preset.name}</span>
-        {detail && detail !== preset.name ? (
+        <span className="shrink-0 text-[13px] font-medium text-foreground">{optionLabel}</span>
+        {detail && detail !== model.modelId ? (
           <span className="truncate text-[12px] text-muted-foreground">{detail}</span>
         ) : null}
       </span>
@@ -476,7 +476,7 @@ function PresetOption({
   );
 }
 
-function PresetPill({
+function ModelPill({
   label,
   modelDetail,
   provider,
@@ -499,9 +499,7 @@ function PresetPill({
 }) {
   const labelRef = useRef<HTMLSpanElement | null>(null);
   const [labelOverflows, setLabelOverflows] = useState(false);
-  const inferredProvider = needsSetup
-    ? null
-    : provider || inferProviderFromModelName(modelDetail || label);
+  const displayProvider = needsSetup ? null : provider;
   const title = [...new Set([label, modelDetail, providerLabel].filter(Boolean))].join(" · ");
 
   useLayoutEffect(() => {
@@ -535,11 +533,9 @@ function PresetPill({
       }}
     >
       {!needsSetup ? (
-        <PresetProviderIcon
-          label={label}
-          modelDetail={modelDetail}
-          provider={inferredProvider}
-          testId={`composer-model-logo${inferredProvider ? `-${inferredProvider}` : ""}`}
+        <ModelProviderIcon
+          provider={displayProvider}
+          testId={`composer-model-logo${displayProvider ? `-${displayProvider}` : ""}`}
           isHero={isHero}
         />
       ) : null}
@@ -575,21 +571,16 @@ function SetupPromptLabel({ label }: { label: string }) {
   );
 }
 
-function PresetProviderIcon({
-  label,
-  modelDetail,
+function ModelProviderIcon({
   provider,
   testId,
   isHero,
 }: {
-  label: string;
-  modelDetail?: string | null;
   provider?: string | null;
   testId?: string;
   isHero: boolean;
 }) {
-  const inferredProvider = provider || inferProviderFromModelName(modelDetail || label);
-  const brand = providerBrand(inferredProvider);
+  const brand = providerBrand(provider);
   const { logoUrl, onLogoError, onLogoLoad } = useLogoFallback(brand?.logoUrls);
   return (
     <span

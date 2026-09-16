@@ -316,25 +316,25 @@ function ascii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + length));
 }
 
-const MODEL_PRESETS = [
-  { name: "kimi", model: "moonshot/kimi-k2.5", provider: "moonshot" },
-  { name: "dflash", model: "deepseek/deepseek-v4-flash", provider: "deepseek" },
-  { name: "dspro", model: "deepseek/deepseek-v4-pro", provider: "deepseek" },
+const MODEL_OPTIONS = [
+  { modelId: "kimi", model: "moonshot/kimi-k2.5", provider: "moonshot" },
+  { modelId: "dflash", model: "deepseek/deepseek-v4-flash", provider: "deepseek" },
+  { modelId: "dspro", model: "deepseek/deepseek-v4-pro", provider: "deepseek" },
 ];
 
-function renderPresetComposer(
+function renderModelComposer(
   variant: "thread" | "hero" = "thread",
   onManageModels?: () => void,
 ) {
-  const onPresetChange = vi.fn();
+  const onModelIdChange = vi.fn();
   render(
     <ThreadComposer
       onSend={vi.fn()}
       modelLabel="kimi"
-      modelPreset="kimi"
+      modelId="kimi"
       modelProvider="moonshot"
-      modelPresets={MODEL_PRESETS}
-      onModelPresetChange={onPresetChange}
+      models={MODEL_OPTIONS}
+      onModelIdChange={onModelIdChange}
       onManageModels={onManageModels}
       placeholder={variant === "hero" ? "Ask anything..." : "Type your message..."}
       variant={variant}
@@ -342,7 +342,7 @@ function renderPresetComposer(
   );
   return {
     badge: screen.getByRole("button", { name: "kimi" }),
-    onPresetChange,
+    onModelIdChange,
   };
 }
 
@@ -503,23 +503,23 @@ describe("ThreadComposer", () => {
     expect(input.style.height).toBe("120px");
   });
 
-  it("lets long model preset labels use their intrinsic width", () => {
+  it("lets long model labels use their intrinsic width", () => {
     render(
       <ThreadComposer
         onSend={vi.fn()}
         modelLabel="gpt-5.6-sol"
-        modelPreset="gpt-5-6-sol"
+        modelId="gpt-5-6-sol"
         modelProvider="openai_codex"
-        modelPresets={[
+        models={[
           {
-            name: "gpt-5-6-sol",
+            modelId: "gpt-5-6-sol",
             label: "gpt-5.6-sol",
             model: "openai-codex/gpt-5.6-sol",
             provider: "openai_codex",
           },
-          ...MODEL_PRESETS,
+          ...MODEL_OPTIONS,
         ]}
-        onModelPresetChange={vi.fn()}
+        onModelIdChange={vi.fn()}
         placeholder="Ask anything..."
         variant="hero"
       />,
@@ -536,7 +536,7 @@ describe("ThreadComposer", () => {
       <ThreadComposer
         onSend={vi.fn()}
         modelLabel="gpt-5.6-sol"
-        modelPreset="gpt-5-6-sol"
+        modelId="gpt-5-6-sol"
         modelProvider="openai_codex"
         contextUsage={{
           contextTokens: 74_900,
@@ -566,7 +566,7 @@ describe("ThreadComposer", () => {
       <ThreadComposer
         onSend={vi.fn()}
         modelLabel="gpt-5.6-sol"
-        modelPreset="gpt-5-6-sol"
+        modelId="gpt-5-6-sol"
         modelProvider="openai_codex"
         contextUsage={{
           contextTokens: 14_700,
@@ -712,8 +712,8 @@ describe("ThreadComposer", () => {
     expect(screen.queryByText(/Enter to send/)).not.toBeInTheDocument();
   });
 
-  it("opens a model picker and switches presets with one click", async () => {
-    const { badge, onPresetChange } = renderPresetComposer();
+  it("opens a model picker and switches models with one click", async () => {
+    const { badge, onModelIdChange } = renderModelComposer();
     expect(badge).toHaveClass("h-9");
     expect(badge).toHaveClass("w-fit");
     fireEvent.click(badge);
@@ -731,14 +731,14 @@ describe("ThreadComposer", () => {
     );
     expect(document.activeElement).toBe(within(picker).getByRole("option", { name: "kimi" }));
     fireEvent.click(within(picker).getByRole("option", { name: "dspro" }));
-    expect(onPresetChange).toHaveBeenCalledWith("dspro");
+    expect(onModelIdChange).toHaveBeenCalledWith("dspro");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(badge).toHaveClass("w-fit");
   });
 
   it("opens model settings from the picker footer", async () => {
     const onManageModels = vi.fn();
-    const { badge } = renderPresetComposer("thread", onManageModels);
+    const { badge } = renderModelComposer("thread", onManageModels);
 
     fireEvent.click(badge);
     const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
@@ -750,7 +750,7 @@ describe("ThreadComposer", () => {
 
   it("keeps long-press drag switching alongside the click picker", () => {
     vi.useFakeTimers();
-    const { badge, onPresetChange } = renderPresetComposer();
+    const { badge, onModelIdChange } = renderModelComposer();
 
     fireEvent.pointerDown(badge, { pointerId: 1, pointerType: "touch", clientY: 100 });
     act(() => vi.advanceTimersByTime(400));
@@ -760,17 +760,17 @@ describe("ThreadComposer", () => {
 
     fireEvent.pointerMove(badge, { pointerId: 1, pointerType: "touch", clientY: 56 });
     fireEvent.pointerUp(badge, { pointerId: 1, pointerType: "touch", clientY: 56 });
-    expect(onPresetChange).toHaveBeenCalledWith("dflash");
+    expect(onModelIdChange).toHaveBeenCalledWith("dflash");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 
   it("uses the same click picker in hero mode", () => {
-    const { badge, onPresetChange } = renderPresetComposer("hero");
+    const { badge, onModelIdChange } = renderModelComposer("hero");
     expect(badge).toHaveClass("h-8");
     fireEvent.click(badge);
     fireEvent.click(screen.getByRole("option", { name: "dflash" }));
-    expect(onPresetChange).toHaveBeenCalledWith("dflash");
+    expect(onModelIdChange).toHaveBeenCalledWith("dflash");
   });
 
   it("transcribes voice input into the composer without sending", async () => {
@@ -1570,10 +1570,10 @@ describe("ThreadComposer", () => {
         slashCommands={[
           {
             command: "/model",
-            title: "Switch model preset",
-            description: "Show or switch the active model preset.",
+            title: "Switch model",
+            description: "Show or switch the active canonical model ID.",
             icon: "brain",
-            argHint: "[preset]",
+            argHint: "[model_id]",
             lifecycle: "side_channel",
             acceptsArgs: true,
           },
@@ -1588,7 +1588,7 @@ describe("ThreadComposer", () => {
 
     expect(screen.getByRole("option", { name: /Model deepseek-v4-pro/i })).toBeInTheDocument();
     expect(screen.getByText("Current")).toBeInTheDocument();
-    expect(screen.getByText("/model [preset]")).toBeInTheDocument();
+    expect(screen.getByText("/model [model_id]")).toBeInTheDocument();
   });
 
   it("prioritizes stop as an immediate slash action while streaming", () => {

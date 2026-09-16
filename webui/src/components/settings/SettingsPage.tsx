@@ -6,7 +6,7 @@ import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySet
 import { TranscriptionSettings } from "@/components/settings/capabilities/TranscriptionSettings";
 import { WebSettings } from "@/components/settings/capabilities/WebSettings";
 import {
-  ModelPresetDeleteDialog,
+  ModelDeleteDialog,
   ModelsSettings,
 } from "@/components/settings/models/ModelsSettings";
 import {
@@ -73,9 +73,9 @@ export function SettingsPage({
     automationsLoading,
     automationsQuery,
     automationsSort,
-    beginModelPresetCreation,
-    cancelModelPresetCreation,
-    selectActiveModelPreset,
+    beginModelCreation,
+    cancelModelCreation,
+    selectActiveModel,
     promptOverrides,
     promptOverridesSaving,
     roleBindingsDraft,
@@ -134,14 +134,14 @@ export function SettingsPage({
     mcpPresetAction,
     mcpPresets,
     mcpPresetsLoading,
-    modelPresetSelecting,
+    modelSelecting,
     modelConfigurationSaving,
     modelDirty,
-    modelPresetBeforeCreateRef,
-    modelPresetCreating,
-    modelPresetEditingName,
-    modelPresetNameError,
-    modelPresetPendingDelete,
+    modelBeforeCreateRef,
+    modelCreating,
+    editingModelId,
+    modelIdError,
+    modelPendingDelete,
     nanobotFeatureAction,
     nanobotFeatureConfirm,
     nanobotFeatures,
@@ -192,10 +192,10 @@ export function SettingsPage({
     setMcpMessage,
     setMcpOAuthCallbackError,
     setMcpOAuthCallbackUrl,
-    setModelPresetCreating,
-    setModelPresetEditingName,
-    setModelPresetNameError,
-    setModelPresetPendingDelete,
+    setModelCreating,
+    setEditingModelId,
+    setModelIdError,
+    setModelPendingDelete,
     setNanobotFeatureConfirm,
     setNanobotFeatures,
     setNanobotFeaturesError,
@@ -250,11 +250,11 @@ export function SettingsPage({
               token={token}
               form={form}
               setForm={setForm}
-              editingPresetName={modelPresetEditingName}
-              presetNameError={modelPresetNameError}
+              editingModelId={editingModelId}
+              modelIdError={modelIdError}
               settings={settings}
               dirty={modelDirty}
-              creating={modelPresetCreating}
+              creating={modelCreating}
               creatingSaving={modelConfigurationSaving}
               promptOverrides={promptOverrides}
               promptOverridesSaving={promptOverridesSaving}
@@ -266,22 +266,22 @@ export function SettingsPage({
               setRoleBindingsDraft={setRoleBindingsDraft}
               onSaveRoleBindings={saveRoleBindings}
               saving={saving}
-              selectionSaving={modelPresetSelecting || modelConfigurationSaving}
+              selectionSaving={modelSelecting || modelConfigurationSaving}
               showBrandLogos={localPrefs.brandLogos}
               providerSaving={providerSaving}
-              onSelectActivePreset={selectActiveModelPreset}
+              onSelectActiveModel={selectActiveModel}
               onProviderOAuthLogin={(provider) => runProviderOAuth(provider, "login")}
               onSave={saveModelSettings}
-              onBeginCreate={beginModelPresetCreation}
-              onCancelCreate={cancelModelPresetCreation}
-              onClearPresetNameError={() => setModelPresetNameError(null)}
-              onSelectConfiguration={(name) => {
-                setModelPresetCreating(false);
-                setModelPresetEditingName(name);
-                setModelPresetNameError(null);
-                modelPresetBeforeCreateRef.current = null;
+              onBeginCreate={beginModelCreation}
+              onCancelCreate={cancelModelCreation}
+              onClearModelIdError={() => setModelIdError(null)}
+              onSelectModel={(modelId) => {
+                setModelCreating(false);
+                setEditingModelId(modelId);
+                setModelIdError(null);
+                modelBeforeCreateRef.current = null;
               }}
-              onDeleteConfiguration={setModelPresetPendingDelete}
+              onDeleteModel={setModelPendingDelete}
             />
             <ProvidersSettings
               settings={settings}
@@ -326,7 +326,6 @@ export function SettingsPage({
       case "image":
         return (
           <ImageGenerationSettings
-            token={token}
             settings={settings}
             form={imageGenerationForm}
             dirty={imageGenerationDirty}
@@ -334,7 +333,6 @@ export function SettingsPage({
             onChangeForm={setImageGenerationForm}
             onSave={saveImageGenerationSettings}
             onOpenProviders={() => selectSection("models")}
-            showBrandLogos={localPrefs.brandLogos}
             onRestart={restartViaSettingsSurface}
             isRestarting={isRestarting || hostEngineApplying}
             requiresRestartPending={pendingRestartSections.image}
@@ -540,11 +538,11 @@ export function SettingsPage({
         />
       ) : null}
 
-      <ModelPresetDeleteDialog
-        preset={modelPresetPendingDelete}
+      <ModelDeleteDialog
+        model={modelPendingDelete}
         deleting={saving}
         onOpenChange={(open) => {
-          if (!open) setModelPresetPendingDelete(null);
+          if (!open) setModelPendingDelete(null);
         }}
         onConfirm={handleDeleteModelConfiguration}
       />

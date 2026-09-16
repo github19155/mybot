@@ -100,7 +100,7 @@ def test_model_id_switch_updates_canonical_runtime(tmp_path) -> None:
 def test_model_id_switch_rejects_raw_upstream_model(tmp_path) -> None:
     loop = _make_loop(tmp_path)
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="model_id must match"):
         loop.set_model_id("openai/gpt-5.6")
 
     assert loop.model_id == "base"

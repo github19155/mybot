@@ -32,23 +32,32 @@ def test_find_by_name_accepts_ant_ling_spellings() -> None:
     assert find_by_name("antLing") is spec
 
 
-def test_ant_ling_model_auto_matches_with_default_api_base() -> None:
+def test_ant_ling_model_uses_default_api_base() -> None:
     config = Config.model_validate({
         "providers": {
             "antLing": {
                 "apiKey": "ling-key",
             },
         },
-        "agents": {
-            "defaults": {
+        "models": {
+            "main": {
+                "displayName": "ant_ling",
+                "provider": "ant_ling",
                 "model": "Ling-2.6-flash",
-            },
+                "capabilities": {"text": True},
+            }
         },
+        "agents": {"defaults": {"modelId": "main"}},
     })
 
-    assert config.get_provider_name("Ling-2.6-flash") == "ant_ling"
-    assert config.get_api_key("Ling-2.6-flash") == "ling-key"
-    assert config.get_api_base("Ling-2.6-flash") == "https://api.ant-ling.com/v1"
+    from nanobot.providers.factory import make_provider
+
+    provider = make_provider(config)
+
+    assert provider.provider_name == "ant_ling"
+    assert provider.api_key == "ling-key"
+    assert provider.api_base == "https://api.ant-ling.com/v1"
+    assert provider.get_default_model() == "Ling-2.6-flash"
 
 
 def test_ant_ling_preserves_official_model_name() -> None:

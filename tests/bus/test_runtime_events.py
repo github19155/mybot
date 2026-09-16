@@ -25,7 +25,7 @@ async def test_runtime_event_bus_filters_by_event_type() -> None:
 
     bus.subscribe(handle_run_status, TurnRunStatusChanged)
 
-    await bus.publish(RuntimeModelChanged(model="m", model_preset=None))
+    await bus.publish(RuntimeModelChanged(model="m", model_id=None))
     await bus.publish(
         TurnRunStatusChanged(
             context=RuntimeEventContext(
@@ -50,7 +50,7 @@ async def test_runtime_event_bus_keeps_catch_all_subscription() -> None:
 
     bus.subscribe(handle_any)
 
-    await bus.publish(RuntimeModelChanged(model="m", model_preset=None))
+    await bus.publish(RuntimeModelChanged(model="m", model_id=None))
 
     assert seen == ["RuntimeModelChanged"]
 

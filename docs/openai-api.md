@@ -42,7 +42,8 @@ curl http://127.0.0.1:8900/v1/models \
 
 - Session isolation: pass `"session_id"` in the request body to isolate conversations; omit for a shared default session (`api:default`)
 - Single-message input: each request must contain exactly one `user` message
-- Fixed model: omit `model`, or pass the same model shown by `/v1/models`
+- Fixed model: `model` is the OpenAI-compatible field name, and when present it must equal the canonical model ID listed by `/v1/models`; upstream provider model strings are rejected
+- Responses and `/v1/models` use the same canonical model ID; nanobot resolves that ID through `Config.models` to the configured provider and upstream model for execution
 - Streaming: set `stream=true` to receive Server-Sent Events (`text/event-stream`) with OpenAI-compatible delta chunks, terminated by `data: [DONE]`; omit or set `stream=false` for a single JSON response
 - **File uploads**: supports images, PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) via JSON base64 or `multipart/form-data` (max 10MB per file)
 - API requests run in the synthetic `api` channel, so the `message` tool does **not** automatically deliver to Telegram/Discord/etc. To proactively send to another chat, call `message` with an explicit `channel` and `chat_id` for an enabled channel.
@@ -71,6 +72,7 @@ If `channel` points to a channel that is not enabled in your config, nanobot wil
 curl http://127.0.0.1:8900/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "main",
     "messages": [{"role": "user", "content": "hi"}],
     "session_id": "my-session"
   }'
@@ -122,6 +124,7 @@ import requests
 resp = requests.post(
     "http://127.0.0.1:8900/v1/chat/completions",
     json={
+        "model": "main",
         "messages": [{"role": "user", "content": "hi"}],
         "session_id": "my-session",  # optional: isolate conversation
     },
@@ -129,7 +132,6 @@ resp = requests.post(
 )
 resp.raise_for_status()
 print(resp.json()["choices"][0]["message"]["content"])
-```
 
 ## Python (`openai`)
 
@@ -142,7 +144,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="MiniMax-M2.7",
+    model="main",
     messages=[{"role": "user", "content": "hi"}],
     extra_body={"session_id": "my-session"},  # optional: isolate conversation
 )

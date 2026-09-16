@@ -32,19 +32,26 @@ def test_edenai_forced_provider_uses_default_api_base() -> None:
     config = Config.model_validate(
         {
             "providers": {"edenai": {"apiKey": "eden-key"}},
-            "agents": {
-                "defaults": {
+            "models": {
+                "main": {
+                    "displayName": "edenai",
                     "provider": "edenai",
                     "model": "anthropic/claude-sonnet-4-5",
+                    "capabilities": {"text": True},
                 }
             },
+            "agents": {"defaults": {"modelId": "main"}},
         }
     )
 
-    model = "anthropic/claude-sonnet-4-5"
-    assert config.get_provider_name(model) == "edenai"
-    assert config.get_api_key(model) == "eden-key"
-    assert config.get_api_base(model) == "https://api.edenai.run/v3"
+    from nanobot.providers.factory import make_provider
+
+    provider = make_provider(config)
+
+    assert provider.provider_name == "edenai"
+    assert provider.api_key == "eden-key"
+    assert provider.api_base == "https://api.edenai.run/v3"
+    assert provider.get_default_model() == "anthropic/claude-sonnet-4-5"
 
 
 def test_edenai_preserves_model_id_and_reasoning_effort() -> None:

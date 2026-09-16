@@ -23,12 +23,13 @@ tools:
     allow_set: false   # default: false (read-only)
 ```
 
-To allow the agent to set its configuration (e.g. switch models, adjust parameters), set `tools.my.allow_set: true`.
+To allow the agent to set its runtime state (for example, switch models or adjust parameters), set `tools.my.allow_set: true`.
 
-Legacy `tools.myEnabled` / `tools.mySet` keys are auto-migrated on load, and rewritten in-place the next time `nanobot onboard` refreshes the config.
+`model_id` selection uses that catalog; this tool does not change model definitions.
 
-Most modifications are held in memory only. `model_preset` is the exception: it is
-stored in the current session so the selection survives a restart.
+Most modifications are held in memory only. In an active session, `model_id` is
+saved with that session and applies to its next turn, so the selection remains
+when the session is resumed.
 
 ---
 
@@ -40,35 +41,37 @@ Without parameters, returns a key config overview:
 my(action="check")
 # → max_iterations: 40
 #   context_window_tokens: 200000
-#   model: 'anthropic/claude-sonnet-4-6'
+#   model_id: 'main'
 #   workspace: PosixPath('/tmp/workspace')
 #   provider_retry_mode: 'standard'
 #   max_tool_result_chars: 16000
-#   _last_usage: {'prompt_tokens': 45000, 'completion_tokens': 8000}
-#   Note: prompt_tokens is cumulative across all turns, not current context window occupancy.
+#   subagents: {...}
+#   Note: model_id is the canonical ID selected for this session.
 ```
 
 With a key parameter, drill into a specific config:
 
-```text
-my(action="check", key="_last_usage.prompt_tokens")
-# → How many prompt tokens I've used so far
+my(action="check", key="model_id")
+# → The canonical model ID selected for this session
 
 my(action="check", key="model")
-# → What model I'm currently running on
+# → The upstream model string behind the selected model_id
+
+my(action="check", key="models")
+# → The read-only catalog keyed by configured canonical model IDs
 
 my(action="check", key="web_config.enable")
 # → Whether web search is enabled
-```
 
 ### What you can do with it
 
 | Scenario | How |
 |----------|-----|
-| "What model are you using?" | `check("model")` |
-| "Which model preset is active?" | `check("model_preset")` |
+| "What model ID are you using?" | `check("model_id")` |
+| "Which configured model IDs are available?" | `check("models")` |
+| "Which upstream model is selected?" | `check("model")` |
 | "What is the per-turn iteration limit?" | `check("max_iterations")` |
-| "How many tokens has this conversation used?" | `check("_last_usage")` — cumulative across all turns |
+| "How large is the selected context window?" | `check("context_window_tokens")` |
 | "Where is your working directory?" | `check("workspace")` |
 | "Show me your full config" | `check()` |
 | "Are there any subagents running?" | `check("subagents")` — shows phase, iteration, elapsed time, tool events |
@@ -77,18 +80,23 @@ my(action="check", key="web_config.enable")
 
 ## set — Runtime tuning
 
-Changes do not require a restart. `model_preset` is saved for the current session and
-applies to its next turn; other writable runtime tuning takes effect immediately.
-Direct `model` and `context_window_tokens` writes are rejected during an active session
-because those setters change the shared instance default. Configure a named preset for
-model or context-window changes instead.
+Changes do not require a restart. In an active session, `model_id` is saved for
+that session and applies to its next turn; it must match a key in read-only
+`models`. The selected model's `ModelConfig` supplies its upstream model and
+context-window values. Use a canonical ID from `models`, not a provider's
+upstream model string.
+
+Other writable runtime tuning takes effect immediately. Direct `model` writes
+are rejected, and direct `context_window_tokens` writes are rejected during an
+active session because they change the shared instance default; choose a
+`model_id` instead.
 
 ```text
-my(action="set", key="max_iterations", value=80)
-# → Bump iteration limit from 40 to 80
+my(action="check", key="models")
+# → Choose a configured canonical ID from this catalog, such as "main"
 
-my(action="set", key="model_preset", value="fast")
-# → Use a configured model preset for this session's next turn
+my(action="set", key="model_id", value="main")
+# → Set model_id = 'main' for the next turn; model and context_window_tokens follow that ModelConfig
 ```
 
 You can also store custom state in your scratchpad:
@@ -107,9 +115,10 @@ These parameters have type and range validation — invalid values are rejected:
 | Parameter | Type | Range | Purpose |
 |-----------|------|-------|---------|
 | `max_iterations` | int | 1–100 | Max tool calls per conversation turn |
-| `context_window_tokens` | int | 4,096–1,000,000 | Instance default; during a session, select through a preset |
-| `model` | str | non-empty | Instance default; during a session, select through a preset |
-| `model_preset` | str | configured preset name | Current session's preset for its next turn |
+| `context_window_tokens` | int | 4,096–1,000,000 | Instance default; during an active session, choose the context window through `model_id` |
+| `model` | str | — | Current upstream model string; read-only, select through `model_id` |
+| `model_id` | str | configured key in `models` | Canonical model selection for this session's next turn; saved with the session |
+| `models` | mapping | — | Read-only catalog of configured canonical model IDs |
 
 Other parameters (e.g. `workspace`, `provider_retry_mode`, `max_tool_result_chars`) can be set freely, as long as the value is JSON-safe.
 
@@ -118,17 +127,20 @@ Other parameters (e.g. `workspace`, `provider_retry_mode`, `max_tool_result_char
 ## Practical Scenarios
 
 ### "This task is complex, I need more room"
-
 ```text
-Agent: This codebase is large, let me switch this session to the configured deep preset.
-→ my(action="set", key="model_preset", value="deep")
+Agent: This codebase is large; let me inspect the configured model IDs and choose one with the context window I need.
+→ my(action="check", key="models")
+→ my(action="set", key="model_id", value="coder_v2")  # after confirming "coder_v2" is present
+# → Set model_id = 'coder_v2' for the next turn
 ```
 
 ### "Simple question, don't waste compute"
 
 ```text
-Agent: This is a straightforward question, let me switch to the fast preset.
-→ my(action="set", key="model_preset", value="fast")
+Agent: This is a straightforward question, let me choose a configured lightweight model ID.
+→ my(action="check", key="models")
+→ my(action="set", key="model_id", value="main")  # after confirming "main" is present
+# → Set model_id = 'main' for the next turn
 ```
 
 ### "Remember user preferences across turns"
@@ -149,13 +161,13 @@ Agent: Let me check my web config.
 Agent: Web search is disabled — please set web.enable: true in your config.
 ```
 
-### "Token budget management"
+### "Context budget management"
 
 ```text
-Agent: Let me check how much budget I have left.
-→ my(action="check", key="_last_usage")
-# → {"prompt_tokens": 45000, "completion_tokens": 8000}
-Agent: I've used ~53k tokens total so far. I'll keep my remaining replies concise.
+Agent: Let me check the context limit for the selected model.
+→ my(action="check", key="context_window_tokens")
+# → 200000
+Agent: I'll plan within that context-window limit.
 ```
 
 ### "Subagent monitoring"
@@ -179,8 +191,9 @@ Agent: The code review is progressing well. The test task hasn't started yet.
 ## Safety Mechanisms
 
 Core design principle: **The tool does not rewrite `config.json`.** Instance-wide
-changes live in memory only, while `model_preset` persists only as the current
-session's selector.
+changes live in memory only. In an active session, `model_id` is persisted with
+that session and applies to its next turn; it is a session selector, not a global
+config rewrite. The `models` catalog remains read-only.
 
 ### Off-limits (BLOCKED)
 

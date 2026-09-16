@@ -37,7 +37,7 @@ the focused guides first and come back here for exact fields and defaults.
 | Tune process-level behavior with env vars | [Runtime Environment Variables](#runtime-environment-variables) |
 | Trace model calls | [Langfuse Observability](#langfuse-observability) |
 | Configure credentials and endpoints | [Providers](#providers) |
-| Name and switch model choices | [Model Presets](#model-presets) |
+| Name and switch model choices | [Models](#models) |
 | Configure voice transcription | [Transcription Settings](#transcription-settings) |
 | Tune channel defaults | [Channel Settings](#channel-settings) |
 | Configure web search and fetch | [Web Tools](#web-tools) |
@@ -53,13 +53,13 @@ If the WebUI does not expose the option you need, start from the task below. Mos
 
 | Task | First keys to check | Verify with | Deep dive |
 |---|---|---|---|
-| Make the first model reply work | `providers.<name>.apiKey`, optional `providers.<name>.apiBase`, `modelPresets.<preset>`, `agents.defaults.modelPreset` | `nanobot status`, then `nanobot agent -m "Hello!"` | [Providers](#providers), [Model Presets](#model-presets) |
+| Make the first model reply work | `providers.<name>.apiKey`, optional `providers.<name>.apiBase`, `models.<model_id>`, `agents.defaults.modelId` | `nanobot status`, then `nanobot agent -m "Hello!"` | [Providers](#providers), [Models](#models) |
 | Keep secrets out of the config file | `${ENV_VAR}` placeholders inside any string value | Start nanobot from the same environment that sets the variable | [Environment Variables for Secrets](#environment-variables-for-secrets) |
 | Open the bundled WebUI | `channels.websocket.enabled`, optional `channels.websocket.port`, `channels.websocket.tokenIssueSecret` | `nanobot webui` | [Channel Settings](#channel-settings), [WebSocket docs](./websocket.md) |
 | Connect one chat app | `channels.<channel>.enabled`, channel credentials, optional pairing or `channels.<channel>.allowFrom` | `nanobot channels status`, then `nanobot gateway --verbose` | [Channel Settings](#channel-settings), [Chat Apps](./chat-apps.md) |
-| Enable voice transcription | `transcription.enabled`, `transcription.provider`, matching `providers.<name>.apiKey` | Send or upload a short voice message through a configured surface | [Transcription Settings](#transcription-settings) |
+| Enable voice transcription | `transcription.enabled`, `transcription.modelId`, matching model capability and provider credentials | Send or upload a short voice message through a configured surface | [Transcription Settings](#transcription-settings) |
 | Enable web search or fetch | `tools.web.search.*`, `tools.web.fetch.*`, optional `tools.ssrfWhitelist` | Ask a question that requires current web information, then inspect logs if needed | [Web Tools](#web-tools), [Security](#security) |
-| Enable image generation | `tools.imageGeneration.enabled`, `tools.imageGeneration.provider`, `tools.imageGeneration.model`, matching provider credentials | Enable Image Generation in the WebUI and send one image request | [Image Generation](#image-generation) |
+| Enable image generation | `tools.imageGeneration.enabled`, `tools.imageGeneration.modelId`, matching model capability and provider credentials | Enable Image Generation in the WebUI and send one image request | [Image Generation](#image-generation) |
 | Add external tools through MCP | `tools.mcpServers.<name>` | Start `nanobot gateway --verbose` and check startup/tool logs | [MCP](#mcp-model-context-protocol) |
 | Tighten tool and network safety | `tools.restrictToWorkspace`, `tools.exec.sandbox`, `tools.ssrfWhitelist`, `channels.*.allowFrom` | Run the same workflow through the channel or CLI you plan to expose | [Security](#security), [Pairing](#pairing) |
 | Tune request timeouts or process concurrency | `NANOBOT_LLM_TIMEOUT_S`, `NANOBOT_STREAM_IDLE_TIMEOUT_S`, `NANOBOT_MAX_CONCURRENT_REQUESTS` | Start nanobot from the same environment and inspect startup/runtime logs | [Runtime Environment Variables](#runtime-environment-variables) |
@@ -244,7 +244,7 @@ Tracing covers the providers that go through nanobot's OpenAI-compatible client 
 ## Providers
 
 > [!TIP]
-> - **Voice transcription**: Voice messages and WebUI microphone input use the shared top-level `transcription` settings. The default `transcription.provider` value is `"groq"`; set it to `"openai"` for OpenAI Whisper, `"openrouter"` for OpenRouter speech-to-text models, `"xiaomi_mimo"` for Xiaomi MiMo ASR, or `"assemblyai"` for AssemblyAI. API keys still live in the matching `providers.<provider>` config.
+> - **Voice transcription**: Voice messages and WebUI microphone input use the shared top-level `transcription` settings. Set `transcription.modelId` to a canonical key in `models` whose `capabilities.transcription` is `true`; credentials and endpoints remain in that model's concrete provider config.
 > - **MiniMax Coding Plan**: Exclusive discount links for the nanobot community: [Overseas](https://platform.minimax.io/subscribe/coding-plan?code=9txpdXw04g&source=link) · [Mainland China](https://platform.minimaxi.com/subscribe/token-plan?code=GILTJpMTqZ&source=link)
 > - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.
 > - **MiniMax thinking mode**: `providers.minimaxAnthropic` is the config block for `reasoningEffort` / thinking mode. MiniMax exposes that capability through its Anthropic-compatible endpoint, so nanobot keeps it as a separate provider instead of guessing MiniMax-specific thinking parameters on the generic OpenAI-compatible `minimax` endpoint. It uses the same `MINIMAX_API_KEY`. Default Anthropic-compatible base URL: `https://api.minimax.io/anthropic`; for mainland China use `https://api.minimaxi.com/anthropic`.
@@ -258,7 +258,7 @@ Tracing covers the providers that go through nanobot's OpenAI-compatible client 
 > - **Step Fun (Mainland China)**: If your API key is from Step Fun's mainland China platform (stepfun.com), set `"apiBase": "https://api.stepfun.com/v1"` in your stepfun provider config.
 > - **Xiaomi MiMo thinking mode**: MiMo models (e.g. `mimo-v2.5-pro`) default to enabled thinking. Use `agents.defaults.reasoningEffort: "none"` to disable it, or `"low"` / `"medium"` / `"high"` to keep it on. Omitting the field preserves the provider's per-model default.
 > - **Xiaomi MiMo Token Plan**: If you're on MiMo's token plan, set `"apiBase": "https://token-plan-sgp.xiaomimimo.com/v1"` in your xiaomi_mimo provider config.
-> - **Custom OpenAI-compatible providers**: Besides the built-in `custom` provider, any extra key under `providers` can define its own OpenAI-compatible endpoint. For example, `providers.companyProxy.apiBase` plus `modelPresets.primary.provider: "companyProxy"` creates a separate custom provider. Set `apiBase`; set `apiKey` only when the endpoint requires it. This named-custom path uses the OpenAI-compatible request format only. For Anthropic-compatible proxies, use `providers.anthropic.apiBase` with `provider: "anthropic"`.
+> - **Custom OpenAI-compatible providers**: Besides the built-in `custom` provider, any extra key under `providers` can define its own OpenAI-compatible endpoint. For example, `providers.companyProxy.apiBase` plus `models.company.provider: "companyProxy"` creates a separate custom provider. Set `apiBase`; set `apiKey` only when the endpoint requires it. This named-custom path uses the OpenAI-compatible request format only. For Anthropic-compatible proxies, use `providers.anthropic.apiBase` with the model's `provider: "anthropic"`.
 > - **Provider-scoped proxy**: `providers.<name>.proxy` routes only that provider through an HTTP proxy. It is supported for OpenAI-compatible providers, `openai_codex`, and `xai_grok`. Native provider backends such as `anthropic`, `bedrock`, `azure_openai`, and `github_copilot` reject `proxy`.
 
 | Provider | Purpose | Get API Key |
@@ -408,15 +408,19 @@ The `azure_openai` provider talks to your Azure OpenAI resource via the OpenAI *
       "apiBase": "https://my-resource.openai.azure.com"
     }
   },
-  "modelPresets": {
-    "azure": {
-      "provider": "azure_openai",
-      "model": "my-gpt-5-deployment"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "azure"
+      "modelId": "azure"
+    }
+  },
+  "models": {
+    "azure": {
+      "displayName": "Azure",
+      "provider": "azure_openai",
+      "model": "my-gpt-5-deployment",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -433,15 +437,19 @@ Omit `apiKey` (or leave it empty / unset). The provider falls back to [`DefaultA
       "apiBase": "https://my-resource.openai.azure.com"
     }
   },
-  "modelPresets": {
-    "azure": {
-      "provider": "azure_openai",
-      "model": "my-gpt-5-deployment"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "azure"
+      "modelId": "azure"
+    }
+  },
+  "models": {
+    "azure": {
+      "displayName": "Azure",
+      "provider": "azure_openai",
+      "model": "my-gpt-5-deployment",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -482,17 +490,23 @@ Skywork uses APIFree's OpenAI-compatible Agent API endpoint. Configure the provi
       "apiBase": "https://api.apifree.ai/agent/v1"
     }
   },
-  "modelPresets": {
-    "skywork": {
-      "provider": "skywork",
-      "model": "skywork-ai/skyclaw-v1",
-      "maxTokens": 32768,
-      "contextWindowTokens": 131072
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "skywork"
+      "modelId": "skywork"
+    }
+  },
+  "models": {
+    "skywork": {
+      "displayName": "Skywork",
+      "provider": "skywork",
+      "model": "skywork-ai/skyclaw-v1",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 131072,
+      "generationDefaults": {
+        "maxTokens": 32768
+      }
     }
   }
 }
@@ -555,16 +569,22 @@ For a non-Anthropic model such as Amazon Nova:
       "region": "us-east-1"
     }
   },
-  "modelPresets": {
-    "bedrockNova": {
-      "provider": "bedrock",
-      "model": "bedrock/amazon.nova-lite-v1:0",
-      "reasoningEffort": null
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "bedrockNova"
+      "modelId": "bedrocknova"
+    }
+  },
+  "models": {
+    "bedrocknova": {
+      "displayName": "Bedrocknova",
+      "provider": "bedrock",
+      "model": "bedrock/amazon.nova-lite-v1:0",
+      "capabilities": {
+        "text": true
+      },
+      "generationDefaults": {
+        "reasoningEffort": null
+      }
     }
   }
 }
@@ -580,16 +600,22 @@ With a Bedrock API key:
       "apiKey": "${AWS_BEARER_TOKEN_BEDROCK}"
     }
   },
-  "modelPresets": {
-    "bedrockNova": {
-      "provider": "bedrock",
-      "model": "bedrock/amazon.nova-lite-v1:0",
-      "reasoningEffort": null
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "bedrockNova"
+      "modelId": "bedrocknova"
+    }
+  },
+  "models": {
+    "bedrocknova": {
+      "displayName": "Bedrocknova",
+      "provider": "bedrock",
+      "model": "bedrock/amazon.nova-lite-v1:0",
+      "capabilities": {
+        "text": true
+      },
+      "generationDefaults": {
+        "reasoningEffort": null
+      }
     }
   }
 }
@@ -605,15 +631,19 @@ With a named AWS profile:
       "profile": "my-bedrock-profile"
     }
   },
-  "modelPresets": {
-    "bedrockNova": {
-      "provider": "bedrock",
-      "model": "bedrock/amazon.nova-lite-v1:0"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "bedrockNova"
+      "modelId": "bedrocknova"
+    }
+  },
+  "models": {
+    "bedrocknova": {
+      "displayName": "Bedrocknova",
+      "provider": "bedrock",
+      "model": "bedrock/amazon.nova-lite-v1:0",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -628,17 +658,23 @@ With a named AWS profile:
       "region": "us-east-1"
     }
   },
-  "modelPresets": {
-    "bedrockClaude": {
-      "provider": "bedrock",
-      "model": "bedrock/global.anthropic.claude-opus-4-7",
-      "reasoningEffort": "medium",
-      "maxTokens": 8192
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "bedrockClaude"
+      "modelId": "bedrockclaude"
+    }
+  },
+  "models": {
+    "bedrockclaude": {
+      "displayName": "Bedrockclaude",
+      "provider": "bedrock",
+      "model": "bedrock/global.anthropic.claude-opus-4-7",
+      "capabilities": {
+        "text": true
+      },
+      "generationDefaults": {
+        "maxTokens": 8192,
+        "reasoningEffort": "medium"
+      }
     }
   }
 }
@@ -832,15 +868,19 @@ nanobot provider login github-copilot
 **2. Set model** (merge into `~/.nanobot/config.json`):
 ```json
 {
-  "modelPresets": {
-    "copilot": {
-      "provider": "github_copilot",
-      "model": "github-copilot/gpt-4.1"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "copilot"
+      "modelId": "copilot"
+    }
+  },
+  "models": {
+    "copilot": {
+      "displayName": "Copilot",
+      "provider": "github_copilot",
+      "model": "github-copilot/gpt-4.1",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -868,11 +908,11 @@ OpenCode Zen and OpenCode Go are available through nanobot's built-in
 OpenAI-compatible provider flow. They share the `OPENCODE_API_KEY` environment
 variable, but use separate provider keys and default base URLs:
 
-| Provider | Default API base | Model prefix accepted by nanobot |
-|----------|------------------|-----------------------------------|
-| `opencode` | `https://opencode.ai/zen/v1` | `opencode/<model-id>` |
-| `opencode_zen` | `https://opencode.ai/zen/v1` | `opencode/<model-id>` |
-| `opencode_go` | `https://opencode.ai/zen/go/v1` | `opencode-go/<model-id>` |
+| Provider | Default API base |
+|----------|------------------|
+| `opencode` | `https://opencode.ai/zen/v1` |
+| `opencode_zen` | `https://opencode.ai/zen/v1` |
+| `opencode_go` | `https://opencode.ai/zen/go/v1` |
 
 OpenCode Zen:
 
@@ -883,15 +923,19 @@ OpenCode Zen:
       "apiKey": "${OPENCODE_API_KEY}"
     }
   },
-  "modelPresets": {
-    "opencodeZen": {
-      "provider": "opencode",
-      "model": "opencode/deepseek-v4-pro"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "opencodeZen"
+      "modelId": "opencodezen"
+    }
+  },
+  "models": {
+    "opencodezen": {
+      "displayName": "Opencodezen",
+      "provider": "opencode",
+      "model": "opencode/deepseek-v4-pro",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -908,15 +952,19 @@ OpenCode Go:
       "apiKey": "${OPENCODE_API_KEY}"
     }
   },
-  "modelPresets": {
-    "opencodeGo": {
-      "provider": "opencode_go",
-      "model": "opencode-go/deepseek-v4-flash"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "opencodeGo"
+      "modelId": "opencodego"
+    }
+  },
+  "models": {
+    "opencodego": {
+      "displayName": "Opencodego",
+      "provider": "opencode_go",
+      "model": "opencode-go/deepseek-v4-flash",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -942,17 +990,23 @@ LongCat is available through nanobot's built-in OpenAI-compatible provider flow.
       "apiKey": "${LONGCAT_API_KEY}"
     }
   },
-  "modelPresets": {
-    "longcat": {
-      "provider": "longcat",
-      "model": "LongCat-2.0-Preview",
-      "maxTokens": 8192,
-      "contextWindowTokens": 1048576
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "longcat"
+      "modelId": "longcat"
+    }
+  },
+  "models": {
+    "longcat": {
+      "displayName": "Longcat",
+      "provider": "longcat",
+      "model": "LongCat-2.0-Preview",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 1048576,
+      "generationDefaults": {
+        "maxTokens": 8192
+      }
     }
   }
 }
@@ -965,7 +1019,7 @@ Current LongCat API docs list `LongCat-2.0-Preview` as the supported model. The 
 <details>
 <summary><b>Xiaomi MiMo</b></summary>
 
-Xiaomi MiMo models are automatically detected by the `xiaomi_mimo` provider when the model name contains `mimo`. The default API base is `https://api.xiaomimimo.com/v1`.
+Xiaomi MiMo models are configured as concrete entries in `models` with `provider: "xiaomi_mimo"`; the upstream model string is sent to that provider. The default API base is `https://api.xiaomimimo.com/v1`.
 
 > **Token Plan**: If you're using MiMo's token plan, override `apiBase` with the dedicated endpoint:
 >
@@ -977,15 +1031,19 @@ Xiaomi MiMo models are automatically detected by the `xiaomi_mimo` provider when
 >       "apiBase": "https://token-plan-sgp.xiaomimimo.com/v1"
 >     }
 >   },
->   "modelPresets": {
->     "mimo": {
->       "provider": "xiaomi_mimo",
->       "model": "xiaomi/mimo-v2.5-pro"
->     }
->   },
 >   "agents": {
 >     "defaults": {
->       "modelPreset": "mimo"
+>       "modelId": "mimo"
+>     }
+>   },
+>   "models": {
+>     "mimo": {
+>       "displayName": "Mimo",
+>       "provider": "xiaomi_mimo",
+>       "model": "xiaomi/mimo-v2.5-pro",
+>       "capabilities": {
+>         "text": true
+>       }
 >     }
 >   }
 > }
@@ -1008,15 +1066,19 @@ Step Plan is StepFun's subscription-based service for high-frequency AI develope
       "apiBase": "https://api.stepfun.ai/step_plan/v1"
     }
   },
-  "modelPresets": {
-    "stepfun": {
-      "provider": "stepfun",
-      "model": "step-3.5-flash"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "stepfun"
+      "modelId": "stepfun"
+    }
+  },
+  "models": {
+    "stepfun": {
+      "displayName": "Stepfun",
+      "provider": "stepfun",
+      "model": "step-3.5-flash",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -1038,15 +1100,19 @@ Ant Ling is available through nanobot's built-in OpenAI-compatible provider flow
       "apiKey": "${ANT_LING_API_KEY}"
     }
   },
-  "modelPresets": {
-    "antLing": {
-      "provider": "ant_ling",
-      "model": "Ling-2.6-flash"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "antLing"
+      "modelId": "antling"
+    }
+  },
+  "models": {
+    "antling": {
+      "displayName": "Antling",
+      "provider": "ant_ling",
+      "model": "Ling-2.6-flash",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -1069,15 +1135,19 @@ Connects directly to any OpenAI-compatible endpoint — llama.cpp, Together AI, 
       "apiBase": "https://api.your-provider.com/v1"
     }
   },
-  "modelPresets": {
-    "custom": {
-      "provider": "custom",
-      "model": "your-model-name"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "custom"
+      "modelId": "custom"
+    }
+  },
+  "models": {
+    "custom": {
+      "displayName": "Custom",
+      "provider": "custom",
+      "model": "your-model-name",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -1094,19 +1164,22 @@ Connects directly to any OpenAI-compatible endpoint — llama.cpp, Together AI, 
 >   "providers": {
 >     "azure_openai": {
 >       "apiKey": "your-api-key",
->       "apiBase": "https://api.your-provider.com",
->       "defaultModel": "your-model-name"
->     }
->   },
->   "modelPresets": {
->     "responsesProxy": {
->       "provider": "azure_openai",
->       "model": "your-model-name"
+>       "apiBase": "https://api.your-provider.com"
 >     }
 >   },
 >   "agents": {
 >     "defaults": {
->       "modelPreset": "responsesProxy"
+>       "modelId": "responsesproxy"
+>     }
+>   },
+>   "models": {
+>     "responsesproxy": {
+>       "displayName": "Responsesproxy",
+>       "provider": "azure_openai",
+>       "model": "your-model-name",
+>       "capabilities": {
+>         "text": true
+>       }
 >     }
 >   }
 > }
@@ -1146,11 +1219,22 @@ If a custom OpenAI-compatible endpoint exposes a provider-specific thinking togg
       "thinkingStyle": "enable_thinking"
     }
   },
-  "modelPresets": {
+  "models": {
     "company": {
+      "displayName": "Company",
       "provider": "companyProxy",
       "model": "served-model-name",
-      "reasoningEffort": "high"
+      "capabilities": {
+        "text": true
+      },
+      "generationDefaults": {
+        "reasoningEffort": "high"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelId": "company"
     }
   }
 }
@@ -1180,21 +1264,24 @@ ollama run llama3.2
       "apiBase": "http://localhost:11434"
     }
   },
-  "modelPresets": {
-    "ollama": {
-      "provider": "ollama",
-      "model": "llama3.2"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "ollama"
+      "modelId": "ollama"
+    }
+  },
+  "models": {
+    "ollama": {
+      "displayName": "Ollama",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
 ```
 
-> `provider: "auto"` also works when `providers.ollama.apiBase` is configured, but pinning `"provider": "ollama"` inside the preset is the clearest option.
 
 </details>
 
@@ -1218,21 +1305,24 @@ ollama run llama3.2
       "apiBase": "http://localhost:1234/v1"
     }
   },
-  "modelPresets": {
-    "lmStudio": {
-      "provider": "lm_studio",
-      "model": "local-model"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "lmStudio"
+      "modelId": "lmstudio"
+    }
+  },
+  "models": {
+    "lmstudio": {
+      "displayName": "Lmstudio",
+      "provider": "lm_studio",
+      "model": "local-model",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
 ```
 
-> **Note:** Set `apiKey` to `null` for LM Studio since it runs locally and doesn't require authentication. The model name should match what's shown in the LM Studio UI. `provider: "auto"` also works when `providers.lm_studio.apiBase` is configured, but pinning `"provider": "lm_studio"` inside the preset is the clearest option.
 
 </details>
 
@@ -1258,15 +1348,19 @@ ollama run llama3.2
       "apiBase": "http://localhost:1337/v1"
     }
   },
-  "modelPresets": {
-    "atomic": {
-      "provider": "atomic_chat",
-      "model": "qwen3-32b"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "atomic"
+      "modelId": "atomic"
+    }
+  },
+  "models": {
+    "atomic": {
+      "displayName": "Atomic",
+      "provider": "atomic_chat",
+      "model": "qwen3-32b",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -1274,7 +1368,6 @@ ollama run llama3.2
 
 > **Note:** Replace `qwen3-32b` with the model ID from Atomic Chat. Set `apiKey` to `null` if your Atomic Chat server does not require a key. If it does, set `apiKey` (or the `ATOMIC_CHAT_API_KEY` environment variable) to the value Atomic Chat expects.
 
-> `provider: "auto"` also works when `providers.atomic_chat.apiBase` is configured, but pinning `"provider": "atomic_chat"` inside the preset is the clearest option.
 
 </details>
 
@@ -1340,15 +1433,19 @@ docker run -d \
       "apiBase": "http://localhost:8000/v3"
     }
   },
-  "modelPresets": {
-    "ovms": {
-      "provider": "ovms",
-      "model": "openai/gpt-oss-20b"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "ovms"
+      "modelId": "ovms"
+    }
+  },
+  "models": {
+    "ovms": {
+      "displayName": "Ovms",
+      "provider": "ovms",
+      "model": "openai/gpt-oss-20b",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -1382,18 +1479,22 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 }
 ```
 
-*Model preset:*
+*Model entry:*
 ```json
 {
-  "modelPresets": {
-    "vllm": {
-      "provider": "vllm",
-      "model": "meta-llama/Llama-3.1-8B-Instruct"
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "vllm"
+      "modelId": "vllm"
+    }
+  },
+  "models": {
+    "vllm": {
+      "displayName": "Vllm",
+      "provider": "vllm",
+      "model": "meta-llama/Llama-3.1-8B-Instruct",
+      "capabilities": {
+        "text": true
+      }
     }
   }
 }
@@ -1403,79 +1504,72 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 
 Contributor notes for adding new providers live in [`development.md`](./development.md#adding-an-llm-provider).
 
-## Model Presets
+## Models
 
-Model presets let you name a complete model configuration and select one per session with `/model <preset>`. They are the recommended way to configure models because the same names can be reused for new-session defaults, chat-command switching, Subagent roles, Dream, and Model Fleet selection.
-
-Existing configs do not need to change. Direct `agents.defaults.model`, `provider`, `maxTokens`, `contextWindowTokens`, `temperature`, and `reasoningEffort` fields still define the implicit `default` preset. For new configs, prefer top-level `modelPresets` plus `agents.defaults.modelPreset`.
+Nanobot keeps one canonical registry under top-level `models`. Each registry key is a stable `model_id`; consumers select that key, while `displayName`, `provider`, and `model` remain facts on the model record. `provider` must be a concrete provider ID; it is never inferred from the upstream model string.
 
 ```json
 {
-  "modelPresets": {
-    "fast": {
-      "model": "gpt-4.1-mini",
-      "provider": "openai",
-      "maxTokens": 4096,
-      "contextWindowTokens": 128000,
-      "temperature": 0.2,
-      "reasoningEffort": "low"
-    },
-    "deep": {
-      "model": "claude-opus-4-5",
-      "provider": "anthropic",
-      "maxTokens": 8192,
-      "contextWindowTokens": 200000,
-      "reasoningEffort": "high"
-    },
-    "localSmall": {
-      "model": "llama3.2",
-      "provider": "ollama",
-      "maxTokens": 4096,
-      "contextWindowTokens": 32768,
-      "temperature": 0.2
-    }
-  },
   "agents": {
     "defaults": {
-      "modelPreset": "fast"
+      "modelId": "fast"
+    }
+  },
+  "models": {
+    "fast": {
+      "displayName": "Fast",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "capabilities": {
+        "text": true
+      },
+      "contextWindowTokens": 128000,
+      "generationDefaults": {
+        "maxTokens": 4096,
+        "temperature": 0.2,
+        "reasoningEffort": "low"
+      }
     }
   }
 }
 ```
 
-`modelPresets` is a top-level object. Each key (`fast`, `deep`, `coding`, etc.) is the preset's one canonical name: it is shown in the interface, passed to `/model <name>`, and referenced by defaults, sessions, Subagent roles, Dream, and Model Fleet. New and renamed presets must be unique ignoring case. Existing keys accepted by earlier releases remain loadable so upgrades do not break startup. Each preset supports:
-
-Older configs may still contain a `label` inside a preset. It is accepted when loading for compatibility but ignored; the object key remains the canonical name.
-
 | Field | Description |
 |-------|-------------|
-| `model` | Model name to use for this preset. |
-| `provider` | Provider name, or `"auto"` to use provider auto-detection. |
-| `maxTokens` | Maximum completion/output tokens. |
-| `contextWindowTokens` | Context window size used by prompt building and consolidation decisions. |
-| `temperature` | Sampling temperature. |
-| `reasoningEffort` | Optional reasoning/thinking setting. Provider support varies. |
+| `models.<model_id>` | Canonical model registry key. Use this value for `agents.defaults.modelId` and other consumer `modelId` fields. |
+| `displayName` | Human-facing label; it does not select a model. |
+| `provider` | Concrete provider ID used to connect; never `auto`. |
+| `model` | Upstream model string sent to that provider; it is not a consumer selector. |
+| `capabilities` | Explicit capability flags such as `text`, `vision`, `imageGeneration`, and `transcription`. |
+| `contextWindowTokens` | Context-window fact for this model. |
+| `generationDefaults` | Inference defaults such as `maxTokens`, `temperature`, and `reasoningEffort`. |
 
-`default` is reserved and always means the implicit preset built from direct `agents.defaults.*` fields; do not define `modelPresets.default`. Use `/model default` to switch back to those direct fields in an existing config.
-
-Set `agents.defaults.modelPreset` to choose the preset followed by sessions that have no saved model selection. When `modelPreset` is `null` or omitted, such sessions follow the implicit `default` preset from direct `agents.defaults.*` fields. `/model <preset>` saves an override in the current session, so its future turns keep that preset across process restarts while other sessions remain unchanged. The command does not write the selection back to `config.json`.
+Consumers must reference a configured canonical `model_id`; they do not copy provider or upstream model facts. `/model <model_id>` changes the current session selection without rewriting `config.json`.
 
 ### Request-time model selection
 
-Each admitted request resolves exactly one `LLMRuntime` through `ModelRuntimeResolver` (and Model Fleet when used). That runtime fixes the model, provider, generation settings, context window, vision capability, and system-prompt override for the request. Provider-level retry may retry the same selected route, but nanobot does not transparently switch to another model or provider after failure; exhausted retries return the failure explicitly.
-
+Each admitted request resolves exactly one `LLMRuntime` through the canonical `model_id` registry (and Model Fleet when used). That runtime fixes the model, provider, generation settings, context window, vision capability, and system-prompt override for the request. Provider-level retry may retry the same selected route, but nanobot does not switch to another model or provider after failure; exhausted retries return the failure explicitly.
 ## Transcription Settings
 
 Audio transcription is a shared capability used by chat-channel voice messages and by WebUI microphone input. Chat-channel voice messages are transcribed automatically before they enter the agent. WebUI microphone input is transcribed into the composer first, so you can edit the text before sending.
 
-Configure transcription under the top-level `transcription` section:
+Configure transcription under the top-level `transcription` section. Select a canonical model registry key; the referenced model must declare `capabilities.transcription: true`.
 
 ```json
 {
+  "models": {
+    "asr": {
+      "displayName": "Speech to text",
+      "provider": "groq",
+      "model": "whisper-large-v3",
+      "capabilities": {
+        "transcription": true
+      }
+    }
+  },
   "transcription": {
     "enabled": true,
-    "provider": "groq",
-    "model": null,
+    "modelId": "asr",
     "language": null,
     "maxDurationSec": 120,
     "maxUploadMb": 25
@@ -1486,41 +1580,14 @@ Configure transcription under the top-level `transcription` section:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enables audio transcription for both chat-channel voice messages and WebUI microphone input. |
-| `provider` | `"groq"` | Transcription backend: `"groq"`, `"openai"`, `"openrouter"`, `"xiaomi_mimo"`, `"stepfun"`, or `"assemblyai"`. |
-| `model` | provider default | Optional transcription model override. Defaults to `whisper-large-v3` for Groq, `whisper-1` for OpenAI, `openai/whisper-1` for OpenRouter, `mimo-v2.5-asr` for Xiaomi MiMo ASR, `stepaudio-2.5-asr` for StepFun ASR, and `universal-3-pro,universal-2` for AssemblyAI. OpenRouter accepts only speech-to-text models on its transcription endpoint, such as `nvidia/parakeet-tdt-0.6b-v3`, `openai/whisper-1`, or `openai/gpt-4o-transcribe`; chat LLMs are rejected there. AssemblyAI accepts a comma-separated model fallback list. |
+| `modelId` | `null` | Canonical key in `models` for a model whose `capabilities.transcription` is `true`. The model's concrete provider and upstream model supply the transcription route. |
 | `language` | `null` | Optional ISO-639 language hint, e.g. `"en"`, `"zh"`, `"ko"`, or `"ja"`. |
 | `maxDurationSec` | `120` | Maximum WebUI recording duration. |
 | `maxUploadMb` | `25` | Maximum WebUI audio upload size. |
 
-Provider and language resolution is intentionally ordered for backwards compatibility:
-
-1. `transcription.provider` / `transcription.language`
-2. Legacy `channels.transcriptionProvider` / `channels.transcriptionLanguage`
-3. Built-in defaults (`provider: "groq"`, no language hint)
-
-The legacy `channels.*` transcription fields existed before transcription became a shared capability across chat channels and WebUI microphone input. They are still read so older `config.json` files keep working, but they are no longer the preferred configuration surface. If both old and new fields are present, the top-level `transcription` values are the source of truth.
-
-Transcription credentials are intentionally not stored in `transcription`. Put the API key and optional endpoint in the matching provider config:
-
-```json
-{
-  "providers": {
-    "groq": {
-      "apiKey": "gsk-...",
-      "apiBase": "https://api.groq.com/openai/v1"
-    }
-  },
-  "transcription": {
-    "provider": "groq",
-    "language": "zh"
-  }
-}
-```
-
-Selecting a transcription provider does not configure credentials by itself. For example, the effective provider may default to Groq for compatibility, but transcription is only usable when `providers.groq.apiKey` or the matching environment-backed config is available. The Settings UI writes only the top-level `transcription` fields.
+Transcription credentials and endpoints remain in the `providers.<provider>` block named by the selected model's `provider`; selecting `modelId` does not guess or create provider configuration. If no `modelId` is configured, transcription has no model route.
 
 If you are adding a new transcription provider, see [`development.md`](./development.md#adding-a-transcription-provider).
-
 ## Channel Settings
 
 Global settings that apply to all channels. Configure under the `channels` section in `~/.nanobot/config.json`:
@@ -1552,7 +1619,7 @@ or pass the original path to another tool when exact file bytes are required. Th
 `channels.extractDocumentText` setting is accepted for compatibility but ignored.
 Normal tool workspace and media access rules still apply to attachment paths.
 
-`channels.transcriptionProvider` and `channels.transcriptionLanguage` are deprecated compatibility fields. They remain as a read-only fallback for older configs, but new configuration should use top-level `transcription.provider` and `transcription.language`.
+Transcription provider credentials and endpoint settings belong in the concrete `providers.<provider>` block named by the selected model's `provider`. Channel settings do not select a transcription provider or model.
 
 `sendProgress` and `sendToolHints` can also be overridden per channel. The global values stay as defaults for channels that do not set their own value:
 
@@ -1873,9 +1940,30 @@ If you want to always use the local conversion, you can force it using:
 
 ## Image Generation
 
-Image generation is configured under `tools.imageGeneration` and uses credentials from the selected provider's `providers.<name>` block.
+Image generation is configured under `tools.imageGeneration` with a canonical `modelId` that resolves into `models`. The selected model must declare `capabilities.imageGeneration: true`; its concrete `provider` selects the adapter and its upstream `model` is not a consumer selector.
 
-See [Image Generation](./image-generation.md) for WebUI usage, provider examples, artifact storage, and troubleshooting.
+```json
+{
+  "models": {
+    "image-prod": {
+      "displayName": "Image production",
+      "provider": "modelscope",
+      "model": "Qwen/Qwen-Image-2512",
+      "capabilities": {
+        "imageGeneration": true
+      }
+    }
+  },
+  "tools": {
+    "imageGeneration": {
+      "enabled": true,
+      "modelId": "image-prod"
+    }
+  }
+}
+```
+
+Provider credentials and endpoint settings remain under `providers.<provider>` for the selected model. See [Image Generation](./image-generation.md) for WebUI usage, provider examples, artifact storage, and troubleshooting.
 
 ## MCP (Model Context Protocol)
 

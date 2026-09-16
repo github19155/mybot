@@ -66,7 +66,7 @@ function summarizeInboundWsPayload(ev: InboundEvent): unknown {
 type Unsubscribe = () => void;
 type EventHandler = (ev: InboundEvent) => void;
 type StatusHandler = (status: ConnectionStatus) => void;
-type RuntimeModelHandler = (modelName: string | null, modelPreset?: string | null) => void;
+type RuntimeModelHandler = (model: string | null, modelId?: string | null) => void;
 type SessionUpdateScope = "metadata" | "thread" | string;
 type SessionUpdateHandler = (
   chatId: string,
@@ -1190,7 +1190,7 @@ export class NanobotClient {
     }
 
     if (parsed.event === "runtime_model_updated") {
-      this.emitRuntimeModelUpdate(parsed.model_name || null, parsed.model_preset ?? null);
+      this.emitRuntimeModelUpdate(parsed.model || null, parsed.model_id ?? null);
       return;
     }
 
@@ -1247,9 +1247,9 @@ export class NanobotClient {
     }
   }
 
-  private emitRuntimeModelUpdate(modelName: string | null, modelPreset?: string | null): void {
+  private emitRuntimeModelUpdate(model: string | null, modelId?: string | null): void {
     for (const handler of this.runtimeModelHandlers) {
-      handler(modelName, modelPreset);
+      handler(model, modelId);
     }
   }
 

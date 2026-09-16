@@ -18,30 +18,30 @@ export function jsonResponse(body: unknown): Response {
 export function settingsPayload(): SettingsPayload {
   return {
     agent: {
+      model_id: "primary",
+      display_name: "Primary",
+      provider: "openai",
       model: "openai/gpt-4o",
-      provider: "auto",
-      resolved_provider: "openai",
-      has_api_key: true,
-      model_preset: "primary",
-      max_tokens: 8192,
+      capabilities: { text: true, vision: false, image_generation: false, transcription: false },
       context_window_tokens: 200000,
-      temperature: 0.1,
-      reasoning_effort: null,
+      generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
+      has_api_key: true,
+      image_analysis_model_id: null,
       timezone: "UTC",
       tool_hint_max_length: 40,
     },
-    model_presets: [{
-      name: "primary",
-      label: "Primary",
-      active: true,
-      is_default: false,
+    models: [{
+      model_id: "primary",
+      display_name: "Primary",
+      provider: "openai",
       model: "openai/gpt-4o",
-      provider: "auto",
-      resolved_provider: "openai",
-      max_tokens: 8192,
+      capabilities: { text: true, vision: false, image_generation: false, transcription: false },
       context_window_tokens: 200000,
-      temperature: 0.1,
-      reasoning_effort: null,
+      pricing: {},
+      generation_defaults: { temperature: 0.1, max_tokens: 8192, reasoning_effort: null },
+      is_default: true,
+      usages: [],
+      reasoning_effort_values: [],
     }],
     providers: [],
     web_search: {
@@ -72,14 +72,18 @@ export function settingsPayload(): SettingsPayload {
     },
     image_generation: {
       enabled: false,
-      provider: "openrouter",
-      provider_configured: false,
-      model: "openai/gpt-5.4-image-2",
+      model_id: null,
       default_aspect_ratio: "1:1",
       default_image_size: "1K",
       max_images_per_turn: 4,
       save_dir: "generated",
-      providers: [],
+    },
+    transcription: {
+      enabled: false,
+      model_id: null,
+      language: null,
+      max_duration_sec: 120,
+      max_upload_mb: 25,
     },
     runtime: {
       config_path: "/tmp/config.json",
@@ -131,6 +135,7 @@ export function renderSettingsView(
       | "advanced"
       | "models"
       | "image"
+      | "voice"
       | "browser"
       | "runtime";
     initialSettings?: SettingsPayload;

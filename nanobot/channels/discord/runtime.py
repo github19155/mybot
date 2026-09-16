@@ -209,14 +209,14 @@ if DISCORD_AVAILABLE:
                 ) -> None:
                     await self._forward_slash_command(interaction, _command_text)
 
-            @self.tree.command(name="model", description="Show or switch runtime model preset")
-            @app_commands.describe(preset="Optional model preset name, such as default")
+            @self.tree.command(name="model", description="Show or switch configured model ID")
+            @app_commands.describe(model_id="Configured model ID, such as default")
             async def model_command(
                 interaction: discord.Interaction,
-                preset: str | None = None,
+                model_id: str | None = None,
             ) -> None:
-                preset = (preset or "").strip()
-                command_text = f"/model {preset}" if preset else "/model"
+                model_id = (model_id or "").strip()
+                command_text = f"/model {model_id}" if model_id else "/model"
                 await self._forward_slash_command(interaction, command_text)
 
             @self.tree.command(name="trigger", description="Create a named local trigger for this chat")

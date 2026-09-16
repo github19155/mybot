@@ -18,7 +18,7 @@ from nanobot.agent.tools.search import GrepTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.subagent import SubagentTool
 from nanobot.apps.cli.service import CliAppManager, CliAppsRuntimeConfig
-from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
+from nanobot.config.schema import ImageGenerationToolConfig, ToolsConfig
 from nanobot.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceScopeError,
@@ -356,7 +356,6 @@ def test_image_reference_scope_restricted_blocks_outside_and_full_allows(tmp_pat
     tool = ImageGenerationTool(
         workspace=tmp_path,
         config=ImageGenerationToolConfig(enabled=True),
-        provider_config=ProviderConfig(api_key="sk-test"),
     )
 
     restricted = validate_workspace_scope_payload(

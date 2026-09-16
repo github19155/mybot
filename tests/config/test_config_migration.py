@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+from nanobot.config.errors import ConfigLoadError
 from nanobot.config.loader import load_config, save_config
 from nanobot.security.network import validate_url_target
 
@@ -17,7 +18,7 @@ def _fake_resolve(host: str, results: list[str]):
     return _resolver
 
 
-def test_load_config_keeps_max_tokens_and_ignores_legacy_memory_window(tmp_path) -> None:
+def test_load_config_rejects_legacy_max_tokens_and_memory_window(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
@@ -33,14 +34,15 @@ def test_load_config_keeps_max_tokens_and_ignores_legacy_memory_window(tmp_path)
         encoding="utf-8",
     )
 
-    config = load_config(config_path)
+    with pytest.raises(ConfigLoadError) as exc_info:
+        load_config(config_path)
 
-    assert config.agents.defaults.max_tokens == 1234
-    assert config.agents.defaults.context_window_tokens == 200_000
-    assert not hasattr(config.agents.defaults, "memory_window")
+    error = exc_info.value
+    assert error.kind == "invalid_schema"
+    assert "agents.defaults.maxTokens" in str(error)
 
 
-def test_save_config_writes_context_window_tokens_but_not_memory_window(tmp_path) -> None:
+def test_save_config_rejects_legacy_flat_model_fields(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
@@ -56,17 +58,11 @@ def test_save_config_writes_context_window_tokens_but_not_memory_window(tmp_path
         encoding="utf-8",
     )
 
-    config = load_config(config_path)
-    save_config(config, config_path)
-    saved = json.loads(config_path.read_text(encoding="utf-8"))
-    defaults = saved["agents"]["defaults"]
-
-    assert defaults["maxTokens"] == 2222
-    assert defaults["contextWindowTokens"] == 200_000
-    assert "memoryWindow" not in defaults
+    with pytest.raises(ConfigLoadError):
+        load_config(config_path)
 
 
-def test_onboard_does_not_crash_with_legacy_memory_window(tmp_path, monkeypatch) -> None:
+def test_onboard_rejects_legacy_flat_model_fields(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"
     config_path.write_text(
@@ -92,65 +88,62 @@ def test_onboard_does_not_crash_with_legacy_memory_window(tmp_path, monkeypatch)
     runner = CliRunner()
     result = runner.invoke(app, ["onboard"], input="n\n")
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ConfigLoadError)
 
 
 @pytest.mark.parametrize("field_name", ["maxMessages", "max_messages"])
-def test_load_config_ignores_legacy_max_messages(tmp_path, field_name) -> None:
+def test_load_config_rejects_legacy_max_messages(tmp_path, field_name) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({"agents": {"defaults": {field_name: 25, "maxTokens": 1234}}}),
+        json.dumps({"agents": {"defaults": {field_name: 25}}}),
         encoding="utf-8",
     )
 
-    config = load_config(config_path)
+    with pytest.raises(ConfigLoadError) as exc_info:
+        load_config(config_path)
 
-    assert config.agents.defaults.max_tokens == 1234
-    assert not hasattr(config.agents.defaults, "max_messages")
+    error = exc_info.value
+    assert error.kind == "invalid_schema"
+    assert f"agents.defaults.{field_name}" in str(error)
 
 
-def test_save_config_drops_legacy_max_messages(tmp_path) -> None:
+def test_save_config_rejects_legacy_max_messages(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps({"agents": {"defaults": {"maxMessages": 25}}}),
         encoding="utf-8",
     )
 
-    config = load_config(config_path)
-    save_config(config, config_path)
-    saved = json.loads(config_path.read_text(encoding="utf-8"))
-
-    assert "maxMessages" not in saved["agents"]["defaults"]
-    assert "max_messages" not in saved["agents"]["defaults"]
+    with pytest.raises(ConfigLoadError):
+        load_config(config_path)
 
 
 @pytest.mark.parametrize("field_name", ["failOnToolError", "fail_on_tool_error"])
-def test_load_config_ignores_removed_fail_on_tool_error(tmp_path, field_name) -> None:
+def test_load_config_rejects_removed_fail_on_tool_error(tmp_path, field_name) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({"agents": {"defaults": {field_name: True, "maxTokens": 1234}}}),
+        json.dumps({"agents": {"defaults": {field_name: True}}}),
         encoding="utf-8",
     )
 
-    config = load_config(config_path)
+    with pytest.raises(ConfigLoadError) as exc_info:
+        load_config(config_path)
 
-    assert config.agents.defaults.max_tokens == 1234
-    assert not hasattr(config.agents.defaults, "fail_on_tool_error")
+    error = exc_info.value
+    assert error.kind == "invalid_schema"
+    assert f"agents.defaults.{field_name}" in str(error)
 
 
-def test_save_config_drops_removed_fail_on_tool_error(tmp_path) -> None:
+def test_save_config_rejects_removed_fail_on_tool_error(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps({"agents": {"defaults": {"failOnToolError": True}}}),
         encoding="utf-8",
     )
 
-    config = load_config(config_path)
-    save_config(config, config_path)
-    saved = json.loads(config_path.read_text(encoding="utf-8"))
-
-    assert "failOnToolError" not in saved["agents"]["defaults"]
-    assert "fail_on_tool_error" not in saved["agents"]["defaults"]
+    with pytest.raises(ConfigLoadError):
+        load_config(config_path)
 
 
 def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch) -> None:

@@ -143,19 +143,6 @@ def test_settings_payload_includes_relocated_capabilities(
     assert payload["observability"]["configured"] is True
 
 
-def test_settings_payload_exposes_modelscope_image_model(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = settings_payload()
-    providers = {row["name"]: row for row in payload["image_generation"]["providers"]}
-
-    assert providers["modelscope"]["models"] == ["Qwen/Qwen-Image-2512"]
-    assert providers["modelscope"]["default_model"] == "Qwen/Qwen-Image-2512"
 
 
 def test_update_api_settings_requires_key_for_network_access(
@@ -686,56 +673,10 @@ def test_update_web_search_settings_can_clear_optional_api_key(
 
 
 
-def test_settings_payload_exposes_openrouter_transcription_provider(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.providers.openrouter.api_key = "sk-or-test"
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = settings_payload()
-
-    providers = {provider["name"]: provider for provider in payload["transcription"]["providers"]}
-    assert providers["openrouter"]["label"] == "OpenRouter"
-    assert providers["openrouter"]["configured"] is True
 
 
-def test_settings_payload_exposes_siliconflow_transcription_provider(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.providers.siliconflow.api_key = "sf-test"
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = settings_payload()
-
-    providers = {provider["name"]: provider for provider in payload["transcription"]["providers"]}
-    assert providers["siliconflow"]["label"] == "SiliconFlow"
-    assert providers["siliconflow"]["configured"] is True
-    assert providers["siliconflow"]["default_api_base"] == "https://api.siliconflow.cn/v1"
 
 
-def test_settings_payload_exposes_xiaomi_mimo_transcription_provider(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.providers.xiaomi_mimo.api_key = "mimo-test"
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-    payload = settings_payload()
-
-    providers = {provider["name"]: provider for provider in payload["transcription"]["providers"]}
-    assert providers["xiaomi_mimo"]["label"] == "Xiaomi MIMO"
-    assert providers["xiaomi_mimo"]["configured"] is True
 
 
 
@@ -1882,10 +1823,16 @@ def test_settings_payload_includes_canonical_transcription_model(
 
     assert payload["transcription"]["enabled"] is True
     assert payload["transcription"]["model_id"] == "speech"
-    assert payload["transcription"]["provider"] == "openai"
-    assert payload["transcription"]["model"] == "whisper-1"
-    assert payload["transcription"]["provider_configured"] is True
-    assert payload["transcription"]["language"] == "en"
+    assert set(payload["transcription"]) == {
+        "enabled",
+        "model_id",
+        "language",
+        "max_duration_sec",
+        "max_upload_mb",
+    }
+    assert "provider" not in payload["transcription"]
+    assert "model" not in payload["transcription"]
+    assert "providers" not in payload["transcription"]
 
 def test_update_transcription_settings_writes_model_id_only(
     tmp_path,
@@ -1919,8 +1866,16 @@ def test_update_transcription_settings_writes_model_id_only(
     assert saved.transcription.language == "ko"
     assert saved.transcription.max_duration_sec == 90
     assert saved.transcription.max_upload_mb == 20
-    assert payload["transcription"]["provider"] == "openrouter"
-    assert payload["transcription"]["model"] == "nvidia/parakeet-tdt-0.6b-v3"
+    assert set(payload["transcription"]) == {
+        "enabled",
+        "model_id",
+        "language",
+        "max_duration_sec",
+        "max_upload_mb",
+    }
+    assert "provider" not in payload["transcription"]
+    assert "model" not in payload["transcription"]
+    assert "providers" not in payload["transcription"]
 
 def test_update_transcription_settings_rejects_model_without_capability(
     tmp_path,
@@ -1953,8 +1908,17 @@ def test_settings_payload_includes_canonical_image_generation_model(
     payload = settings_payload()
 
     assert payload["image_generation"]["model_id"] == "image"
-    assert payload["image_generation"]["provider"] == "openrouter"
-    assert payload["image_generation"]["model"] == "google/gemini-2.5-flash-image"
+    assert set(payload["image_generation"]) == {
+        "enabled",
+        "model_id",
+        "default_aspect_ratio",
+        "default_image_size",
+        "max_images_per_turn",
+        "save_dir",
+    }
+    assert "provider" not in payload["image_generation"]
+    assert "model" not in payload["image_generation"]
+    assert "providers" not in payload["image_generation"]
 
 def test_update_image_generation_settings_writes_model_id_only(
     tmp_path,
@@ -1979,8 +1943,17 @@ def test_update_image_generation_settings_writes_model_id_only(
     saved = load_config(config_path)
     assert saved.tools.image_generation.enabled is True
     assert saved.tools.image_generation.model_id == "image"
-    assert payload["image_generation"]["provider"] == "openrouter"
-    assert payload["image_generation"]["model"] == "google/gemini-2.5-flash-image"
+    assert set(payload["image_generation"]) == {
+        "enabled",
+        "model_id",
+        "default_aspect_ratio",
+        "default_image_size",
+        "max_images_per_turn",
+        "save_dir",
+    }
+    assert "provider" not in payload["image_generation"]
+    assert "model" not in payload["image_generation"]
+    assert "providers" not in payload["image_generation"]
 
 def test_settings_payload_keeps_configured_opencode_legacy_alias(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
@@ -2005,7 +1978,7 @@ def test_settings_payload_keeps_configured_opencode_legacy_alias(tmp_path, monke
 
 
 
-def test_settings_payload_exposes_assemblyai_transcription_provider(
+def test_settings_payload_exposes_canonical_assemblyai_transcription_model(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2024,19 +1997,17 @@ def test_settings_payload_exposes_assemblyai_transcription_provider(
 
     payload = settings_payload()
 
-    assert payload["transcription"]["provider"] == "assemblyai"
-    assert payload["transcription"]["model"] == "universal-3-pro"
-    assert payload["transcription"]["provider_configured"] is True
-    providers = {
-        provider["name"]: provider
-        for provider in payload["transcription"]["providers"]
+    assert payload["transcription"]["model_id"] == "assemblyai-speech"
+    assert set(payload["transcription"]) == {
+        "enabled",
+        "model_id",
+        "language",
+        "max_duration_sec",
+        "max_upload_mb",
     }
-    assert providers["assemblyai"]["label"] == "AssemblyAI"
-    assert providers["assemblyai"]["configured"] is True
-    assert providers["assemblyai"]["default_api_base"] == "https://api.assemblyai.com/v2"
 
 
-def test_transcription_provider_configured_resolves_env_reference(
+def test_transcription_model_selection_uses_model_config_provider_credentials(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2057,9 +2028,39 @@ def test_transcription_provider_configured_resolves_env_reference(
     payload = settings_payload()
 
     assert payload["transcription"]["model_id"] == "speech-env"
-    assert payload["transcription"]["provider"] == "openai"
-    assert payload["transcription"]["model"] == "whisper-1"
-    assert payload["transcription"]["provider_configured"] is True
+    assert "provider" not in payload["transcription"]
+    assert "model" not in payload["transcription"]
+    assert "provider_configured" not in payload["transcription"]
+
+
+def test_transcription_model_selection_keeps_payload_canonical(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.openai.api_key = "${WEBUI_TRANSCRIPTION_KEY}"
+    config.models["speech-env"] = ModelConfig(
+        display_name="Speech env",
+        provider="openai",
+        model="whisper-1",
+        capabilities=ModelCapabilities(transcription=True),
+    )
+    config.transcription.model_id = "speech-env"
+    save_config(config, config_path)
+    monkeypatch.setenv("WEBUI_TRANSCRIPTION_KEY", "sk-from-env")
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    payload = settings_payload()
+
+    assert payload["transcription"]["model_id"] == "speech-env"
+    assert set(payload["transcription"]) == {
+        "enabled",
+        "model_id",
+        "language",
+        "max_duration_sec",
+        "max_upload_mb",
+    }
 
 
 def test_openai_codex_remote_login_rejects_invalid_boolean(

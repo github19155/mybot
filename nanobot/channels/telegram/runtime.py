@@ -478,7 +478,7 @@ class TelegramChannel(BaseChannel):
         BotCommand("goal", "Start a sustained objective (long-running task)"),
         BotCommand("trigger", "Create a named local trigger"),
         BotCommand("pairing", "Manage DM pairing (approve/deny/list)"),
-        BotCommand("model", "Switch runtime model preset"),
+        BotCommand("model", "Switch configured model ID"),
         BotCommand("skill", "List enabled skills"),
         BotCommand("dream", "Queue Dream background cognition"),
         BotCommand("dream_log", "Show validated Dream findings and proposals"),
